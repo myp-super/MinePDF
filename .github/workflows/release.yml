@@ -19,12 +19,8 @@ jobs:
           node-version: '22'
           cache: npm
 
-      # 国内镜像安装依赖（Electron 二进制走 npmmirror）
       - name: Install dependencies
         run: npm install --no-audit --no-fund
-        env:
-          ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
-          ELECTRON_BUILDER_BINARIES_MIRROR: https://npmmirror.com/mirrors/electron-builder-binaries/
 
       # winCodeSign 解压符号链接包装器（无管理员权限的 Windows 需要）
       - name: Patch 7za wrapper
@@ -36,9 +32,6 @@ jobs:
 
       - name: Build & package
         run: npm run dist
-        env:
-          ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
-          ELECTRON_BUILDER_BINARIES_MIRROR: https://npmmirror.com/mirrors/electron-builder-binaries/
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
