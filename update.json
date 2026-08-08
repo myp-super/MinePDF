@@ -1,8 +1,8 @@
 {
-  "publishDate": "2026-08-08",
-  "version": "1.3.2",
-  "url": "https://github.com/myp-super/MinePDF/releases/download/v1.3.2/MinePDF.Setup.1.3.2.exe",
+  "version": "1.3.3",
   "notes": [
-    "v1.3.2 - 有书签默认书签页，无书签默认笔记页；笔记加手动保存"
-  ]
+    "v1.3.3 - 沉浸式121%；有书签直达书签页；PDF文件图标蓝底"
+  ],
+  "url": "https://github.com/myp-super/MinePDF/releases/download/v1.3.3/MinePDF.Setup.1.3.3.exe",
+  "publishDate": "2026-08-08"
 }
