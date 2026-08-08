@@ -95,9 +95,12 @@ export function PdfViewer({ pdf, onMissing }: PdfViewerProps) {
   const canPanRef = useRef(false);
   const panStartRef = useRef<{ x: number; y: number; sl: number; st: number } | null>(null);
   const contentRef = useRef<HTMLDivElement>(null);
-  const immersivePrevRef = useRef<{ scale: number; sidebar: boolean; inspector: boolean } | null>(
-    null,
-  );
+  const immersivePrevRef = useRef<{
+    scale: number;
+    sidebar: boolean;
+    inspector: boolean;
+    maximized: boolean;
+  } | null>(null);
 
   useEffect(() => {
     scaleRef.current = scale;
@@ -397,7 +400,7 @@ export function PdfViewer({ pdf, onMissing }: PdfViewerProps) {
         target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable;
       if (e.key === 'Escape') {
         if (searchOpen) setSearchOpen(false);
-        else if (immersive) toggleImmersive();
+        else if (immersive) void toggleImmersive();
         return;
       }
       if (typing) return;
@@ -582,24 +585,24 @@ export function PdfViewer({ pdf, onMissing }: PdfViewerProps) {
   };
 
   /**
-   * 沉浸式阅读：收起左右边栏并自动放大一档；再次点击恢复到点击前的缩放与边栏状态。
+   * 沉浸式阅读：最大化窗口 + 收起左右边栏 + 固定放大到 161%；
+   * 再次点击恢复到点击前的窗口、缩放与边栏状态。
    */
-  const toggleImmersive = () => {
+  const toggleImmersive = async () => {
     const s = useApp.getState();
     if (!immersive) {
+      const wasMax = await window.pkm.isMaximized().catch(() => false);
       immersivePrevRef.current = {
         scale,
         sidebar: s.sidebarCollapsed,
         inspector: s.inspectorCollapsed,
+        maximized: wasMax,
       };
+      if (!wasMax) await window.pkm.toggleMaximize();
       if (!s.sidebarCollapsed) s.setSidebarCollapsed(true);
       if (!s.inspectorCollapsed) s.setInspectorCollapsed(true);
       setImmersive(true);
-      // 等侧栏收起、布局稳定后按新视口适配宽度，再放大一档
-      setTimeout(() => {
-        fitWidth();
-        setTimeout(() => setScale((cur) => Math.min(4, cur * 1.2)), 80);
-      }, 120);
+      setScale(1.61);
     } else {
       const prev = immersivePrevRef.current;
       setImmersive(false);
@@ -607,6 +610,10 @@ export function PdfViewer({ pdf, onMissing }: PdfViewerProps) {
         setScale(prev.scale);
         if (prev.sidebar !== s.sidebarCollapsed) s.setSidebarCollapsed(prev.sidebar);
         if (prev.inspector !== s.inspectorCollapsed) s.setInspectorCollapsed(prev.inspector);
+        if (!prev.maximized) {
+          const isMax = await window.pkm.isMaximized().catch(() => true);
+          if (isMax) await window.pkm.toggleMaximize();
+        }
       }
     }
   };

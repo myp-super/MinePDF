@@ -425,25 +425,30 @@ async function createMainWindow(): Promise<BrowserWindow> {
                     const before = {
                       sidebarW: document.querySelector('aside').getBoundingClientRect().width,
                       scale: readScale(),
+                      maximized: await window.pkm.isMaximized(),
                     };
                     btn.click();
-                    await new Promise((r) => setTimeout(r, 900));
+                    await new Promise((r) => setTimeout(r, 1200));
                     const during = {
                       sidebarW: document.querySelector('aside').getBoundingClientRect().width,
                       scale: readScale(),
+                      maximized: await window.pkm.isMaximized(),
                     };
                     btn.click();
-                    await new Promise((r) => setTimeout(r, 900));
+                    await new Promise((r) => setTimeout(r, 1200));
                     const after = {
                       sidebarW: document.querySelector('aside').getBoundingClientRect().width,
                       scale: readScale(),
+                      maximized: await window.pkm.isMaximized(),
                     };
                     return {
                       btn: true,
                       collapsed: during.sidebarW < before.sidebarW - 10,
-                      zoomed: during.scale > before.scale + 0.05,
+                      maximizedDuring: during.maximized === true,
+                      zoom161: Math.abs(during.scale - 1.61) < 0.02,
                       restoredW: Math.abs(after.sidebarW - before.sidebarW) < 5,
                       restoredScale: Math.abs(after.scale - before.scale) < 0.05,
+                      restoredMax: after.maximized === before.maximized,
                       before, during, after,
                     };
                   })()
