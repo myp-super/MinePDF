@@ -147,7 +147,7 @@ git push origin v1.1.0
   "notes": [
     "本次更新的内容说明"
   ],
-  "url": "https://github.com/myp-super/MinePDF/releases/download/v1.1.0/MinePDF%20Setup%201.1.0.exe",
+  "url": "https://github.com/myp-super/MinePDF/releases/download/v1.1.0/MinePDF.Setup.1.1.0.exe",
   "publishDate": "2026-08-08"
 }
 ```
