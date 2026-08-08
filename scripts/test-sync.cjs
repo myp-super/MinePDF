@@ -85,18 +85,32 @@ app.whenReady().then(async () => {
   const ct = repository.getFolders().find((f) => f.name === 'ControlTheory');
   checks.push(['newFileInFolder', !!gamma && gamma.folderId === ct.id]);
 
-  // E: delete a folder in Explorer -> records are kept but marked missing
-  // (safety: notes/annotations are never silently dropped)
+  // E: delete a folder in Explorer -> strict sync removes rows and PDF records
   fs.rmSync(path.join(lib, 'ControlTheory'), { recursive: true, force: true });
   await scanLibrary();
   checks.push([
-    'folderKeptAsGhost',
-    repository.getFolders().filter((f) => f.name === 'ControlTheory').length === 1,
+    'folderRemoved',
+    repository.getFolders().filter((f) => f.name === 'ControlTheory').length === 0,
   ]);
   checks.push([
-    'filesMarkedMissing',
-    repository.getPdfs().every((p) => p.status === 'missing'),
+    'pdfsRemoved',
+    repository.getPdfs().length === 0,
   ]);
+
+  // E2: delete a single managed file -> its record is removed too
+  mk('OneFile/keep.pdf', 'K');
+  const keepPath = path.join(lib, 'OneFile', 'keep.pdf');
+  await scanLibrary();
+  const keep = repository.getPdfs().find((p) => p.filename === 'keep.pdf');
+  checks.push(['seedOneFile', !!keep]);
+  fs.unlinkSync(keepPath);
+  await scanLibrary();
+  checks.push([
+    'fileDeletedRemoved',
+    repository.getPdfs().find((p) => p.id === keep.id) === undefined,
+  ]);
+  fs.rmSync(path.join(lib, 'OneFile'), { recursive: true, force: true });
+  await scanLibrary();
 
   // F: in-app folder rename must update DB name + path AND the real directory
   const appFolder = repository.createFolder('AppFolder', null);

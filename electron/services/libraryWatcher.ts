@@ -92,7 +92,6 @@ export async function scanLibrary(): Promise<{ added: number }> {
   const ordered = [...dbFolders].sort(
     (a, b) => a.path.split('/').length - b.path.split('/').length,
   );
-  const dbPdfsAtStart = repository.getPdfs();
 
   for (const f of ordered) {
     if (diskDirs.has(f.path)) {
@@ -116,13 +115,9 @@ export async function scanLibrary(): Promise<{ added: number }> {
       folderByRel.set(newRel, f);
       continue;
     }
-    // No rename candidate: if the folder is empty in the DB, remove the ghost row.
-    const hasPdfs = dbPdfsAtStart.some((p) => p.folderId === f.id);
-    const hasChildren = (foldersByParent.get(f.id) ?? []).length > 0;
-    if (!hasPdfs && !hasChildren) {
-      repository.deleteFolder(f.id);
-      folderByRel.delete(f.path);
-    }
+    // 目录已在本地删除：严格同步，删除该文件夹及其记录（笔记/标注随之清理）
+    repository.deleteFolder(f.id);
+    folderByRel.delete(f.path);
   }
 
   // ---------- 2. create rows for remaining (new) disk directories ----------
@@ -227,7 +222,7 @@ export async function scanLibrary(): Promise<{ added: number }> {
     }
   }
 
-  // ---------- 4. managed files deleted from disk -> mark missing ----------
+  // ---------- 4. managed files deleted from disk -> sync delete records ----------
   for (const p of dbPdfs) {
     if (
       !handledPdfIds.has(p.id) &&
@@ -235,7 +230,7 @@ export async function scanLibrary(): Promise<{ added: number }> {
       isInside(p.filepath, dir) &&
       !presentFiles.has(p.filepath.toLowerCase())
     ) {
-      repository.setPdfStatus(p.id, 'missing');
+      repository.deletePdf(p.id);
     }
   }
 

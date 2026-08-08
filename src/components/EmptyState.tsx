@@ -1,5 +1,5 @@
 import { FilePlus2, FolderOpen, FolderSearch } from 'lucide-react';
-import React from 'react';
+import React, { useState } from 'react';
 import { useT, useTError } from '../i18n';
 import { useApp } from '../store';
 import { Button } from './ui';
@@ -11,12 +11,19 @@ export function EmptyState() {
   const refresh = useApp((s) => s.refresh);
   const toast = useApp((s) => s.toast);
   const settings = useApp((s) => s.settings);
+  const [busy, setBusy] = useState(false);
 
   const doImport = async (paths: string[]) => {
     if (!paths.length) return;
+    setBusy(true);
     try {
       const res = await window.pkm.importPdfs(paths, selectedFolderId);
       await refresh();
+      // 导入成功后自动打开最新导入的 PDF，让用户立刻看到效果
+      const first = useApp.getState().pdfs[0];
+      if (res.imported > 0 && first) {
+        useApp.getState().openPdf(first.id);
+      }
       toast(
         'success',
         t('common.imported', {
@@ -27,6 +34,8 @@ export function EmptyState() {
       for (const e of res.errors) toast('error', e);
     } catch (err) {
       toast('error', terr(err instanceof Error ? err.message : String(err)));
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -39,10 +48,18 @@ export function EmptyState() {
         <h2 className="text-[15px] font-semibold">{t('empty.title')}</h2>
         <p className="mt-1.5 text-[12px] leading-relaxed text-app-muted">{t('empty.desc')}</p>
         <div className="mt-5 flex gap-2">
-          <Button variant="primary" onClick={async () => doImport(await window.pkm.openPdfDialog())}>
+          <Button
+            variant="primary"
+            disabled={busy}
+            onClick={async () => doImport(await window.pkm.openPdfDialog())}
+          >
             <FilePlus2 size={13} /> {t('empty.chooseFiles')}
           </Button>
-          <Button variant="outline" onClick={async () => doImport(await window.pkm.openFolderDialog())}>
+          <Button
+            variant="outline"
+            disabled={busy}
+            onClick={async () => doImport(await window.pkm.openFolderDialog())}
+          >
             <FolderSearch size={13} /> {t('empty.importFolder')}
           </Button>
         </div>
