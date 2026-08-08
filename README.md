@@ -117,27 +117,42 @@ Copy-Item $env:TEMP\7za-wrap.exe node_modules\7zip-bin\win\x64\7za.exe
 
 ## 如何发布更新（自动检查更新机制）
 
-更新检查采用「应用拉取更新清单」的方式，**不需要推送**，也不需要接入第三方平台：
+本项目采用 **GitHub Releases + GitHub Pages** 作为更新渠道：
 
-1. 每次发版时执行 `npm run dist`，得到新版本的 `MinePDF Setup X.Y.Z.exe` 与便携版。
-2. 把安装包（或便携版）上传到你控制的任何 HTTPS 静态服务器（GitHub Releases、OSS、对象存储、个人服务器均可）。
-3. 在服务器同目录放置一份 `update.json`，格式如下：
+- 更新清单：`https://myp-super.github.io/MinePDF/update.json`（仓库根目录的 `update.json`，随 main 分支自动部署到 Pages）；
+- 安装包：GitHub Releases 附件；
+- 应用默认内置该更新源，**用户安装后零配置**，启动 8 秒后自动检查，也可点击标题栏右上角按钮手动检查。
+
+### 一键自动发版（推荐）
+
+仓库内置 `.github/workflows/release.yml`，发版只需：
+
+```bash
+git tag v1.1.0
+git push origin v1.1.0
+```
+
+工作流会自动完成：构建安装包与便携版 → 创建 GitHub Release 并上传附件 → 生成新版本 `update.json` 提交回 main（Pages 自动更新）。约 10 分钟后用户端即可检查到新版本。
+
+### 手动发版（不依赖 Actions）
+
+1. 修改 `package.json` 的 `version`（如 `1.1.0`）；
+2. `npm run dist`（国内网络请先设置镜像环境变量，见上文）；
+3. 在 GitHub Releases 创建 tag `v1.1.0` 并上传两个 exe；
+4. 更新仓库根目录的 `update.json`，格式如下，然后推送到 main：
 
 ```json
 {
   "version": "1.1.0",
   "notes": [
-    "新增画笔荧光笔",
-    "优化 PDF 打开速度",
-    "修复高亮位置偏移"
+    "本次更新的内容说明"
   ],
-  "url": "https://example.com/releases/MinePDF%20Setup%201.1.0.exe",
+  "url": "https://github.com/myp-super/MinePDF/releases/download/v1.1.0/MinePDF%20Setup%201.1.0.exe",
   "publishDate": "2026-08-08"
 }
 ```
 
-4. 用户端：打开「设置 → 更新」，把 `https://example.com/updates/update.json` 填进「更新源 URL」。应用启动 8 秒后自动检查一次；标题栏右上角的更新按钮可随时手动检查。
-5. 检测到新版本时，弹窗显示「当前版本 → 最新版本」和更新内容列表，点击「前往下载」在浏览器中打开下载地址。安装版用户运行安装包即可覆盖升级；便携版替换新包即可。
+检测到新版本时，弹窗显示「当前版本 → 最新版本」和更新内容列表，点击「前往下载」在浏览器中打开下载地址。安装版用户运行安装包覆盖升级；便携版替换新包即可。若想修改更新源或完全关闭自动检查，可在「设置 → 更新」中调整（留空即关闭）。
 
 > 说明：应用本身只负责「检查 + 提示 + 跳转下载」，不会在后台偷偷下载安装，也**不包含任何 AI 功能**。若希望安装版实现真正的静默自动升级，可在主进程接入 electron-updater（需要配置 electron-builder 的 publish 字段），当前版本保留了这一扩展点。
 

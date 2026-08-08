@@ -8,7 +8,8 @@ const DEFAULTS: AppSettings = {
   language: 'zh-CN',
   autoSave: true,
   defaultImportDir: '',
-  updateUrl: '',
+  // 内置默认更新源：用户安装后即可自动检查更新（可在设置中修改或留空关闭）
+  updateUrl: 'https://myp-super.github.io/MinePDF/update.json',
   libraryPath: '',
   libraryPdfDir: '',
 };

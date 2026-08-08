@@ -1,0 +1,9 @@
+{
+  "version": "1.0.0",
+  "notes": [
+    "初始版本：本地 PDF 知识库（管理、阅读、标注、笔记、书签、画笔已移除）。",
+    "更新内容以 GitHub Release 页面为准。"
+  ],
+  "url": "https://github.com/myp-super/MinePDF/releases",
+  "publishDate": "2026-08-08"
+}

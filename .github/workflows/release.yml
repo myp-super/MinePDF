@@ -1,0 +1,73 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      # 国内镜像安装依赖（Electron 二进制走 npmmirror）
+      - name: Install dependencies
+        run: npm ci
+        env:
+          ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
+          ELECTRON_BUILDER_BINARIES_MIRROR: https://npmmirror.com/mirrors/electron-builder-binaries/
+
+      # winCodeSign 解压符号链接包装器（无管理员权限的 Windows 需要）
+      - name: Patch 7za wrapper
+        shell: pwsh
+        run: |
+          Copy-Item node_modules\7zip-bin\win\x64\7za.exe node_modules\7zip-bin\win\x64\7za-real.exe
+          & "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe" /nologo /out:$env:RUNNER_TEMP\7za-wrap.exe scripts\7za-wrap.cs
+          Copy-Item $env:RUNNER_TEMP\7za-wrap.exe node_modules\7zip-bin\win\x64\7za.exe
+
+      - name: Build & package
+        run: npm run dist
+        env:
+          ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
+          ELECTRON_BUILDER_BINARIES_MIRROR: https://npmmirror.com/mirrors/electron-builder-binaries/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release/MinePDF Setup *.exe
+            release/MinePDF *Portable*.exe
+          generate_release_notes: true
+
+      # 把本次版本的 update.json 提交回 main，GitHub Pages 自动重新部署
+      - name: Update update.json on main
+        shell: pwsh
+        run: |
+          git fetch origin main
+          git checkout main
+          $ver = $env:GITHUB_REF_NAME -replace '^v',''
+          $url = "https://github.com/$env:GITHUB_REPOSITORY/releases/download/$env:GITHUB_REF_NAME/MinePDF%20Setup%20$ver.exe"
+          $json = @{
+            version = $ver
+            notes = @("请前往 GitHub Release 页面查看更新详情：https://github.com/$env:GITHUB_REPOSITORY/releases/tag/$env:GITHUB_REF_NAME")
+            url = $url
+            publishDate = (Get-Date -Format 'yyyy-MM-dd')
+          } | ConvertTo-Json
+          Set-Content -Path update.json -Value $json -Encoding utf8
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add update.json
+          git diff --cached --quiet
+          if ($LASTEXITCODE -ne 0) {
+            git commit -m "chore: update update.json for $env:GITHUB_REF_NAME"
+            git push origin main
+          }

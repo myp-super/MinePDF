@@ -16,7 +16,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   language: 'zh-CN',
   autoSave: true,
   defaultImportDir: '',
-  updateUrl: '',
+  updateUrl: 'https://myp-super.github.io/MinePDF/update.json',
   libraryPath: '',
   libraryPdfDir: '',
 };
