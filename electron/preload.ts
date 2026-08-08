@@ -68,6 +68,11 @@ const api: PkmApi = {
   getSettings: () => invoke('settings:get'),
   updateSettings: (patch) => invoke('settings:update', patch),
   checkForUpdates: () => invoke('update:check'),
+  downloadUpdate: (url) => invoke('update:download', url),
+  onDownloadProgress: (cb) =>
+    subscribe('update:download-progress', (v) => cb(Number(v))),
+  installUpdate: (filePath, silent) =>
+    invoke(silent ? 'update:install-silent' : 'update:install-wizard', filePath),
   openExternalUrl: (url) => invoke('app:open-url', url),
   chooseDirectory: (title) => invoke('settings:choose-dir', title),
   openDataFolder: () => invoke('data:open-folder'),

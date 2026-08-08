@@ -178,6 +178,10 @@ export interface PkmApi {
   getSettings(): Promise<AppSettings>;
   updateSettings(patch: Partial<AppSettings>): Promise<AppSettings>;
   checkForUpdates(): Promise<UpdateResult>;
+  downloadUpdate(url: string): Promise<{ filePath: string; size: number }>;
+  onDownloadProgress(cb: (percent: number) => void): () => void;
+  /** silent=true 静默安装并退出应用；false 打开系统安装向导 */
+  installUpdate(filePath: string, silent: boolean): Promise<boolean | string>;
   openExternalUrl(url: string): Promise<void>;
   chooseDirectory(title: string): Promise<string | null>;
   openDataFolder(): Promise<void>;

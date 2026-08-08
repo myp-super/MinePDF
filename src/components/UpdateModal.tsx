@@ -1,4 +1,4 @@
-import { CheckCircle2, Download, Loader2, X } from 'lucide-react';
+import { CheckCircle2, Download, Loader2, PackageOpen, Settings2, X } from 'lucide-react';
 import React, { useEffect, useState } from 'react';
 import { useT } from '../i18n';
 import type { UpdateResult } from '../shared/types';
@@ -11,6 +11,8 @@ export function UpdateModal({ open, onClose }: { open: boolean; onClose: () => v
   const [res, setRes] = useState<UpdateResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [downloading, setDownloading] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [downloaded, setDownloaded] = useState<{ filePath: string; size: number } | null>(null);
 
   const check = async () => {
     setBusy(true);
@@ -24,26 +26,49 @@ export function UpdateModal({ open, onClose }: { open: boolean; onClose: () => v
   useEffect(() => {
     if (open) {
       setRes(null);
+      setDownloaded(null);
+      setProgress(0);
       void check();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  const download = async () => {
+  useEffect(() => {
+    return window.pkm.onDownloadProgress((p) => setProgress(p));
+  }, []);
+
+  const startDownload = async () => {
     if (!res?.latest) return;
     setDownloading(true);
+    setProgress(0);
     try {
-      await window.pkm.openExternalUrl(res.latest.url);
-      toast('success', t('update.downloading'));
+      const r = await window.pkm.downloadUpdate(res.latest.url);
+      setDownloaded(r);
+      toast('success', t('update.downloadDone'));
     } catch (err) {
-      toast('error', err instanceof Error ? err.message : String(err));
+      toast(
+        'error',
+        t('update.downloadFailed', { msg: err instanceof Error ? err.message : String(err) }),
+      );
     } finally {
       setDownloading(false);
     }
   };
 
+  const install = async (silent: boolean) => {
+    if (!downloaded) return;
+    try {
+      await window.pkm.installUpdate(downloaded.filePath, silent);
+      if (silent) toast('info', t('update.installingHint'));
+    } catch (err) {
+      toast('error', err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const sizeMb = downloaded ? (downloaded.size / 1024 / 1024).toFixed(1) : '0';
+
   return (
-    <Modal open={open} onClose={onClose} title={t('update.available')} width={460}>
+    <Modal open={open} onClose={onClose} title={t('update.available')} width={480}>
       {busy || !res ? (
         <div className="flex items-center justify-center gap-2 py-8 text-app-muted">
           <Loader2 size={15} className="animate-spin" />
@@ -95,14 +120,50 @@ export function UpdateModal({ open, onClose }: { open: boolean; onClose: () => v
             </div>
           )}
 
+          {downloading ? (
+            <div className="mb-3">
+              <div className="mb-1 flex items-center justify-between text-[11px] text-app-muted">
+                <span>{t('update.downloading')}</span>
+                <span className="tabular-nums">{progress}%</span>
+              </div>
+              <div className="h-1.5 w-full overflow-hidden rounded-full bg-app-border">
+                <div
+                  className="h-full rounded-full bg-app-accent transition-all"
+                  style={{ width: `${progress}%` }}
+                />
+              </div>
+            </div>
+          ) : downloaded ? (
+            <div className="mb-3 rounded-lg border border-emerald-500/40 bg-emerald-500/10 p-3 text-[12px] text-emerald-300">
+              <div className="flex items-center gap-2">
+                <CheckCircle2 size={15} className="shrink-0" />
+                {t('update.downloadDone')}（{sizeMb} MB）
+              </div>
+              <p className="mt-1 text-[10.5px] opacity-80">{t('update.installingHint')}</p>
+            </div>
+          ) : null}
+
           <div className="mt-4 flex justify-end gap-2">
             <Button variant="ghost" onClick={onClose}>
               {t('update.later')}
             </Button>
-            <Button variant="primary" disabled={downloading} onClick={() => void download()}>
-              <Download size={13} />
-              {t('update.download')}
-            </Button>
+            {downloaded ? (
+              <>
+                <Button variant="outline" onClick={() => void install(false)}>
+                  <Settings2 size={13} />
+                  {t('update.openWizard')}
+                </Button>
+                <Button variant="primary" onClick={() => void install(true)}>
+                  <PackageOpen size={13} />
+                  {t('update.installNow')}
+                </Button>
+              </>
+            ) : (
+              <Button variant="primary" disabled={downloading} onClick={() => void startDownload()}>
+                <Download size={13} />
+                {t('update.downloadNow')}
+              </Button>
+            )}
           </div>
         </div>
       )}

@@ -142,6 +142,7 @@ const zh: Dict = {
   'inspector.annotationDelete': '删除高亮',
   'inspector.noTextContent': '（无文本内容）',
   'inspector.pageX': '第 {n} 页',
+  'inspector.outline': '书签',
 
   'settings.back': '返回知识库',
   'settings.title': '设置',
@@ -185,10 +186,16 @@ const zh: Dict = {
   'update.latest': '最新版本',
   'update.notes': '更新内容',
   'update.download': '前往下载',
+  'update.downloadNow': '下载更新',
+  'update.downloading': '正在下载更新…',
+  'update.downloadDone': '下载完成',
+  'update.downloadFailed': '下载失败：{msg}',
+  'update.installNow': '立即安装',
+  'update.openWizard': '打开安装向导',
+  'update.installingHint': '安装完成后请重新打开 MinePDF',
   'update.later': '稍后',
-  'update.disabled': '未配置更新源。请在设置中填写 update.json 地址，或使用应用内「检查更新」。',
+  'update.disabled': '未配置更新源。请在设置中填写 update.json 地址。',
   'update.error': '检查更新失败：{msg}',
-  'update.downloading': '正在打开下载页…',
   'update.newVersion': '有可用更新：MinePDF {version}',
   'update.checkFailed': '更新检查失败',
 
@@ -210,7 +217,6 @@ const zh: Dict = {
   'outline.bookmarks': '书签',
   'outline.close': '关闭书签',
   'outline.empty': '该 PDF 没有内置书签',
-  'inspector.outline': '书签',
 
   'searchbar.placeholder': '在文档中搜索… (Ctrl+F)',
   'searchbar.noResults': '无结果',
@@ -225,6 +231,7 @@ const zh: Dict = {
   'app.relocate': '重新定位…',
   'app.removeFromLibrary': '从库中移除',
   'app.relocated': '文件已重新定位',
+
   'viewer.loading': '正在加载 PDF…',
   'viewer.renderFailed': '页面渲染失败，请切换其他文档后重试',
 };
@@ -367,6 +374,7 @@ const en: Dict = {
   'inspector.annotationDelete': 'Delete highlight',
   'inspector.noTextContent': '(no text content)',
   'inspector.pageX': 'Page {n}',
+  'inspector.outline': 'Bookmarks',
 
   'settings.back': 'Back to library',
   'settings.title': 'Settings',
@@ -410,10 +418,16 @@ const en: Dict = {
   'update.latest': 'Latest version',
   'update.notes': 'Release notes',
   'update.download': 'Download',
+  'update.downloadNow': 'Download update',
+  'update.downloading': 'Downloading update…',
+  'update.downloadDone': 'Download finished',
+  'update.downloadFailed': 'Download failed: {msg}',
+  'update.installNow': 'Install now',
+  'update.openWizard': 'Open installer',
+  'update.installingHint': 'Reopen MinePDF after installation finishes',
   'update.later': 'Later',
-  'update.disabled': 'No update feed configured. Set the update.json URL in Settings, or use “Check for updates”.',
+  'update.disabled': 'No update feed configured. Set the update.json URL in Settings.',
   'update.error': 'Update check failed: {msg}',
-  'update.downloading': 'Opening download page…',
   'update.newVersion': 'Update available: MinePDF {version}',
   'update.checkFailed': 'Update check failed',
 
@@ -435,7 +449,6 @@ const en: Dict = {
   'outline.bookmarks': 'Bookmarks',
   'outline.close': 'Close bookmarks',
   'outline.empty': 'This PDF has no built-in bookmarks',
-  'inspector.outline': 'Bookmarks',
 
   'searchbar.placeholder': 'Search in document… (Ctrl+F)',
   'searchbar.noResults': 'No results',
@@ -450,6 +463,7 @@ const en: Dict = {
   'app.relocate': 'Relocate…',
   'app.removeFromLibrary': 'Remove from library',
   'app.relocated': 'File relocated',
+
   'viewer.loading': 'Loading PDF…',
   'viewer.renderFailed': 'Failed to render this page, try switching documents',
 };

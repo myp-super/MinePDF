@@ -1,4 +1,5 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
+import { spawn } from 'child_process';
 import fs from 'fs';
 import type {
   AnnotationRecord,
@@ -15,7 +16,7 @@ import { backupData } from '../services/backup';
 import { importPdfs } from '../services/import';
 import { scanLibrary } from '../services/libraryWatcher';
 import { getSettings, updateSettings } from '../services/settings';
-import { checkForUpdates } from '../services/updater';
+import { checkForUpdates, downloadUpdate } from '../services/updater';
 
 interface InvokeResult<T> {
   ok: boolean;
@@ -200,6 +201,20 @@ export function registerIpc(): void {
 
   // ---------- 更新检查 ----------
   handle('update:check', () => checkForUpdates());
+  handle('update:download', async (url: string) => {
+    const result = await downloadUpdate(url, (percent) => {
+      mainWin?.webContents.send('update:download-progress', percent);
+    });
+    return result;
+  });
+  handle('update:install-silent', (filePath: string) => {
+    const child = spawn(filePath, ['/S'], { detached: true, stdio: 'ignore' });
+    child.unref();
+    // 安装程序替换运行中的文件前，先退出应用
+    setTimeout(() => app.quit(), 800);
+    return true;
+  });
+  handle('update:install-wizard', (filePath: string) => shell.openPath(filePath));
   handle('app:open-url', (url: string) => {
     if (!/^https?:\/\//i.test(url)) throw new Error('仅支持 http/https 链接');
     return shell.openExternal(url);
