@@ -9,12 +9,19 @@
     />
     <title>MinePDF</title>
     <style>
+      @font-face {
+        font-family: "Geist";
+        src: url("./fonts/Geist-Variable.woff2") format("woff2");
+        font-weight: 100 900;
+        font-display: swap;
+      }
       * { margin: 0; padding: 0; box-sizing: border-box; }
       html, body { height: 100%; }
       body {
         background: radial-gradient(1000px 520px at 50% -12%, #15181f 0%, #0d0f13 55%, #090b0e 100%);
         color: #e6edf3;
-        font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+        font-family: "Geist", "Segoe UI Variable Text", "Segoe UI", "PingFang SC", "Microsoft YaHei",
+          system-ui, sans-serif;
         display: flex; align-items: center; justify-content: center;
         overflow: hidden; user-select: none;
       }
@@ -26,13 +33,13 @@
       }
       h1 {
         margin-top: 22px;
-        font-size: 19px; font-weight: 600; letter-spacing: 0.4px;
+        font-size: 21px; font-weight: 650; letter-spacing: 0.4px;
         animation: fade 0.9s ease 0.15s both;
       }
       .step {
         margin-top: 14px;
         height: 18px;
-        font-size: 12.5px; color: #8b98ab; letter-spacing: 0.3px;
+        font-size: 13.5px; color: #8b98ab; letter-spacing: 0.3px;
         transition: opacity 0.25s ease;
       }
       .bar {
@@ -45,7 +52,7 @@
         background: #5b8def;
         animation: grow 2.4s cubic-bezier(0.25, 0.7, 0.3, 1) 0.2s both;
       }
-      .ver { margin-top: 18px; font-size: 11px; color: #4b5668; }
+      .ver { margin-top: 18px; font-size: 12px; color: #4b5668; }
       @keyframes pop {
         from { opacity: 0; transform: scale(0.82); }
         to { opacity: 1; transform: scale(1); }

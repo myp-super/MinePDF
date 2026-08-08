@@ -2,6 +2,23 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Codex 同款字体：Geist（圆润饱满），中英文均内置 */
+@font-face {
+  font-family: 'Geist';
+  src: url('/fonts/Geist-Variable.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Geist Mono';
+  src: url('/fonts/GeistMono-Variable.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
 :root,
 [data-theme='dark'] {
   color-scheme: dark;
@@ -41,13 +58,46 @@ body,
 
 body {
   margin: 0;
-  font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+  font-family: 'Geist', 'Segoe UI Variable Text', 'Segoe UI', 'PingFang SC', 'Microsoft YaHei UI',
+    'Microsoft YaHei', system-ui, sans-serif;
   background: var(--app-base);
   color: var(--app-text);
   overflow: hidden;
-  font-size: 13px;
+  font-size: 15px;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+}
+
+/* 字号整体上调：把界面里过小的字号放宽 1.5~2px，保证可读性 */
+.text-\[9px\] {
+  font-size: 10.5px !important;
+}
+.text-\[9\.5px\] {
+  font-size: 11px !important;
+}
+.text-\[10px\] {
+  font-size: 11.5px !important;
+}
+.text-\[10\.5px\] {
+  font-size: 12px !important;
+}
+.text-\[11px\] {
+  font-size: 12.5px !important;
+}
+.text-\[11\.5px\] {
+  font-size: 13px !important;
+}
+.text-xs {
+  font-size: 13.5px !important;
+}
+.text-\[12px\] {
+  font-size: 13.5px !important;
+}
+.text-\[12\.5px\] {
+  font-size: 14px !important;
+}
+.text-sm {
+  font-size: 15px !important;
 }
 
 ::selection {

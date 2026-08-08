@@ -331,6 +331,23 @@ async function createMainWindow(): Promise<BrowserWindow> {
                   })()
                 `);
                 console.log('[capture] renderDiag', JSON.stringify(renderDiag));
+                const fontDiag = await win.webContents.executeJavaScript(`
+                  (() => {
+                    const body = getComputedStyle(document.body);
+                    const all = [...document.querySelectorAll('span,div,button,input,textarea,li')]
+                      .map((el) => parseFloat(getComputedStyle(el).fontSize))
+                      .filter((n) => n > 0);
+                    const editor = document.querySelector('textarea');
+                    return {
+                      bodyFont: body.fontFamily.split(',')[0].replace(/["']/g, ''),
+                      bodySize: body.fontSize,
+                      minSeen: all.length ? Math.min(...all) : null,
+                      monoTex: editor ? getComputedStyle(editor).fontFamily.split(',')[0].replace(/["']/g, '') : null,
+                      monoSize: editor ? getComputedStyle(editor).fontSize : null,
+                    };
+                  })()
+                `);
+                console.log('[capture] fontDiag', JSON.stringify(fontDiag));
                 const resizeDiag = await win.webContents.executeJavaScript(`
                   (async () => {
                     const h = document.querySelector('[data-resize="sidebar"]');
