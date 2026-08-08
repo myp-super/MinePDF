@@ -52,7 +52,9 @@ function buildTestPdf(): string {
   const objects: Record<number, string> = {};
   objects[1] = '1 0 obj\n<< /Type /Catalog /Pages 2 0 R /Outlines 6 0 R >>\nendobj\n';
   objects[2] = '2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n';
-  const content = 'BT /F1 18 Tf 72 720 Td (Hello PDF Knowledge Manager 2026) Tj ET\n';
+  // 三个独立文本段，让 PDF.js 文本层生成多个 span，便于验证高亮合并
+  const content =
+    'BT /F1 18 Tf 72 720 Td (Hello ) Tj /F1 14 Tf (PDF ) Tj /F1 18 Tf (Knowledge Manager 2026) Tj ET\n';
   objects[4] = `4 0 obj\n<< /Length ${Buffer.byteLength(content, 'latin1')} >>\nstream\n${content}endstream\nendobj\n`;
   objects[3] =
     '3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> /Annots [8 0 R] >>\nendobj\n';
@@ -543,6 +545,38 @@ async function createMainWindow(): Promise<BrowserWindow> {
                   })()
                 `);
                 console.log('[capture] shotDiag', JSON.stringify(shotDiag));
+                const hlMergeDiag = await win.webContents.executeJavaScript(`
+                  (async () => {
+                    const snap = await window.pkm.getSnapshot();
+                    const a = snap.pdfs.find((p) => p.filename === 'smoke-test.pdf');
+                    if (!a) return { pdf: false };
+                    window.__pkmOpenPdf(a.id);
+                    await new Promise((r) => setTimeout(r, 2000));
+                    const hlBtn = [...document.querySelectorAll('button')].find((b) => (b.getAttribute('title') || '').includes('高亮模式'));
+                    if (!hlBtn) return { hlBtn: false };
+                    hlBtn.click();
+                    await new Promise((r) => setTimeout(r, 150));
+                    const spans = [...document.querySelectorAll('.textLayer span')].filter((s) => (s.textContent || '').trim());
+                    if (spans.length < 3) return { spans: spans.length };
+                    const sel = window.getSelection();
+                    sel.removeAllRanges();
+                    const range = document.createRange();
+                    range.setStart(spans[0].firstChild, 0);
+                    range.setEnd(spans[2].firstChild, spans[2].textContent.length);
+                    sel.addRange(range);
+                    const before = await window.pkm.listAnnotations(a.id);
+                    document.querySelector('[data-pan-scroll]').dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+                    await new Promise((r) => setTimeout(r, 900));
+                    const after = await window.pkm.listAnnotations(a.id);
+                    const added = after.filter((x) => !before.some((y) => y.id === x.id));
+                    let quads = null;
+                    if (added.length === 1) {
+                      try { quads = JSON.parse(added[0].position); } catch { quads = null; }
+                    }
+                    return { hlBtn: true, spans: spans.length, added: added.length, quads: quads ? quads.length : null, oneBlock: !!quads && quads.length === 1 };
+                  })()
+                `);
+                console.log('[capture] hlMergeDiag', JSON.stringify(hlMergeDiag));
               } catch (err) {
                 console.error('[capture] failed', err);
               }

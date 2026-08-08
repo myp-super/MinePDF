@@ -491,6 +491,10 @@ export function PdfViewer({ pdf, onMissing }: PdfViewerProps) {
       if (!quads.length) return;
       byPage.set(page, [...(byPage.get(page) ?? []), ...quads]);
     }
+    // 同一行的碎片合并成整块，避免“三个字被拆成三块”
+    for (const [page, quads] of byPage) {
+      byPage.set(page, mergeLineQuads(quads));
+    }
 
     void (async () => {
       try {
@@ -745,6 +749,33 @@ export function PdfViewer({ pdf, onMissing }: PdfViewerProps) {
   );
 }
 
+/**
+ * 把同一行的多个小矩形合并成一个连续高亮块（类似 Edge 的选词效果）。
+ * PDF.js 文本层是逐字绝对定位的，直接取 selection 会把“三个字”拆成三块；
+ * 这里按垂直重叠分组，每组取外接矩形，整行/整块只高亮一次。
+ */
+function mergeLineQuads(quads: Quad[]): Quad[] {
+  if (quads.length < 2) return quads;
+  const sorted = [...quads].sort((a, b) => a.y - b.y || a.x - b.x);
+  const groups: Quad[][] = [];
+  for (const q of sorted) {
+    const g = groups.find((grp) => {
+      const gMinY = Math.min(...grp.map((x) => x.y));
+      const gMaxY = Math.max(...grp.map((x) => x.y + x.h));
+      return q.y < gMaxY && q.y + q.h > gMinY;
+    });
+    if (g) g.push(q);
+    else groups.push([q]);
+  }
+  return groups.map((grp) => {
+    const minX = Math.min(...grp.map((x) => x.x));
+    const minY = Math.min(...grp.map((x) => x.y));
+    const maxX = Math.max(...grp.map((x) => x.x + x.w));
+    const maxY = Math.max(...grp.map((x) => x.y + x.h));
+    return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+  });
+}
+
 /** 将阅读区选区截成 PNG：跨页自动拼接（高清画布像素） */
 function captureRegion(
   container: HTMLElement,
@@ -856,16 +887,6 @@ function ScreenshotOverlay({
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  const copy = async () => {
-    if (!dataUrl) return;
-    try {
-      const blob = await (await fetch(dataUrl)).blob();
-      await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
-    } catch {
-      /* ignore */
-    }
-  };
-
   const barLeft = rect
     ? Math.max(8, Math.min(rect.x + rect.w / 2 - 110, (containerRef.current?.clientWidth ?? 300) - 240))
     : 8;
@@ -875,7 +896,7 @@ function ScreenshotOverlay({
 
   return (
     <div
-      className="absolute inset-0 z-40 cursor-crosshair bg-black/35"
+      className={`absolute inset-0 z-40 cursor-crosshair ${rect ? '' : 'bg-black/35'}`}
       onMouseDown={(e) => {
         // 只有点击遮罩背景本身才开始框选；操作条按钮不受影响
         if (e.target !== e.currentTarget) return;
@@ -906,8 +927,15 @@ function ScreenshotOverlay({
       </button>
       {rect && !dataUrl && rect.w > 0 && rect.h > 0 && (
         <div
-          className="absolute border border-app-accent bg-app-accent/20"
-          style={{ left: rect.x, top: rect.y, width: rect.w, height: rect.h }}
+          className="absolute border-2 border-app-accent"
+          style={{
+            left: rect.x,
+            top: rect.y,
+            width: rect.w,
+            height: rect.h,
+            // 选中区域恢复原色：只有框外被压暗
+            boxShadow: '0 0 0 100vmax rgba(0,0,0,0.35)',
+          }}
         />
       )}
       {dataUrl && (
@@ -921,12 +949,6 @@ function ScreenshotOverlay({
             onClick={onClose}
           >
             {t('note.screenshotExit')}
-          </button>
-          <button
-            className="rounded-md px-2.5 py-1 text-[11px] text-app-muted transition-colors hover:bg-app-panel2 hover:text-app-text"
-            onClick={() => void copy()}
-          >
-            {t('note.screenshotCopy')}
           </button>
           <button
             className="rounded-md bg-app-accent px-2.5 py-1 text-[11px] text-white transition-colors hover:brightness-110"

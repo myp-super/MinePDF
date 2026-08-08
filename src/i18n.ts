@@ -202,7 +202,6 @@ const zh: Dict = {
     'note.screenshot': '截图',
     'note.screenshotHint': '在阅读区拖拽框选区域（可跨页），支持复制或直接插入笔记',
   'note.screenshotExit': '退出',
-  'note.screenshotCopy': '复制图片',
   'note.screenshotInsert': '插入笔记',
 
   'settings.back': '返回知识库',
@@ -500,7 +499,6 @@ const en: Dict = {
     'note.screenshot': 'Screenshot',
     'note.screenshotHint': 'Drag to select a region (across pages if needed), then copy it or insert it into the note',
   'note.screenshotExit': 'Exit',
-  'note.screenshotCopy': 'Copy image',
   'note.screenshotInsert': 'Insert into note',
 
   'settings.back': 'Back to library',
