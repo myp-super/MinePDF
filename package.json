@@ -1,7 +1,7 @@
 {
   "name": "mine-pdf",
   "productName": "MinePDF",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "本地 PDF 知识库管理工具：文件库、阅读、标签、笔记与标注。",
   "author": "PDF Knowledge Manager Team",
   "license": "MIT",

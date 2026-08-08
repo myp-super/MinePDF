@@ -5,7 +5,16 @@ import type { UpdateResult } from '../shared/types';
 import { useApp } from '../store';
 import { Button, Modal } from './ui';
 
-export function UpdateModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function UpdateModal({
+  open,
+  onClose,
+  initial = null,
+}: {
+  open: boolean;
+  onClose: () => void;
+  /** 自动弹出时携带已查到的结果，避免重复请求 */
+  initial?: UpdateResult | null;
+}) {
   const t = useT();
   const toast = useApp((s) => s.toast);
   const [res, setRes] = useState<UpdateResult | null>(null);
@@ -28,10 +37,11 @@ export function UpdateModal({ open, onClose }: { open: boolean; onClose: () => v
       setRes(null);
       setDownloaded(null);
       setProgress(0);
-      void check();
+      if (initial) setRes(initial);
+      else void check();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
+  }, [open, initial]);
 
   useEffect(() => {
     return window.pkm.onDownloadProgress((p) => setProgress(p));
@@ -66,6 +76,13 @@ export function UpdateModal({ open, onClose }: { open: boolean; onClose: () => v
   };
 
   const sizeMb = downloaded ? (downloaded.size / 1024 / 1024).toFixed(1) : '0';
+
+  const remindNever = () => {
+    if (!res?.latest) return;
+    localStorage.setItem('pkm.skipUpdateVersion', res.latest.version);
+    toast('success', t('update.remindNeverDone'));
+    onClose();
+  };
 
   return (
     <Modal open={open} onClose={onClose} title={t('update.available')} width={480}>
@@ -144,6 +161,11 @@ export function UpdateModal({ open, onClose }: { open: boolean; onClose: () => v
           ) : null}
 
           <div className="mt-4 flex justify-end gap-2">
+            {res.status === 'available' && !downloading && !downloaded && (
+              <Button variant="ghost" className="mr-auto" onClick={remindNever}>
+                {t('update.remindNever')}
+              </Button>
+            )}
             <Button variant="ghost" onClick={onClose}>
               {t('update.later')}
             </Button>

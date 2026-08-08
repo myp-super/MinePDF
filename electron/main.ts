@@ -6,6 +6,7 @@ import { closeDb, initDatabase } from './db/database';
 import { registerIpc, setMainWindow } from './ipc/register';
 import { startLibraryWatcher, stopLibraryWatcher } from './services/libraryWatcher';
 import { checkForUpdates } from './services/updater';
+import { getSettings } from './services/settings';
 
 const devServerUrl = process.env.VITE_DEV_SERVER_URL ?? '';
 const isDev = Boolean(devServerUrl);
@@ -416,8 +417,8 @@ app.whenReady().then(async () => {
   await createMainWindow();
   console.log('[main] main window created');
 
-  // 启动后延迟自动检查更新（仅当配置了更新源）
-  if (!smokeTest) {
+  // 启动后延迟自动检查更新（设置里开启且配置了更新源时）
+  if (!smokeTest && getSettings().updateAutoCheck) {
     setTimeout(() => {
       void checkForUpdates().then((res) => {
         if (res.status === 'available' && mainWindow && !mainWindow.isDestroyed()) {

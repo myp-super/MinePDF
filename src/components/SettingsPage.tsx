@@ -209,6 +209,16 @@ export function SettingsPage() {
               <RefreshCw size={12} /> {checking ? t('settings.checking') : t('settings.checkUpdate')}
             </Button>
           </div>
+          <div className="mt-3 flex items-center justify-between gap-3 border-t border-app-border pt-3">
+            <div className="min-w-0">
+              <div className="text-[11.5px] text-app-text/90">{t('settings.autoCheckUpdate')}</div>
+              <div className="text-[10.5px] text-app-muted">{t('settings.autoCheckHint')}</div>
+            </div>
+            <Toggle
+              checked={settings.updateAutoCheck}
+              onChange={(v) => void update({ updateAutoCheck: v })}
+            />
+          </div>
           <p className="mt-2 text-[10.5px] leading-relaxed text-app-muted/80">{t('settings.updateUrlHint')}</p>
         </section>
 

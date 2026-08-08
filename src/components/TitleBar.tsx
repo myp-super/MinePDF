@@ -40,7 +40,14 @@ export function TitleBar() {
 
   // 后台自动检查到新版本时亮起角标
   useEffect(() => {
-    return window.pkm.onUpdateAvailable((r) => setUpdatePending(r));
+    return window.pkm.onUpdateAvailable((r) => {
+      setUpdatePending(r);
+      // 非“不再提醒”版本时自动弹出更新窗口
+      const skipped = localStorage.getItem('pkm.skipUpdateVersion');
+      if (r.latest && r.latest.version !== skipped) {
+        setUpdateOpen(true);
+      }
+    });
   }, []);
 
   return (
@@ -115,7 +122,11 @@ export function TitleBar() {
           <X size={15} />
         </button>
       </div>
-      <UpdateModal open={updateOpen} onClose={() => setUpdateOpen(false)} />
+      <UpdateModal
+        open={updateOpen}
+        onClose={() => setUpdateOpen(false)}
+        initial={updatePending}
+      />
     </div>
   );
 }

@@ -82,6 +82,8 @@ export interface AppSettings {
   defaultImportDir: string;
   /** 更新清单 URL（update.json），留空表示关闭自动检查更新 */
   updateUrl: string;
+  /** 启动时自动检查更新并弹出提示（默认开启） */
+  updateAutoCheck: boolean;
   /** 知识库根目录（Documents/PDFKnowledgeManager） */
   libraryPath: string;
   /** PDF 库文件夹：所有 PDF 的统一存放目录（Obsidian 式） */
