@@ -675,7 +675,7 @@ export function PdfViewer({ pdf, onMissing }: PdfViewerProps) {
           <div
             ref={scrollRef}
             data-pan-scroll
-            className={`h-full overflow-auto bg-[var(--app-canvas)] ${
+            className={`flex h-full overflow-auto bg-[var(--app-canvas)] ${
               panning
                 ? 'cursor-grabbing select-none'
                 : canPan && !highlightMode && !screenshotMode
@@ -690,7 +690,8 @@ export function PdfViewer({ pdf, onMissing }: PdfViewerProps) {
             onMouseDown={onPanMouseDown}
             onMouseUp={handleMouseUp}
           >
-            <div ref={contentRef} className="flex flex-col items-center gap-4 px-6 py-5">
+            {/* m-auto：内容小于视口时居中；超出视口时自动贴左贴顶，保证四边都能滚动到 */}
+            <div ref={contentRef} className="m-auto flex flex-col items-center gap-4 px-6 py-5">
               {mode === 'single'
                 ? pages.map(renderPage)
                 : pageRows.map((row, i) => (
