@@ -417,6 +417,7 @@ function NotesPanel({ pdf }: { pdf: PdfRecord }) {
   const [savedAt, setSavedAt] = useState<Date | null>(null);
   const [saving, setSaving] = useState(false);
   const [noteFile, setNoteFile] = useState<string | null>(null);
+  const [noteDir, setNoteDir] = useState<string | null>(null);
   const [notesDir, setNotesDir] = useState('');
   const [exporting, setExporting] = useState(false);
   const loadedRef = useRef(false);
@@ -430,6 +431,7 @@ function NotesPanel({ pdf }: { pdf: PdfRecord }) {
         if (note) {
           setMd(note.markdown);
           setNoteFile(note.noteFile ?? null);
+          setNoteDir(note.noteDir ?? null);
         }
       } catch {
         /* ignore */
@@ -484,7 +486,10 @@ function NotesPanel({ pdf }: { pdf: PdfRecord }) {
   const resolveAsset = (src?: string): string | undefined => {
     if (!src) return undefined;
     if (/^(https?:|file:|data:|blob:)/.test(src)) return src;
-    if (notesDir && src.startsWith('assets/')) return `file://${notesDir}/${src}`;
+    if (src.startsWith('assets/')) {
+      const base = (noteDir ?? notesDir)?.replace(/\\/g, '/');
+      if (base) return `file://${base}/${src}`;
+    }
     return src;
   };
 
@@ -551,7 +556,7 @@ function NotesPanel({ pdf }: { pdf: PdfRecord }) {
           <Button
             size="sm"
             variant="outline"
-            title={t('note.screenshot')}
+            title={t('note.screenshotHint')}
             onClick={() => useApp.getState().setScreenshotMode(true)}
           >
             <Camera size={11} /> {t('note.screenshot')}
@@ -607,7 +612,9 @@ function NotesPanel({ pdf }: { pdf: PdfRecord }) {
 
       <div className="flex items-center justify-between gap-2 border-t border-app-border px-3 py-1.5 text-[10.5px] text-app-muted/70">
         <span className="min-w-0 truncate">
-          {noteFile ? noteFile.split(/[\\/]/).pop() : t('inspector.noteMirror', { id: pdf.id })}
+          {noteFile
+            ? `${noteDir ? `${noteDir.split(/[\\/]/).pop()} / ` : ''}${noteFile.split(/[\\/]/).pop()}`
+            : t('inspector.noteMirror', { id: pdf.id })}
         </span>
         {noteFile && (
           <button

@@ -42,6 +42,8 @@ export interface NoteRecord {
   markdown: string;
   /** 笔记镜像文件路径（data/notes/<PDF标题> 笔记.md） */
   noteFile?: string;
+  /** 笔记目录（含主 md 与截图 assets/）：data/notes/<PDF标题> */
+  noteDir?: string;
   updatedAt: string;
 }
 
@@ -86,6 +88,8 @@ export interface AppSettings {
   updateUrl: string;
   /** 启动时自动检查更新并弹出提示（默认开启） */
   updateAutoCheck: boolean;
+  /** 用户是否主动选择 MinePDF 作为默认 PDF 应用 */
+  pdfDefaultApp: boolean;
   /** 知识库根目录（Documents/PDFKnowledgeManager） */
   libraryPath: string;
   /** PDF 库文件夹：所有 PDF 的统一存放目录（Obsidian 式） */

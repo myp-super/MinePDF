@@ -56,6 +56,66 @@ export function setMainWindow(win: BrowserWindow | null): void {
   mainWin = win;
 }
 
+/** MinePDF 注册的 PDF ProgID */
+const PDF_PROG_ID = 'MinePDF.pdf';
+
+/** 读取注册表值（失败返回 null） */
+function regQuery(key: string, value?: string): Promise<string | null> {
+  return new Promise((resolve) => {
+    const args = ['query', key];
+    if (value) args.push('/v', value);
+    execFile('reg', args, (err, stdout) => {
+      if (err) return resolve(null);
+      resolve(stdout);
+    });
+  });
+}
+
+/** 执行注册表写入/删除（失败静默，不影响主流程） */
+function regRun(args: string[]): Promise<void> {
+  return new Promise((resolve) => execFile('reg', args, () => resolve()));
+}
+
+function isMineProgId(text: string | null): boolean {
+  return !!text && /mine/i.test(text);
+}
+
+/** HKCU\Software\Classes\.pdf 的默认 ProgID（旧版安装器/开启开关时写入） */
+async function defaultPdfProgId(): Promise<string | null> {
+  const out = await regQuery('HKCU\\Software\\Classes\\.pdf');
+  const m = out ? /REG_SZ\s+(\S+)/i.exec(out) : null;
+  return m ? m[1] : null;
+}
+
+/** Windows 用户选择（UserChoice）中的 .pdf ProgID，仅用户主动选择时存在 */
+async function userChoiceProgId(): Promise<string | null> {
+  const out = await regQuery(
+    'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\.pdf\\UserChoice',
+    'ProgId',
+  );
+  const m = out ? /REG_SZ\s+(\S+)/i.exec(out) : null;
+  return m ? m[1] : null;
+}
+
+/**
+ * 旧版本安装包会强制注册 .pdf 关联（fileAssociations），即使用户从未开启开关。
+ * 启动时若用户没有主动选择 MinePDF，就撤销这种残留关联，杜绝强制默认。
+ */
+export async function ensureNoForcedPdfAssociation(): Promise<void> {
+  try {
+    if (getSettings().pdfDefaultApp) return;
+    const def = await defaultPdfProgId();
+    const uc = await userChoiceProgId();
+    // 只有“默认指向 MinePDF 但用户并未主动选择 MinePDF”时才清理
+    if (isMineProgId(def) && !isMineProgId(uc)) {
+      await regRun(['delete', 'HKCU\\Software\\Classes\\.pdf', '/ve', '/f']);
+      await regRun(['delete', `HKCU\\Software\\Classes\\${PDF_PROG_ID}`, '/f']);
+    }
+  } catch {
+    /* registry cleanup must never block startup */
+  }
+}
+
 /**
  * 统一注册 IPC：所有 handler 只接收业务参数（不含 event），
  * 异常统一包装为 { ok, data | error }，便于渲染进程给出友好提示。
@@ -123,52 +183,52 @@ export function registerIpc(): void {
 
   // ---------- 默认 PDF 应用 ----------
   handle('app:is-default-pdf', async () => {
-    return new Promise<boolean>((resolve) => {
-      execFile(
-        'reg',
-        [
-          'query',
-          'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\.pdf\\UserChoice',
-          '/v',
-          'ProgId',
-        ],
-        (err, stdout) => {
-          if (err) return resolve(false);
-          resolve(/mine/i.test(stdout));
-        },
-      );
-    });
+    const uc = await userChoiceProgId();
+    if (isMineProgId(uc)) return true;
+    const def = await defaultPdfProgId();
+    return isMineProgId(def);
   });
   handle('app:set-pdf-association', async (enable: boolean) => {
-    const progId = 'MinePDF.pdf';
     const icon = path.join(process.resourcesPath, 'file-assoc.ico');
-    const run = (args: string[]) =>
-      new Promise<void>((resolve) => execFile('reg', args, () => resolve()));
     if (enable) {
-      await run(['add', 'HKCU\\Software\\Classes\\.pdf', '/ve', '/d', progId, '/f']);
-      await run([
+      await regRun(['add', 'HKCU\\Software\\Classes\\.pdf', '/ve', '/d', PDF_PROG_ID, '/f']);
+      await regRun([
         'add',
-        `HKCU\\Software\\Classes\\${progId}\\shell\\open\\command`,
+        `HKCU\\Software\\Classes\\${PDF_PROG_ID}\\shell\\open\\command`,
         '/ve',
         '/d',
         `"${process.execPath}" "%1"`,
         '/f',
       ]);
-      await run(['add', `HKCU\\Software\\Classes\\${progId}\\DefaultIcon`, '/ve', '/d', `"${icon}"`, '/f']);
+      await regRun([
+        'add',
+        `HKCU\\Software\\Classes\\${PDF_PROG_ID}\\DefaultIcon`,
+        '/ve',
+        '/d',
+        `"${icon}"`,
+        '/f',
+      ]);
       await shell.openExternal('ms-settings:defaultapps');
+      updateSettings({ pdfDefaultApp: true });
       return true;
     }
-    // 关闭：仅撤销本应用写入的关联
-    await new Promise<void>((resolve) => {
-      execFile('reg', ['query', 'HKCU\\Software\\Classes\\.pdf', '/ve'], (err, stdout) => {
-        if (!err && /mine/i.test(stdout)) {
-          void run(['delete', 'HKCU\\Software\\Classes\\.pdf', '/ve', '/f']).then(resolve);
-        } else {
-          resolve();
-        }
-      });
-    });
-    await run(['delete', `HKCU\\Software\\Classes\\${progId}`, '/f']);
+    // 关闭：撤销本应用写入的 .pdf 默认值、ProgID，以及用户选择里指向 MinePDF 的条目
+    const def = await defaultPdfProgId();
+    if (isMineProgId(def)) {
+      await regRun(['delete', 'HKCU\\Software\\Classes\\.pdf', '/ve', '/f']);
+    }
+    const uc = await userChoiceProgId();
+    if (isMineProgId(uc)) {
+      await regRun([
+        'delete',
+        'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\.pdf\\UserChoice',
+        '/v',
+        'ProgId',
+        '/f',
+      ]);
+    }
+    await regRun(['delete', `HKCU\\Software\\Classes\\${PDF_PROG_ID}`, '/f']);
+    updateSettings({ pdfDefaultApp: false });
     return false;
   });
   handle('app:open-defaultapps', () => shell.openExternal('ms-settings:defaultapps'));
@@ -278,13 +338,8 @@ export function registerIpc(): void {
     }
   });
   handle('note:save-image', (pdfId: number, dataUrl: string) => {
-    const m = /^data:image\/png;base64,(.+)$/.exec(dataUrl);
-    if (!m) throw new Error('无效的图片数据');
-    const dir = path.join(getDataDir(), 'notes', 'assets');
-    fs.mkdirSync(dir, { recursive: true });
-    const file = path.join(dir, `${pdfId}-${Date.now()}.png`);
-    fs.writeFileSync(file, Buffer.from(m[1], 'base64'));
-    return `assets/${path.basename(file)}`;
+    // 截图存入该笔记自己的 assets/ 目录（data/notes/<PDF标题>/assets/）
+    return repository.saveNoteImage(pdfId, dataUrl);
   });
 
   // ---------- 标注 ----------

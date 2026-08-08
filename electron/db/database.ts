@@ -96,6 +96,125 @@ function migrateSchema(db: Database.Database): void {
   if (!noteCols.some((c) => c.name === 'note_file')) {
     db.exec(`ALTER TABLE notes ADD COLUMN note_file TEXT`);
   }
+  if (!noteCols.some((c) => c.name === 'note_dir')) {
+    db.exec(`ALTER TABLE notes ADD COLUMN note_dir TEXT`);
+  }
+}
+
+/** 去掉非法字符，得到安全的笔记文件夹/文件名 */
+function sanitizeNoteName(name: string): string {
+  return name.replace(/[<>:"/\\|?*\u0000-\u001f]/g, '').trim() || '笔记';
+}
+
+/** 在 notes 目录下取一个未占用的文件夹名（重名时追加 (2)、(3)…） */
+function uniqueNoteDir(notesDir: string, base: string): string {
+  let folder = path.join(notesDir, base);
+  let i = 2;
+  while (fs.existsSync(folder)) {
+    folder = path.join(notesDir, `${base} (${i})`);
+    i++;
+  }
+  return folder;
+}
+
+/**
+ * v1.2.1 及更早版本：笔记是一个平铺的 Markdown 文件
+ * （data/notes/<标题> 笔记.md，截图统一放在 data/notes/assets/）。
+ * v1.2.2 起改为每篇笔记一个独立文件夹：
+ *   data/notes/<标题>/
+ *     ├── <标题> 笔记.md
+ *     └── assets/<截图.png>
+ * 这里把旧文件迁进对应文件夹，并把被引用的截图一并搬入。
+ */
+function migrateNoteFolders(db: Database.Database): void {
+  const notesDir = path.join(getDataDir(), 'notes');
+  fs.mkdirSync(notesDir, { recursive: true });
+  const rows = db
+    .prepare(
+      `SELECT n.id AS id, n.pdf_id AS pdf_id, n.note_file AS note_file,
+              p.title AS title
+       FROM notes n LEFT JOIN pdfs p ON p.id = n.pdf_id
+       ORDER BY n.id`,
+    )
+    .all() as Array<{
+    id: number;
+    pdf_id: number;
+    note_file: string | null;
+    title: string | null;
+  }>;
+  const upd = db.prepare(
+    'UPDATE notes SET note_file = ?, note_dir = ?, updated_time = ? WHERE id = ?',
+  );
+  const oldAssetsDir = path.join(notesDir, 'assets');
+  for (const r of rows) {
+    let source = r.note_file;
+    const legacy = path.join(notesDir, `${r.pdf_id}.md`);
+    // 已经是新目录结构（notes/<标题>/…）则跳过
+    if (source) {
+      const rel = path.relative(notesDir, source);
+      const parts = rel.split(path.sep);
+      if (parts.length >= 2) continue;
+    } else if (fs.existsSync(legacy)) {
+      source = legacy;
+    } else {
+      continue;
+    }
+    if (!fs.existsSync(source)) continue;
+
+    const base = sanitizeNoteName(r.title || '笔记');
+    const folder = uniqueNoteDir(notesDir, base);
+    fs.mkdirSync(path.join(folder, 'assets'), { recursive: true });
+    // 旧版 <id>.md 迁入后统一命名为「<标题> 笔记.md」
+    const dest =
+      path.basename(source) === `${r.pdf_id}.md`
+        ? path.join(folder, `${base} 笔记.md`)
+        : path.join(folder, path.basename(source));
+    try {
+      if (path.resolve(source) !== path.resolve(dest)) {
+        fs.renameSync(source, dest);
+      }
+    } catch {
+      try {
+        fs.copyFileSync(source, dest);
+        fs.unlinkSync(source);
+      } catch {
+        continue;
+      }
+    }
+    // 把 Markdown 中引用的全局截图搬进本笔记自己的 assets/
+    try {
+      const md = fs.readFileSync(dest, 'utf8');
+      const re = /!\[[^\]]*\]\((assets\/[^)\s]+)\)/g;
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(md))) {
+        const from = path.join(notesDir, m[1].replace(/\//g, path.sep));
+        const to = path.join(folder, m[1].replace(/\//g, path.sep));
+        if (fs.existsSync(from) && !fs.existsSync(to)) {
+          try {
+            fs.renameSync(from, to);
+          } catch {
+            try {
+              fs.copyFileSync(from, to);
+              fs.unlinkSync(from);
+            } catch {
+              /* ignore */
+            }
+          }
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+    upd.run(dest, folder, new Date().toISOString(), r.id);
+  }
+  // 全局截图目录迁空后可删除
+  try {
+    if (fs.existsSync(oldAssetsDir) && fs.readdirSync(oldAssetsDir).length === 0) {
+      fs.rmdirSync(oldAssetsDir);
+    }
+  } catch {
+    /* ignore */
+  }
 }
 
 /**
@@ -189,6 +308,7 @@ export function initDatabase(): void {
     const verBefore = db.pragma('user_version', { simple: true }) as number;
     db.exec(SCHEMA_SQL);
     migrateSchema(db);
+    migrateNoteFolders(db);
     remapLegacyPdfPaths(db);
     if (verBefore < 4) materializeLegacyFolders();
   } catch (err) {
@@ -209,6 +329,7 @@ export function initDatabase(): void {
     const verBefore = db.pragma('user_version', { simple: true }) as number;
     db.exec(SCHEMA_SQL);
     migrateSchema(db);
+    migrateNoteFolders(db);
     remapLegacyPdfPaths(db);
     if (verBefore < 4) materializeLegacyFolders();
   }

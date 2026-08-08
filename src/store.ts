@@ -18,6 +18,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   defaultImportDir: '',
   updateUrl: 'https://myp-super.github.io/MinePDF/update.json',
   updateAutoCheck: true,
+  pdfDefaultApp: false,
   libraryPath: '',
   libraryPdfDir: '',
 };

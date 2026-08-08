@@ -3,7 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { pathToFileURL } from 'url';
 import { closeDb, initDatabase } from './db/database';
-import { registerIpc, setMainWindow } from './ipc/register';
+import { ensureNoForcedPdfAssociation, registerIpc, setMainWindow } from './ipc/register';
 import { startLibraryWatcher, stopLibraryWatcher } from './services/libraryWatcher';
 import { checkForUpdates } from './services/updater';
 import { getSettings } from './services/settings';
@@ -226,6 +226,14 @@ async function createMainWindow(): Promise<BrowserWindow> {
               window.pkm.saveNoteImage(pdf.id, 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='),
             );
             if (imgRel) await step('noteImageAsset', () => String(imgRel).startsWith('assets/'));
+            const note2 = await step('noteAfterImage', () => window.pkm.getNote(pdf.id));
+            if (note2) {
+              await step('noteDirSet', () =>
+                !!note2.noteDir &&
+                !!note2.noteFile &&
+                note2.noteFile.indexOf(note2.noteDir) === 0,
+              );
+            }
             const ann = await step('createAnnotation', () => window.pkm.createAnnotation({ pdfId: pdf.id, page: 1, content: '测试高亮', note: '备注', position: JSON.stringify([{x:10,y:20,w:100,h:12}]), color: '#fde047' }));
             if (ann) {
               await step('updateAnnotation', () => window.pkm.updateAnnotation(ann.id, { note: '更新的备注' }));
@@ -523,6 +531,10 @@ app.whenReady().then(async () => {
   console.log('[main] ipc registered');
   initDatabase();
   console.log('[main] database initialized');
+  if (!smokeTest) {
+    // 旧版本安装包强写过的 .pdf 关联，只要用户没主动开启就自动撤销
+    void ensureNoForcedPdfAssociation();
+  }
   startLibraryWatcher(() => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('library:changed');

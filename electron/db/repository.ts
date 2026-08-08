@@ -54,15 +54,25 @@ function sanitizeFilename(name: string): string {
   return name.replace(/[<>:"/\\|?*\u0000-\u001f]/g, '').trim() || '笔记';
 }
 
-/** data/notes 下的唯一笔记文件名：<标题> 笔记.md / (1).md ... */
-function uniqueNotePath(dir: string, base: string): string {
-  let candidate = path.join(dir, `${base}.md`);
-  let i = 1;
-  while (fs.existsSync(candidate)) {
-    candidate = path.join(dir, `${base} (${i}).md`);
+/**
+ * One note = one dedicated folder (Obsidian style):
+ *   data/notes/<PDF title>/
+ *     ├── <PDF title> 笔记.md
+ *     └── assets/          (screenshots owned by this note)
+ */
+function noteFolderFor(pdf: PdfRecord): { dir: string; file: string } {
+  const notesDir = path.join(getDataDir(), 'notes');
+  fs.mkdirSync(notesDir, { recursive: true });
+  const base = sanitizeFilename(pdf.title) || '笔记';
+  let folder = path.join(notesDir, base);
+  let i = 2;
+  const db = getDb();
+  while (fs.existsSync(folder) && !db.prepare('SELECT id FROM notes WHERE note_dir = ?').get(folder)) {
+    folder = path.join(notesDir, `${base} (${i})`);
     i++;
   }
-  return candidate;
+  fs.mkdirSync(path.join(folder, 'assets'), { recursive: true });
+  return { dir: folder, file: path.join(folder, `${path.basename(folder)} 笔记.md`) };
 }
 
 const ILLEGAL_FOLDER_CHARS = /[<>:"/\\|?*\u0000-\u001f]/;
@@ -518,7 +528,9 @@ export const repository = {
   deletePdf(id: number): void {
     const db = getDb();
     const pdf = this.getPdf(id);
-    const noteRow = db.prepare('SELECT note_file FROM notes WHERE pdf_id = ?').get(id) as Row | undefined;
+    const noteRow = db
+      .prepare('SELECT note_file, note_dir FROM notes WHERE pdf_id = ?')
+      .get(id) as Row | undefined;
     db.prepare('DELETE FROM pdfs WHERE id = ?').run(id);
     // Files inside the managed Library tree are owned by the app; remove them.
     if (pdf) {
@@ -533,7 +545,14 @@ export const repository = {
       }
     }
     // Clean up mirror files（笔记文件、旧版 <id>.md、标注镜像）
-    if (noteRow && noteRow.note_file) {
+    if (noteRow && noteRow.note_dir) {
+      try {
+        const dir = String(noteRow.note_dir);
+        if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true });
+      } catch {
+        /* ignore */
+      }
+    } else if (noteRow && noteRow.note_file) {
       try {
         if (fs.existsSync(String(noteRow.note_file))) fs.unlinkSync(String(noteRow.note_file));
       } catch {
@@ -655,6 +674,7 @@ export const repository = {
       pdfId: Number(r.pdf_id),
       markdown: String(r.markdown),
       noteFile: r.note_file ? String(r.note_file) : undefined,
+      noteDir: r.note_dir ? String(r.note_dir) : undefined,
       updatedAt: String(r.updated_time),
     };
   },
@@ -664,22 +684,32 @@ export const repository = {
     const t = now();
     // 首次写笔记时，在 data/notes 下创建「PDF标题 笔记.md」可读镜像文件
     let noteFile: string | null = null;
+    let noteDir: string | null = null;
     const pdf = this.getPdf(pdfId);
-    if (pdf) {
-      const dir = path.join(getDataDir(), 'notes');
-      fs.mkdirSync(dir, { recursive: true });
-      const base = sanitizeFilename(`${pdf.title} 笔记`);
-      noteFile = uniqueNotePath(dir, base);
+    const existing = db
+      .prepare('SELECT note_file, note_dir FROM notes WHERE pdf_id = ?')
+      .get(pdfId) as Row | undefined;
+    if (existing?.note_file) {
+      noteFile = String(existing.note_file);
+      noteDir = existing.note_dir ? String(existing.note_dir) : null;
+    } else if (pdf) {
+      const folder = noteFolderFor(pdf);
+      noteDir = folder.dir;
+      noteFile = folder.file;
     }
     db.prepare(
-      `INSERT INTO notes (pdf_id, markdown, note_file, updated_time) VALUES (?, ?, ?, ?)
+      `INSERT INTO notes (pdf_id, markdown, note_file, note_dir, updated_time) VALUES (?, ?, ?, ?, ?)
        ON CONFLICT(pdf_id) DO UPDATE SET
          markdown = excluded.markdown,
          note_file = COALESCE(notes.note_file, excluded.note_file),
+         note_dir = COALESCE(notes.note_dir, excluded.note_dir),
          updated_time = excluded.updated_time`,
-    ).run(pdfId, markdown, noteFile, t);
-    const row = db.prepare('SELECT note_file FROM notes WHERE pdf_id = ?').get(pdfId) as Row | undefined;
+    ).run(pdfId, markdown, noteFile, noteDir, t);
+    const row = db
+      .prepare('SELECT id, note_file, note_dir FROM notes WHERE pdf_id = ?')
+      .get(pdfId) as Row | undefined;
     const file = row && row.note_file ? String(row.note_file) : noteFile;
+    const dir = row && row.note_dir ? String(row.note_dir) : noteDir;
     if (file) {
       try {
         fs.writeFileSync(file, markdown, 'utf8');
@@ -687,7 +717,48 @@ export const repository = {
         /* mirror failure does not affect main flow */
       }
     }
-    return { id: 0, pdfId, markdown, noteFile: file ?? undefined, updatedAt: t };
+    return {
+      id: Number(row?.id ?? 0),
+      pdfId,
+      markdown,
+      noteFile: file ?? undefined,
+      noteDir: dir ?? undefined,
+      updatedAt: t,
+    };
+  },
+
+  /**
+   * Save a screenshot into this note's own assets/ directory and return the
+   * Markdown-relative reference (assets/xxx.png) so it travels with the note
+   * folder and survives moves/renames.
+   */
+  saveNoteImage(pdfId: number, dataUrl: string): string {
+    const m = /^data:image\/png;base64,(.+)$/.exec(dataUrl);
+    if (!m) throw new Error('无效的图片数据');
+    const pdf = this.getPdf(pdfId);
+    if (!pdf) throw new Error('PDF 记录不存在');
+    const db = getDb();
+    let row = db
+      .prepare('SELECT note_file, note_dir FROM notes WHERE pdf_id = ?')
+      .get(pdfId) as Row | undefined;
+    let noteDir = row?.note_dir ? String(row.note_dir) : null;
+    if (!noteDir) {
+      const folder = noteFolderFor(pdf);
+      noteDir = folder.dir;
+      db.prepare(
+        `INSERT INTO notes (pdf_id, markdown, note_file, note_dir, updated_time)
+         VALUES (?, '', ?, ?, ?)
+         ON CONFLICT(pdf_id) DO UPDATE SET
+           note_file = COALESCE(notes.note_file, excluded.note_file),
+           note_dir = COALESCE(notes.note_dir, excluded.note_dir),
+           updated_time = excluded.updated_time`,
+      ).run(pdfId, path.join(noteDir, `${path.basename(noteDir)} 笔记.md`), noteDir, now());
+    }
+    const assetsDir = path.join(noteDir!, 'assets');
+    fs.mkdirSync(assetsDir, { recursive: true });
+    const file = path.join(assetsDir, `${Date.now()}.png`);
+    fs.writeFileSync(file, Buffer.from(m[1], 'base64'));
+    return `assets/${path.basename(file)}`;
   },
 
   // ---------- annotations ----------

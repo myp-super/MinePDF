@@ -804,7 +804,7 @@ function ScreenshotOverlay({
         setRect(init);
       }}
       onDoubleClick={onClose}
-      title={t('note.screenshot')}
+      title={t('note.screenshotHint')}
     >
       {rect && !dataUrl && rect.w > 0 && rect.h > 0 && (
         <div

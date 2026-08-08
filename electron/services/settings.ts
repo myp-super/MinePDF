@@ -11,6 +11,8 @@ const DEFAULTS: AppSettings = {
   // 内置默认更新源：用户安装后即可自动检查更新（可在设置中修改或留空关闭）
   updateUrl: 'https://myp-super.github.io/MinePDF/update.json',
   updateAutoCheck: true,
+  /** 用户是否主动选择 MinePDF 作为默认 PDF 应用（用于启动时清理旧版本强写的关联） */
+  pdfDefaultApp: false,
   libraryPath: '',
   libraryPdfDir: '',
 };

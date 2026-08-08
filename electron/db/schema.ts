@@ -41,7 +41,10 @@ CREATE TABLE IF NOT EXISTS notes (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   pdf_id INTEGER NOT NULL UNIQUE REFERENCES pdfs(id) ON DELETE CASCADE,
   markdown TEXT NOT NULL DEFAULT '',
+  /** 笔记主文件（Markdown）的绝对路径：data/notes/<PDF标题>/<PDF标题> 笔记.md */
   note_file TEXT,
+  /** 笔记目录（含主 md 与截图 assets/）的绝对路径：data/notes/<PDF标题> */
+  note_dir TEXT,
   updated_time TEXT NOT NULL
 );
 
@@ -63,5 +66,5 @@ CREATE INDEX IF NOT EXISTS idx_pdf_tags_pdf ON pdf_tags(pdf_id);
 CREATE INDEX IF NOT EXISTS idx_pdf_tags_tag ON pdf_tags(tag_id);
 CREATE INDEX IF NOT EXISTS idx_notes_pdf ON notes(pdf_id);
 CREATE INDEX IF NOT EXISTS idx_annotations_pdf ON annotations(pdf_id);
-PRAGMA user_version = 4;
+PRAGMA user_version = 5;
 `;
