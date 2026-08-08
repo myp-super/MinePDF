@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="theme-color" content="#0d0f13" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; script-src 'self' 'unsafe-inline';"
+    />
+    <title>MinePDF</title>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { height: 100%; }
+      body {
+        background: radial-gradient(1000px 520px at 50% -12%, #15181f 0%, #0d0f13 55%, #090b0e 100%);
+        color: #e6edf3;
+        font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+        display: flex; align-items: center; justify-content: center;
+        overflow: hidden; user-select: none;
+      }
+      .wrap { text-align: center; width: 340px; }
+      .logo {
+        width: 92px; height: 92px;
+        filter: drop-shadow(0 8px 20px rgba(76, 111, 214, 0.28));
+        animation: pop 0.7s cubic-bezier(0.2, 0.8, 0.3, 1) both;
+      }
+      h1 {
+        margin-top: 22px;
+        font-size: 19px; font-weight: 600; letter-spacing: 0.4px;
+        animation: fade 0.9s ease 0.15s both;
+      }
+      .step {
+        margin-top: 14px;
+        height: 18px;
+        font-size: 12.5px; color: #8b98ab; letter-spacing: 0.3px;
+        transition: opacity 0.25s ease;
+      }
+      .bar {
+        margin-top: 14px; height: 3px; border-radius: 2px;
+        background: #22262e; overflow: hidden;
+      }
+      .fill {
+        height: 100%; width: 0%;
+        border-radius: 2px;
+        background: #5b8def;
+        animation: grow 2.4s cubic-bezier(0.25, 0.7, 0.3, 1) 0.2s both;
+      }
+      .ver { margin-top: 18px; font-size: 11px; color: #4b5668; }
+      @keyframes pop {
+        from { opacity: 0; transform: scale(0.82); }
+        to { opacity: 1; transform: scale(1); }
+      }
+      @keyframes fade {
+        from { opacity: 0; transform: translateY(6px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+      @keyframes grow {
+        from { width: 0%; }
+        to { width: 92%; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .logo, h1, .fill { animation: none; }
+        .fill { width: 92%; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <img class="logo" src="./logo.svg" alt="MinePDF" />
+      <h1>MinePDF</h1>
+      <p class="step" id="step">正在初始化数据库…</p>
+      <div class="bar"><div class="fill"></div></div>
+      <p class="ver">v1.0.0</p>
+    </div>
+    <script>
+      var steps = ['正在初始化数据库…', '正在加载文件库…', '正在启动主界面…'];
+      var i = 0;
+      var stepEl = document.getElementById('step');
+      setInterval(function () {
+        i = Math.min(i + 1, steps.length - 1);
+        stepEl.textContent = steps[i];
+        stepEl.style.opacity = 0;
+        setTimeout(function () { stepEl.style.opacity = 1; }, 260);
+      }, 750);
+    </script>
+  </body>
+</html>

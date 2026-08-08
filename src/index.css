@@ -1,0 +1,347 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root,
+[data-theme='dark'] {
+  color-scheme: dark;
+  --app-base: #0d0f13;
+  --app-panel: #14161b;
+  --app-panel2: #1b1e25;
+  --app-border: #262a33;
+  --app-text: #e8eaf0;
+  --app-muted: #98a1b3;
+  --app-accent: #5b8def;
+  --app-accent2: #2fb8a5;
+  --app-danger: #e56b6b;
+  --app-highlight: #d9b23f;
+  --app-canvas: #0a0c0f;
+}
+
+[data-theme='light'] {
+  color-scheme: light;
+  --app-base: #f4f5f7;
+  --app-panel: #ffffff;
+  --app-panel2: #eef0f4;
+  --app-border: #d9dde4;
+  --app-text: #1d2129;
+  --app-muted: #697386;
+  --app-accent: #3f6fd8;
+  --app-accent2: #0e8f7c;
+  --app-danger: #cf4a4a;
+  --app-highlight: #b8912e;
+  --app-canvas: #e3e6eb;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+  background: var(--app-base);
+  color: var(--app-text);
+  overflow: hidden;
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+::selection {
+  background: rgba(91, 141, 255, 0.32);
+}
+
+/* ---------- scrollbars ---------- */
+*::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+*::-webkit-scrollbar-thumb {
+  background: #2a2f3a;
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: #38404d;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* ---------- PDF.js text layer: official rules keep selection stable ---------- */
+.textLayer {
+  position: absolute;
+  text-align: initial;
+  inset: 0;
+  overflow: clip;
+  opacity: 1;
+  line-height: 1;
+  -webkit-text-size-adjust: none;
+  -moz-text-size-adjust: none;
+  text-size-adjust: none;
+  forced-color-adjust: none;
+  transform-origin: 0 0;
+  caret-color: CanvasText;
+  z-index: 0;
+}
+
+.textLayer :is(span, br) {
+  color: transparent;
+  position: absolute;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0% 0%;
+}
+
+.textLayer > :not(.markedContent),
+.textLayer .markedContent span:not(.markedContent) {
+  z-index: 1;
+}
+
+.textLayer span[role='img'] {
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  user-select: none;
+  cursor: default;
+}
+
+.textLayer ::selection {
+  background: rgba(91, 141, 255, 0.32);
+}
+
+.textLayer br::selection {
+  background: transparent;
+}
+
+.textLayer .endOfContent {
+  display: block;
+  position: absolute;
+  inset: 100% 0 0;
+  z-index: 0;
+  cursor: default;
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  user-select: none;
+}
+
+.textLayer.selecting .endOfContent {
+  top: 0;
+}
+
+/* ---------- PDF.js annotation layer (internal links / cross references) ---------- */
+.annotationLayer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+  transform-origin: 0 0;
+  z-index: 3;
+}
+.annotationLayer section {
+  position: absolute;
+  text-align: initial;
+  pointer-events: auto;
+  box-sizing: border-box;
+  transform-origin: 0 0;
+}
+.annotationLayer .linkAnnotation > a {
+  position: absolute;
+  font-size: 1em;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+}
+.annotationLayer .linkAnnotation:not(.hasBorder) > a:hover {
+  opacity: 0.2;
+  background-color: rgb(255 255 0);
+  box-shadow: 0 2px 10px rgb(255 255 0);
+}
+.annotationLayer .linkAnnotation.hasBorder:hover {
+  background-color: rgb(255 255 0 / 0.2);
+}
+
+/* ---------- highlight / search overlays ---------- */
+.annotation-hl {
+  position: absolute;
+  pointer-events: auto;
+  cursor: pointer;
+  border-radius: 1px;
+  mix-blend-mode: multiply;
+  z-index: 20;
+}
+.annotation-hl:hover {
+  outline: 1px solid rgba(255, 255, 255, 0.6);
+}
+.annotation-hl.selected {
+  outline: 2px solid var(--app-accent2);
+}
+.search-hl {
+  position: absolute;
+  background: rgba(34, 211, 238, 0.38);
+  outline: 1px solid rgba(34, 211, 238, 0.85);
+  pointer-events: none;
+  border-radius: 1px;
+  z-index: 18;
+}
+
+/* ---------- custom title bar drag region ---------- */
+.titlebar-drag {
+  -webkit-app-region: drag;
+}
+.titlebar-no-drag {
+  -webkit-app-region: no-drag;
+}
+
+/* ---------- Markdown preview ---------- */
+.md-body {
+  line-height: 1.75;
+  font-size: 13.5px;
+  color: var(--app-text);
+  word-break: break-word;
+}
+.md-body h1,
+.md-body h2,
+.md-body h3,
+.md-body h4 {
+  margin: 1.1em 0 0.5em;
+  font-weight: 600;
+  line-height: 1.35;
+  text-wrap: balance;
+}
+.md-body h1 {
+  font-size: 1.4em;
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid var(--app-border);
+}
+.md-body h2 {
+  font-size: 1.22em;
+}
+.md-body h3 {
+  font-size: 1.08em;
+}
+.md-body p {
+  margin: 0.55em 0;
+}
+.md-body ul,
+.md-body ol {
+  padding-left: 1.4em;
+  margin: 0.55em 0;
+}
+.md-body ul {
+  list-style: disc;
+}
+.md-body ol {
+  list-style: decimal;
+}
+.md-body li {
+  margin: 0.2em 0;
+}
+.md-body blockquote {
+  border-left: 3px solid var(--app-accent);
+  padding-left: 0.9em;
+  margin: 0.7em 0;
+  color: var(--app-muted);
+}
+.md-body code {
+  font-family: 'Cascadia Code', Consolas, monospace;
+  font-size: 0.9em;
+  background: var(--app-panel2);
+  border: 1px solid var(--app-border);
+  border-radius: 4px;
+  padding: 0.12em 0.35em;
+}
+.md-body pre {
+  background: #0c0f16;
+  border: 1px solid var(--app-border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  overflow-x: auto;
+  margin: 0.7em 0;
+}
+.md-body pre code {
+  background: transparent;
+  border: none;
+  padding: 0;
+  color: #d6e2f2;
+}
+.md-body table {
+  border-collapse: collapse;
+  margin: 0.7em 0;
+  width: 100%;
+}
+.md-body th,
+.md-body td {
+  border: 1px solid var(--app-border);
+  padding: 5px 9px;
+  text-align: left;
+}
+.md-body th {
+  background: var(--app-panel2);
+}
+.md-body .katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 4px 0;
+}
+
+/* ---------- PDF page sheet ---------- */
+.pdf-page-sheet {
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.35),
+    0 6px 22px rgba(0, 0, 0, 0.22);
+}
+
+/* ---------- animations (respect reduced-motion) ---------- */
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.animate-toast {
+  animation: toast-in 0.22s ease both;
+}
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.animate-fade {
+  animation: fade-in 0.18s ease both;
+}
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: scale(0.98) translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+.animate-pop {
+  animation: pop-in 0.16s ease both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

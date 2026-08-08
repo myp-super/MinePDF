@@ -1,0 +1,94 @@
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
+import type { PkmApi } from '../src/shared/types';
+
+interface InvokeResult<T> {
+  ok: boolean;
+  data?: T;
+  error?: string;
+}
+
+/** 统一 IPC 调用：自动解包 { ok, data | error } 并抛错 */
+async function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
+  let res: InvokeResult<T>;
+  try {
+    res = (await ipcRenderer.invoke(channel, ...args)) as InvokeResult<T>;
+  } catch (err) {
+    console.error('[preload:invoke-failed]', channel, err);
+    throw err;
+  }
+  if (!res?.ok) throw new Error(res?.error ?? `IPC 调用失败: ${channel}`);
+  return res.data as T;
+}
+
+function subscribe(channel: string, cb: (value: unknown) => void): () => void {
+  const listener = (_event: unknown, value: unknown): void => cb(value);
+  ipcRenderer.on(channel, listener);
+  return () => ipcRenderer.removeListener(channel, listener);
+}
+
+const api: PkmApi = {
+  getAppInfo: () => invoke('app:info'),
+  getSnapshot: () => invoke('library:snapshot'),
+
+  createFolder: (name, parentId) => invoke('folder:create', name, parentId),
+  renameFolder: (id, name) => invoke('folder:rename', id, name),
+  deleteFolder: (id) => invoke('folder:delete', id),
+  moveFolder: (id, parentId) => invoke('folder:move', id, parentId),
+
+  importPdfs: (paths, folderId, opts) => invoke('pdf:import', paths, folderId, opts),
+  deletePdf: (id) => invoke('pdf:delete', id),
+  movePdf: (id, folderId) => invoke('pdf:move', id, folderId),
+  updatePdfTitle: (id, title) => invoke('pdf:update-title', id, title),
+  updatePdfPageCount: (id, count) => invoke('pdf:update-page-count', id, count),
+  relocatePdf: (id) => invoke('pdf:relocate', id),
+  revealPdf: (id) => invoke('pdf:reveal', id),
+  revealFolder: (id) => invoke('folder:reveal', id),
+  scanLibrary: () => invoke('library:scan'),
+  openLibraryFolder: () => invoke('library:open-folder'),
+  readPdf: async (id) => {
+    const bytes = await invoke<Uint8Array>('pdf:read', id);
+    return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+  },
+  openPdfExternal: (id) => invoke('pdf:open-external', id),
+
+  addTag: (pdfId, name) => invoke('tag:add', pdfId, name),
+  removeTag: (pdfId, tagId) => invoke('tag:remove', pdfId, tagId),
+  deleteTag: (tagId) => invoke('tag:delete', tagId),
+
+  getNote: (pdfId) => invoke('note:get', pdfId),
+  saveNote: (pdfId, markdown) => invoke('note:save', pdfId, markdown),
+
+  listAnnotations: (pdfId) => invoke('annotation:list', pdfId),
+  createAnnotation: (data) => invoke('annotation:create', data),
+  updateAnnotation: (id, patch) => invoke('annotation:update', id, patch),
+  deleteAnnotation: (id) => invoke('annotation:delete', id),
+
+  search: (q) => invoke('search:query', q),
+
+  getSettings: () => invoke('settings:get'),
+  updateSettings: (patch) => invoke('settings:update', patch),
+  checkForUpdates: () => invoke('update:check'),
+  openExternalUrl: (url) => invoke('app:open-url', url),
+  chooseDirectory: (title) => invoke('settings:choose-dir', title),
+  openDataFolder: () => invoke('data:open-folder'),
+  backupData: () => invoke('data:backup'),
+
+  openPdfDialog: () => invoke('dialog:open-pdfs'),
+  openFolderDialog: () => invoke('dialog:open-folder'),
+
+  minimize: () => invoke('window:minimize'),
+  toggleMaximize: () => invoke('window:toggle-maximize'),
+  close: () => invoke('window:close'),
+  setFullScreen: (flag) => invoke('window:set-fullscreen', flag),
+  isFullScreen: () => invoke('window:is-fullscreen'),
+  isMaximized: () => invoke('window:is-maximized'),
+  onFullScreenChange: (cb) => subscribe('window:fullscreen-changed', (v) => cb(Boolean(v))),
+  onMaximizedChange: (cb) => subscribe('window:maximized-changed', (v) => cb(Boolean(v))),
+  onLibraryChanged: (cb) => subscribe('library:changed', () => cb()),
+  onUpdateAvailable: (cb) =>
+    subscribe('update:available', (v) => cb(v as never)),
+
+  getPathForFile: (file) => webUtils.getPathForFile(file),
+};
+
+contextBridge.exposeInMainWorld('pkm', api);

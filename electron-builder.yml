@@ -1,0 +1,44 @@
+appId: com.minepdf.desktop
+productName: MinePDF
+copyright: Copyright © 2026 MinePDF
+
+directories:
+  output: release
+  buildResources: build
+
+files:
+  - dist/**
+  - dist-electron/**
+  - package.json
+  - "!**/*.map"
+
+asarUnpack:
+  - "**/node_modules/better-sqlite3/**"
+
+win:
+  icon: build/icon.ico
+  target:
+    - target: nsis
+      arch: [x64]
+    - target: portable
+      arch: [x64]
+  executableName: MinePDF
+
+nsis:
+  artifactName: ${productName} Setup ${version}.${ext}
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: always
+  createStartMenuShortcut: true
+  shortcutName: MinePDF
+  deleteAppDataOnUninstall: false
+
+portable:
+  artifactName: ${productName} ${version} Portable.${ext}
+
+electronLanguages:
+  - zh-CN
+  - en-US
+
+npmRebuild: true
