@@ -1,8 +1,8 @@
 {
-  "url": "https://github.com/myp-super/MinePDF/releases/download/v1.2.5/MinePDF.Setup.1.2.5.exe",
   "publishDate": "2026-08-08",
-  "version": "1.2.5",
   "notes": [
-    "v1.2.5 - PDF 放大后抓手拖拽平移"
-  ]
+    "v1.2.6 - 高亮整块合并+下载镜像加速+截图选区原色"
+  ],
+  "version": "1.2.6",
+  "url": "https://github.com/myp-super/MinePDF/releases/download/v1.2.6/MinePDF.Setup.1.2.6.exe"
 }
