@@ -29,9 +29,12 @@ function isNewer(latest: string, current: string): boolean {
  */
 export async function checkForUpdates(): Promise<UpdateResult> {
   const currentVersion = process.env.npm_package_version ?? app.getVersion();
-  const url = getSettings().updateUrl.trim();
+  let url = getSettings().updateUrl.trim();
   if (!url) return { status: 'disabled', currentVersion };
   try {
+    // GitHub Pages 对 update.json 有 10 分钟 CDN 缓存，追加时间戳绕过
+    const sep = url.includes('?') ? '&' : '?';
+    url = `${url}${sep}_=${Date.now()}`;
     const res = await net.fetch(url);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = (await res.json()) as {
