@@ -149,6 +149,8 @@ export const useApp = create<AppState>((set, get) => ({
   },
   toggleSidebarCollapsed: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
   toast: (kind, text) => {
+    // 成功/信息类操作提示不再弹出（直接操作即可）；仅保留错误提示
+    if (kind !== 'error') return;
     const id = toastSeq++;
     set((s) => ({ toasts: [...s.toasts, { id, kind, text }] }));
     setTimeout(() => get().dismissToast(id), 4600);

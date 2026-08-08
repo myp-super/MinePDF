@@ -7,7 +7,6 @@ import {
   FolderOpen,
   FolderPlus,
   FolderSearch,
-  Hash,
   Import,
   Inbox as InboxIcon,
   Library,
@@ -640,57 +639,6 @@ export function Sidebar() {
             ))}
           </div>
         )}
-      </div>
-
-      <div className="max-h-44 overflow-y-auto border-t border-app-border px-3 py-2.5">
-        <div className="mb-1.5 flex items-center justify-between">
-          <span className="text-[11px] font-medium text-app-muted">{t('sidebar.tags')}</span>
-          <span className="text-[10px] text-app-muted">{tags.length}</span>
-        </div>
-        <div className="flex flex-wrap gap-1">
-          {tags.length === 0 && <span className="text-[11px] text-app-muted/70">{t('sidebar.tagsEmpty')}</span>}
-          {tags.map((tg) => {
-            const count = pdfs.filter((p) => p.tags.some((x) => x.id === tg.id)).length;
-            const active = tagFilterId === tg.id;
-            return (
-              <button
-                key={tg.id}
-                className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10.5px] transition-colors ${
-                  active
-                    ? 'border-app-accent bg-app-accent/15 text-app-accent'
-                    : 'border-app-border text-app-muted hover:border-app-accent/40 hover:text-app-text'
-                }`}
-                onClick={() => setTagFilter(active ? null : tg.id)}
-                onContextMenu={(e) => {
-                  e.preventDefault();
-                  setMenu({
-                    x: e.clientX,
-                    y: e.clientY,
-                    items: [
-                      {
-                        label: t('sidebar.deleteTag'),
-                        danger: true,
-                        icon: <Trash2 size={12} />,
-                        onClick: async () => {
-                          try {
-                            await window.pkm.deleteTag(tg.id);
-                            await refresh();
-                          } catch (err) {
-                            toast('error', terr(err instanceof Error ? err.message : String(err)));
-                          }
-                        },
-                      },
-                    ],
-                  });
-                }}
-              >
-                <Hash size={10} />
-                {tg.name}
-                <span className="opacity-60">{count}</span>
-              </button>
-            );
-          })}
-        </div>
       </div>
 
       <div className="border-t border-app-border px-2.5 py-2">
