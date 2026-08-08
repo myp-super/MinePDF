@@ -1,8 +1,8 @@
 {
+  "version": "1.3.0",
+  "url": "https://github.com/myp-super/MinePDF/releases/download/v1.3.0/MinePDF.Setup.1.3.0.exe",
   "notes": [
-    "v1.2.9 - 沉浸式阅读（收起边栏+放大）；截图框可拖动/调整大小"
+    "v1.3.0 - 应用显示名统一为 MinePDF"
   ],
-  "url": "https://github.com/myp-super/MinePDF/releases/download/v1.2.9/MinePDF.Setup.1.2.9.exe",
-  "version": "1.2.9",
   "publishDate": "2026-08-08"
 }
