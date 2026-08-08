@@ -1,8 +1,8 @@
 {
-  "version": "1.2.3",
   "notes": [
-    "v1.2.3 - 修复截图选区交互：退出/复制/插入正常，Esc 可退出"
+    "v1.2.4 - 界面字体升级：Codex 同款 Geist，全局字号加大"
   ],
-  "url": "https://github.com/myp-super/MinePDF/releases/download/v1.2.3/MinePDF.Setup.1.2.3.exe",
-  "publishDate": "2026-08-08"
+  "url": "https://github.com/myp-super/MinePDF/releases/download/v1.2.4/MinePDF.Setup.1.2.4.exe",
+  "publishDate": "2026-08-08",
+  "version": "1.2.4"
 }
