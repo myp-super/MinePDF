@@ -1,8 +1,8 @@
 {
-  "notes": [
-    "v1.2.4 - 界面字体升级：Codex 同款 Geist，全局字号加大"
-  ],
-  "url": "https://github.com/myp-super/MinePDF/releases/download/v1.2.4/MinePDF.Setup.1.2.4.exe",
+  "url": "https://github.com/myp-super/MinePDF/releases/download/v1.2.5/MinePDF.Setup.1.2.5.exe",
   "publishDate": "2026-08-08",
-  "version": "1.2.4"
+  "version": "1.2.5",
+  "notes": [
+    "v1.2.5 - PDF 放大后抓手拖拽平移"
+  ]
 }
