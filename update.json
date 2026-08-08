@@ -1,8 +1,8 @@
 {
+  "version": "1.2.3",
   "notes": [
-    "v1.2.2 - 笔记独立目录+截图归位，默认应用不再强制占用"
+    "v1.2.3 - 修复截图选区交互：退出/复制/插入正常，Esc 可退出"
   ],
-  "publishDate": "2026-08-08",
-  "version": "1.2.2",
-  "url": "https://github.com/myp-super/MinePDF/releases/download/v1.2.2/MinePDF.Setup.1.2.2.exe"
+  "url": "https://github.com/myp-super/MinePDF/releases/download/v1.2.3/MinePDF.Setup.1.2.3.exe",
+  "publishDate": "2026-08-08"
 }
