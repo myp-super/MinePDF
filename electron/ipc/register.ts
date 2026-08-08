@@ -1,4 +1,4 @@
-import { BrowserWindow, dialog, ipcMain, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
 import fs from 'fs';
 import type {
   AnnotationRecord,
@@ -90,7 +90,7 @@ export function registerIpc(): void {
 
   // ---------- 应用信息 ----------
   handle<AppInfo>('app:info', () => ({
-    version: process.env.npm_package_version ?? '1.0.0',
+    version: app.getVersion(),
     dataDir: getDataDir(),
     libraryDir: getLibraryRoot(),
     isPackaged: !process.env.VITE_DEV_SERVER_URL,

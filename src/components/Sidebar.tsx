@@ -17,7 +17,7 @@ import {
   Settings,
   Trash2,
 } from 'lucide-react';
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useT, useTError } from '../i18n';
 import type { Folder as FolderType, PdfRecord } from '../shared/types';
 import { useApp } from '../store';
@@ -81,6 +81,14 @@ export function Sidebar() {
   const [menu, setMenu] = useState<{ x: number; y: number; items: ContextMenuItem[] } | null>(null);
   const [importMenu, setImportMenu] = useState(false);
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
+  const [appVersion, setAppVersion] = useState('1.0.0');
+
+  useEffect(() => {
+    void window.pkm
+      .getAppInfo()
+      .then((info) => setAppVersion(info.version))
+      .catch(() => undefined);
+  }, []);
 
   const topFolders = useMemo(
     () => folders.filter((f) => f.parentId === null).sort((a, b) => a.name.localeCompare(b.name, 'zh')),
@@ -464,7 +472,7 @@ export function Sidebar() {
           <span className="shrink-0 text-[10px] text-app-muted/70">{t('sidebar.open')}</span>
         </button>
         <div className="mt-1 flex items-center justify-between px-1.5">
-          <span className="text-[10px] text-app-muted/60">{t('app.version')}</span>
+          <span className="text-[10px] text-app-muted/60">v{appVersion}</span>
           <IconButton title={t('sidebar.settings')} onClick={() => setView('settings')}>
             <Settings size={14} />
           </IconButton>

@@ -9,6 +9,7 @@ import { UpdateModal } from './UpdateModal';
 export function TitleBar() {
   const t = useT();
   const [maximized, setMaximized] = useState(false);
+  const [appVersion, setAppVersion] = useState('1.0.0');
   const [updateOpen, setUpdateOpen] = useState(false);
   const [updatePending, setUpdatePending] = useState<UpdateResult | null>(null);
   const activePdf = useApp((s) => s.pdfs.find((p) => p.id === s.activePdfId));
@@ -17,6 +18,13 @@ export function TitleBar() {
   useEffect(() => {
     void window.pkm.isMaximized().then(setMaximized);
     return window.pkm.onMaximizedChange(setMaximized);
+  }, []);
+
+  useEffect(() => {
+    void window.pkm
+      .getAppInfo()
+      .then((info) => setAppVersion(info.version))
+      .catch(() => undefined);
   }, []);
 
   useEffect(() => {
@@ -48,7 +56,7 @@ export function TitleBar() {
         />
         <span className="text-[12px] font-semibold tracking-wide text-app-text">{t('app.name')}</span>
         <span className="rounded border border-app-border px-1 py-px text-[9px] leading-none text-app-muted">
-          {t('app.version')}
+          v{appVersion}
         </span>
       </div>
       <div className="min-w-0 flex-1 px-4 text-center">
