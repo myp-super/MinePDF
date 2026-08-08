@@ -28,19 +28,15 @@ function uniqueTargetPath(dir: string, filename: string): string {
   return candidate;
 }
 
-async function collectFiles(inputPaths: string[], files: string[], errors: string[]): Promise<void> {
-  for (const p of inputPaths) {
-    try {
-      const st = await fs.promises.stat(p);
-      if (st.isDirectory()) {
-        await walkDir(p, files, errors);
-      } else if (st.isFile() && p.toLowerCase().endsWith('.pdf')) {
-        files.push(p);
-      }
-    } catch (err) {
-      errors.push(`${path.basename(p)}: ${err instanceof Error ? err.message : String(err)}`);
-    }
+/** Next free directory name: name / name (1) / name (2) ... */
+function uniqueDirName(dir: string, name: string): string {
+  let candidate = name;
+  let i = 1;
+  while (fs.existsSync(path.join(dir, candidate))) {
+    candidate = `${name} (${i})`;
+    i++;
   }
+  return candidate;
 }
 
 async function walkDir(dir: string, files: string[], errors: string[]): Promise<void> {
@@ -62,19 +58,16 @@ async function walkDir(dir: string, files: string[], errors: string[]): Promise<
 }
 
 /**
- * Import PDFs into the managed Library tree. The target folder is a REAL
- * directory inside Documents/MinePDF/Library (created when the folder is made
- * in the app), so the Explorer and the app always see the same structure.
+ * Import PDFs into the managed Library tree.
+ * - 单个 PDF：复制到目标文件夹；
+ * - 文件夹：以「整目录导入」方式复制到目标文件夹下（保留目录结构），
+ *   并在数据库中建立对应的文件夹层级，PDF 归入各自的子文件夹。
  */
 export async function importPdfs(
   inputPaths: string[],
   folderId: number | null,
   opts: ImportOptions = {},
 ): Promise<ImportResult> {
-  const files: string[] = [];
-  const errors: string[] = [];
-  await collectFiles(inputPaths, files, errors);
-
   const libraryDir = getLibraryPdfDir();
   fs.mkdirSync(libraryDir, { recursive: true });
   const targetDir = repository.folderFsDir(folderId);
@@ -82,17 +75,38 @@ export async function importPdfs(
   const existingByLower = new Map(
     repository.getAllFilepaths().map((f) => [f.toLowerCase(), f] as const),
   );
-  let imported = 0;
-  let skipped = 0;
   const seenSources = new Set<string>();
+  const counts = { imported: 0, skipped: 0 };
+  const errors: string[] = [];
 
-  for (const source of files) {
-    const sourceLower = source.toLowerCase();
-    if (seenSources.has(sourceLower)) {
-      continue;
+  const registerPdf = async (
+    filePath: string,
+    folderIdForPdf: number | null,
+  ): Promise<void> => {
+    const lower = filePath.toLowerCase();
+    if (existingByLower.has(lower)) {
+      if (opts.replace) {
+        repository.updatePdfByPath(filePath);
+        counts.imported++;
+      } else {
+        counts.skipped++;
+      }
+      return;
     }
-    seenSources.add(sourceLower);
+    const st = await fs.promises.stat(filePath);
+    repository.insertPdf({
+      filename: path.basename(filePath),
+      filepath: filePath,
+      title: path.basename(filePath).replace(/\.pdf$/i, ''),
+      folderId: folderIdForPdf,
+      size: st.size,
+      pageCount: guessPageCount(filePath),
+    });
+    existingByLower.set(lower, filePath);
+    counts.imported++;
+  };
 
+  const importFile = async (source: string): Promise<void> => {
     let finalPath = '';
     const alreadyManaged = isInside(source, libraryDir);
     try {
@@ -100,29 +114,7 @@ export async function importPdfs(
       if (!alreadyManaged) {
         await fs.promises.copyFile(source, finalPath);
       }
-
-      const lower = finalPath.toLowerCase();
-      if (existingByLower.has(lower)) {
-        if (opts.replace) {
-          repository.updatePdfByPath(finalPath);
-          imported++;
-        } else {
-          skipped++;
-        }
-        continue;
-      }
-
-      const st = await fs.promises.stat(finalPath);
-      repository.insertPdf({
-        filename: path.basename(finalPath),
-        filepath: finalPath,
-        title: path.basename(finalPath).replace(/\.pdf$/i, ''),
-        folderId,
-        size: st.size,
-        pageCount: guessPageCount(finalPath),
-      });
-      existingByLower.set(lower, finalPath);
-      imported++;
+      await registerPdf(finalPath, folderId);
     } catch (err) {
       if (!alreadyManaged && finalPath && fs.existsSync(finalPath)) {
         try {
@@ -133,7 +125,61 @@ export async function importPdfs(
       }
       errors.push(`${path.basename(source)}: ${err instanceof Error ? err.message : String(err)}`);
     }
+  };
+
+  const importDirectory = async (sourceDir: string): Promise<void> => {
+    try {
+      // 源目录已在库内：不复制，直接按库内路径注册
+      if (isInside(sourceDir, libraryDir)) {
+        const files: string[] = [];
+        await walkDir(sourceDir, files, errors);
+        for (const f of files) {
+          const rel = path.relative(libraryDir, f);
+          const relDir = path.dirname(rel).split(path.sep).filter(Boolean).join('/');
+          const folder = relDir ? repository.ensureFolderByRelPath(relDir) : null;
+          await registerPdf(f, folder?.id ?? null);
+        }
+        return;
+      }
+
+      // 整目录复制到目标文件夹下（保留结构）
+      const name = uniqueDirName(targetDir, path.basename(sourceDir));
+      const dest = path.join(targetDir, name);
+      await fs.promises.cp(sourceDir, dest, { recursive: true });
+
+      const files: string[] = [];
+      await walkDir(dest, files, errors);
+      for (const f of files) {
+        const rel = path.relative(libraryDir, f);
+        const relDir = path.dirname(rel).split(path.sep).filter(Boolean).join('/');
+        let folderIdForPdf: number | null = null;
+        if (relDir) {
+          folderIdForPdf = repository.ensureFolderByRelPath(relDir).id;
+        } else {
+          folderIdForPdf = folderId;
+        }
+        await registerPdf(f, folderIdForPdf);
+      }
+    } catch (err) {
+      errors.push(`${path.basename(sourceDir)}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
+
+  for (const input of inputPaths) {
+    const lower = input.toLowerCase();
+    if (seenSources.has(lower)) continue;
+    seenSources.add(lower);
+    try {
+      const st = await fs.promises.stat(input);
+      if (st.isDirectory()) {
+        await importDirectory(input);
+      } else if (st.isFile() && input.toLowerCase().endsWith('.pdf')) {
+        await importFile(input);
+      }
+    } catch (err) {
+      errors.push(`${path.basename(input)}: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 
-  return { imported, skipped, errors };
+  return { imported: counts.imported, skipped: counts.skipped, errors };
 }

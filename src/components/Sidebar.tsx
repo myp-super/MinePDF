@@ -365,16 +365,11 @@ export function Sidebar() {
       </div>
 
       {selectedPdfIds.length > 0 && (
-        <div className="mx-3 mb-2 flex items-center gap-1 rounded-md border border-app-accent/40 bg-app-accent/10 px-2 py-1">
+        <div className="mx-3 mb-2 flex items-center gap-1.5 rounded-md border border-app-accent/40 bg-app-accent/10 px-2 py-1">
           <span className="min-w-0 flex-1 truncate text-[11px] text-app-accent">
             {t('sidebar.selectedCount', { n: selectedPdfIds.length })}
           </span>
-          <Button size="sm" variant="outline" onClick={() => setMoveOpen(true)}>
-            {t('sidebar.moveTo')}
-          </Button>
-          <Button size="sm" variant="danger" onClick={batchDelete}>
-            {t('sidebar.batchDelete')}
-          </Button>
+          <span className="shrink-0 text-[10px] text-app-muted">{t('sidebar.multiHint')}</span>
           <IconButton title={t('sidebar.clearSelection')} onClick={clearSelectedPdfs}>
             <X size={13} />
           </IconButton>

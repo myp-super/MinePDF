@@ -375,15 +375,14 @@ async function createMainWindow(): Promise<BrowserWindow> {
                     pdfRows[1].dispatchEvent(new MouseEvent('click', { ctrlKey: true, bubbles: true }));
                     await new Promise((r) => setTimeout(r, 150));
                     const bar = document.body.textContent.includes('已选 2 项');
-                    const delBtn = [...document.querySelectorAll('button')].some((b) => (b.textContent || '').includes('删除所选'));
-                    const moveBtn = [...document.querySelectorAll('button')].some((b) => (b.textContent || '').includes('移动到…'));
-                    const del = [...document.querySelectorAll('button')].find((b) => (b.textContent || '').includes('删除所选'));
-                    if (del) del.click();
+                    const noTopDelete = ![...document.querySelectorAll('button')].some((b) => (b.textContent || '').includes('删除所选'));
+                    pdfRows[0].dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 120, clientY: 120 }));
                     await new Promise((r) => setTimeout(r, 150));
-                    const confirmShown = document.body.textContent.includes('批量删除 2 个文件');
+                    const menuDelete = document.body.textContent.includes('删除所选');
+                    const menuMove = document.body.textContent.includes('移动到…');
                     const cancel = [...document.querySelectorAll('button')].find((b) => (b.textContent || '').trim() === '取消');
                     if (cancel) cancel.click();
-                    return { rows: pdfRows.length, bar, delBtn, moveBtn, confirmShown };
+                    return { rows: pdfRows.length, bar, noTopDelete, menuDelete, menuMove };
                   })()
                 `);
                 console.log('[capture] multiDiag', JSON.stringify(multiDiag));

@@ -75,6 +75,7 @@ const zh: Dict = {
   'sidebar.batchMoved': '已移动所选文件',
   'sidebar.moveTitle': '移动到文件夹',
   'sidebar.selectHint': 'Ctrl+点击可多选',
+  'sidebar.multiHint': '右键可批量操作',
 
   'toolbar.prev': '上一页 (←)',
   'toolbar.next': '下一页 (→)',
@@ -321,6 +322,7 @@ const en: Dict = {
   'sidebar.batchMoved': 'Moved selected files',
   'sidebar.moveTitle': 'Move to folder',
   'sidebar.selectHint': 'Ctrl+click to multi-select',
+  'sidebar.multiHint': 'right-click for batch actions',
 
   'toolbar.prev': 'Previous page (←)',
   'toolbar.next': 'Next page (→)',
