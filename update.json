@@ -1,8 +1,8 @@
 {
-  "version": "1.2.8",
-  "url": "https://github.com/myp-super/MinePDF/releases/download/v1.2.8/MinePDF.Setup.1.2.8.exe",
   "notes": [
-    "v1.2.8 - 修复放大拖拽看不到边界内容；默认应用改为设置按钮"
+    "v1.2.9 - 沉浸式阅读（收起边栏+放大）；截图框可拖动/调整大小"
   ],
+  "url": "https://github.com/myp-super/MinePDF/releases/download/v1.2.9/MinePDF.Setup.1.2.9.exe",
+  "version": "1.2.9",
   "publishDate": "2026-08-08"
 }
