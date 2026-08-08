@@ -30,6 +30,8 @@ interface AppState {
   settings: AppSettings;
   activePdfId: number | null;
   selectedFolderId: number | null;
+  /** 侧边栏多选（Ctrl+点击）的 PDF 集合 */
+  selectedPdfIds: number[];
   tagFilterId: number | null;
   view: ViewMode;
   inspectorTab: InspectorTab;
@@ -50,6 +52,9 @@ interface AppState {
   refresh: () => Promise<void>;
   openPdf: (id: number | null) => void;
   setSelectedFolder: (id: number | null) => void;
+  setSelectedPdfIds: (ids: number[]) => void;
+  toggleSelectedPdf: (id: number) => void;
+  clearSelectedPdfs: () => void;
   setTagFilter: (id: number | null) => void;
   setView: (v: ViewMode) => void;
   setInspectorTab: (t: InspectorTab) => void;
@@ -76,6 +81,7 @@ export const useApp = create<AppState>((set, get) => ({
   settings: DEFAULT_SETTINGS,
   activePdfId: null,
   selectedFolderId: null,
+  selectedPdfIds: [],
   tagFilterId: null,
   view: 'library',
   inspectorTab: 'meta',
@@ -107,6 +113,14 @@ export const useApp = create<AppState>((set, get) => ({
   },
   openPdf: (id) => set({ activePdfId: id, inspectorTab: 'meta' }),
   setSelectedFolder: (id) => set({ selectedFolderId: id, tagFilterId: null }),
+  setSelectedPdfIds: (ids) => set({ selectedPdfIds: ids }),
+  toggleSelectedPdf: (id) =>
+    set((s) => ({
+      selectedPdfIds: s.selectedPdfIds.includes(id)
+        ? s.selectedPdfIds.filter((x) => x !== id)
+        : [...s.selectedPdfIds, id],
+    })),
+  clearSelectedPdfs: () => set({ selectedPdfIds: [] }),
   setTagFilter: (id) => set({ tagFilterId: id }),
   setView: (v) => set({ view: v }),
   setInspectorTab: (t) => set({ inspectorTab: t }),

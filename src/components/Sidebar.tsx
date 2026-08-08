@@ -16,12 +16,13 @@ import {
   RefreshCcw,
   Settings,
   Trash2,
+  X,
 } from 'lucide-react';
 import React, { useEffect, useMemo, useState } from 'react';
 import { useT, useTError } from '../i18n';
 import type { Folder as FolderType, PdfRecord } from '../shared/types';
 import { useApp } from '../store';
-import { Button, ConfirmDialog, ContextMenu, type ContextMenuItem, IconButton } from './ui';
+import { Button, ConfirmDialog, ContextMenu, type ContextMenuItem, IconButton, Modal } from './ui';
 
 const FOLDER_MIME = 'application/x-pkm-folder';
 const PDF_MIME = 'application/x-pkm-pdf';
@@ -74,6 +75,9 @@ export function Sidebar() {
   const sidebarWidth = useApp((s) => s.sidebarWidth);
   const sidebarCollapsed = useApp((s) => s.sidebarCollapsed);
   const toggleSidebarCollapsed = useApp((s) => s.toggleSidebarCollapsed);
+  const selectedPdfIds = useApp((s) => s.selectedPdfIds);
+  const setSelectedPdfIds = useApp((s) => s.setSelectedPdfIds);
+  const clearSelectedPdfs = useApp((s) => s.clearSelectedPdfs);
 
   const [query, setQuery] = useState('');
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
@@ -81,6 +85,7 @@ export function Sidebar() {
   const [menu, setMenu] = useState<{ x: number; y: number; items: ContextMenuItem[] } | null>(null);
   const [importMenu, setImportMenu] = useState(false);
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
+  const [moveOpen, setMoveOpen] = useState(false);
   const [appVersion, setAppVersion] = useState('1.0.0');
 
   useEffect(() => {
@@ -149,6 +154,42 @@ export function Sidebar() {
     }
   };
 
+  // ---------- 批量操作（Ctrl 多选） ----------
+  const batchDelete = () => {
+    const ids = selectedPdfIds;
+    if (!ids.length) return;
+    setConfirm({
+      title: t('sidebar.batchDeleteTitle', { n: ids.length }),
+      message: t('sidebar.batchDeleteMsg', { n: ids.length }),
+      confirmLabel: t('common.delete'),
+      danger: true,
+      action: async () => {
+        try {
+          for (const id of ids) await window.pkm.deletePdf(id);
+          await refresh();
+          clearSelectedPdfs();
+          toast('success', t('sidebar.batchDeleted', { n: ids.length }));
+        } catch (err) {
+          toast('error', terr(err instanceof Error ? err.message : String(err)));
+        }
+      },
+    });
+  };
+
+  const batchMoveTo = async (folderId: number | null) => {
+    setMoveOpen(false);
+    const ids = selectedPdfIds;
+    if (!ids.length) return;
+    try {
+      for (const id of ids) await window.pkm.movePdf(id, folderId);
+      await refresh();
+      clearSelectedPdfs();
+      toast('success', t('sidebar.batchMoved'));
+    } catch (err) {
+      toast('error', terr(err instanceof Error ? err.message : String(err)));
+    }
+  };
+
   const requestRemovePdf = (pdf: PdfRecord) => {
     const managed =
       settings.libraryPdfDir &&
@@ -180,7 +221,49 @@ export function Sidebar() {
     });
   };
 
-  const pdfMenu = (pdf: PdfRecord) => pdfMenuItems(pdf, refresh, toast, openPdf, () => requestRemovePdf(pdf), t, terr);
+  /** 右键菜单：多选时显示批量操作，否则单文件菜单 */
+  const openPdfMenu = (pdf: PdfRecord, x: number, y: number) => {
+    const multi = selectedPdfIds.includes(pdf.id) && selectedPdfIds.length > 1;
+    if (multi) {
+      setMenu({
+        x,
+        y,
+        items: [
+          {
+            label: t('sidebar.moveTo'),
+            icon: <Folder size={12} />,
+            onClick: () => setMoveOpen(true),
+          },
+          {
+            label: t('sidebar.moveToRoot'),
+            icon: <Folder size={12} />,
+            onClick: () => void batchMoveTo(null),
+          },
+          {
+            label: t('sidebar.batchDelete'),
+            danger: true,
+            icon: <Trash2 size={12} />,
+            onClick: batchDelete,
+          },
+        ],
+      });
+      return;
+    }
+    // 右键即单选该文件，便于“移动到…”针对它操作
+    setSelectedPdfIds([pdf.id]);
+    setMenu({
+      x,
+      y,
+      items: [
+        {
+          label: t('sidebar.moveTo'),
+          icon: <Folder size={12} />,
+          onClick: () => setMoveOpen(true),
+        },
+        ...pdfMenuItems(pdf, refresh, toast, openPdf, () => requestRemovePdf(pdf), t, terr),
+      ],
+    });
+  };
 
   const handleRootDrop = async (e: React.DragEvent) => {
     noDrag(e);
@@ -281,6 +364,23 @@ export function Sidebar() {
         </div>
       </div>
 
+      {selectedPdfIds.length > 0 && (
+        <div className="mx-3 mb-2 flex items-center gap-1 rounded-md border border-app-accent/40 bg-app-accent/10 px-2 py-1">
+          <span className="min-w-0 flex-1 truncate text-[11px] text-app-accent">
+            {t('sidebar.selectedCount', { n: selectedPdfIds.length })}
+          </span>
+          <Button size="sm" variant="outline" onClick={() => setMoveOpen(true)}>
+            {t('sidebar.moveTo')}
+          </Button>
+          <Button size="sm" variant="danger" onClick={batchDelete}>
+            {t('sidebar.batchDelete')}
+          </Button>
+          <IconButton title={t('sidebar.clearSelection')} onClick={clearSelectedPdfs}>
+            <X size={13} />
+          </IconButton>
+        </div>
+      )}
+
       <div className="px-3 pb-2">
         <div className="flex items-center gap-2">
           <input
@@ -310,7 +410,7 @@ export function Sidebar() {
                 pdf={p}
                 depth={0}
                 onClick={() => openPdf(p.id)}
-                onMenu={(x, y) => setMenu({ x, y, items: pdfMenu(p) })}
+                onMenu={(x, y) => openPdfMenu(p, x, y)}
               />
             ))}
           </div>
@@ -356,7 +456,7 @@ export function Sidebar() {
                     pdf={p}
                     depth={0}
                     onClick={() => openPdf(p.id)}
-                    onMenu={(x, y) => setMenu({ x, y, items: pdfMenu(p) })}
+                    onMenu={(x, y) => openPdfMenu(p, x, y)}
                   />
                 ))}
                 {topFolders.map((f) => (
@@ -370,6 +470,7 @@ export function Sidebar() {
                     toast={toast}
                     openPdf={openPdf}
                     onMenu={(items, x, y) => setMenu({ x, y, items })}
+                    onPdfMenu={openPdfMenu}
                     setConfirm={setConfirm}
                     createChild={() => void createFolder(f.id)}
                     onRemovePdf={requestRemovePdf}
@@ -403,7 +504,7 @@ export function Sidebar() {
                 pdf={p}
                 depth={0}
                 onClick={() => openTaggedPdf(p)}
-                onMenu={(x, y) => setMenu({ x, y, items: pdfMenu(p) })}
+                onMenu={(x, y) => openPdfMenu(p, x, y)}
               />
             ))}
           </div>
@@ -491,6 +592,30 @@ export function Sidebar() {
           onCancel={() => setConfirm(null)}
         />
       )}
+      {moveOpen && (
+        <Modal open onClose={() => setMoveOpen(false)} title={t('sidebar.moveTitle')} width={360}>
+          <div className="max-h-[50vh] space-y-0.5 overflow-y-auto">
+            <button
+              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs hover:bg-app-panel2"
+              onClick={() => void batchMoveTo(null)}
+            >
+              <BookMarked size={13} className="text-app-accent" />
+              {t('sidebar.moveToRoot')}
+            </button>
+            {folders.map((f) => (
+              <button
+                key={f.id}
+                className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs hover:bg-app-panel2"
+                style={{ paddingLeft: 8 + f.path.split('/').length * 12 }}
+                onClick={() => void batchMoveTo(f.id)}
+              >
+                <Folder size={13} className="shrink-0 text-app-accent2/90" />
+                <span className="min-w-0 flex-1 truncate">{f.name}</span>
+              </button>
+            ))}
+          </div>
+        </Modal>
+      )}
     </aside>
   );
 }
@@ -504,6 +629,7 @@ function FolderNode({
   toast,
   openPdf,
   onMenu,
+  onPdfMenu,
   setConfirm,
   createChild,
   onRemovePdf,
@@ -517,6 +643,7 @@ function FolderNode({
   toast: (kind: 'info' | 'success' | 'error', text: string) => void;
   openPdf: (id: number) => void;
   onMenu: (items: ContextMenuItem[], x: number, y: number) => void;
+  onPdfMenu: (pdf: PdfRecord, x: number, y: number) => void;
   setConfirm: (c: ConfirmState) => void;
   createChild: () => void;
   onRemovePdf: (pdf: PdfRecord) => void;
@@ -716,6 +843,7 @@ function FolderNode({
               toast={toast}
               openPdf={openPdf}
               onMenu={onMenu}
+              onPdfMenu={onPdfMenu}
               setConfirm={setConfirm}
               createChild={() => {
                 void (async () => {
@@ -738,9 +866,7 @@ function FolderNode({
               pdf={p}
               depth={depth + 1}
               onClick={() => openPdf(p.id)}
-              onMenu={(x, y) =>
-                onMenu(pdfMenuItems(p, refresh, toast, openPdf, () => onRemovePdf(p), t, terr), x, y)
-              }
+              onMenu={(x, y) => onPdfMenu(p, x, y)}
             />
           ))}
         </div>
@@ -760,13 +886,22 @@ function PdfRow({
   onClick: () => void;
   onMenu: (x: number, y: number) => void;
 }) {
+  const t = useT();
   const activePdfId = useApp((s) => s.activePdfId);
+  const selectedPdfIds = useApp((s) => s.selectedPdfIds);
+  const setSelectedPdfIds = useApp((s) => s.setSelectedPdfIds);
+  const toggleSelectedPdf = useApp((s) => s.toggleSelectedPdf);
+  const selected = selectedPdfIds.includes(pdf.id);
   return (
     <div
       role="treeitem"
       tabIndex={0}
       className={`flex cursor-pointer items-center gap-1.5 rounded-md py-[3px] text-xs transition-colors hover:bg-app-panel2 ${
-        activePdfId === pdf.id ? 'bg-app-accent/12 text-app-text' : 'text-app-text/85'
+        selected
+          ? 'bg-app-accent/20 text-app-text ring-1 ring-inset ring-app-accent/50'
+          : activePdfId === pdf.id
+            ? 'bg-app-accent/12 text-app-text'
+            : 'text-app-text/85'
       } focus-visible:ring-2 focus-visible:ring-app-accent/60`}
       style={{ paddingLeft: 14 + depth * 14 }}
       draggable
@@ -774,7 +909,15 @@ function PdfRow({
         e.dataTransfer.setData(PDF_MIME, String(pdf.id));
         e.dataTransfer.effectAllowed = 'move';
       }}
-      onClick={onClick}
+      onClick={(e) => {
+        if (e.ctrlKey || e.metaKey) {
+          e.preventDefault();
+          toggleSelectedPdf(pdf.id);
+          return;
+        }
+        setSelectedPdfIds([pdf.id]);
+        onClick();
+      }}
       onKeyDown={(e) => {
         if (e.key === 'Enter') onClick();
       }}
@@ -782,7 +925,7 @@ function PdfRow({
         e.preventDefault();
         onMenu(e.clientX, e.clientY);
       }}
-      title={pdf.filepath}
+      title={`${pdf.filepath}\n${t('sidebar.selectHint')}`}
     >
       <FileText size={13} className={pdf.status === 'missing' ? 'text-app-danger' : 'text-app-muted'} />
       <span className={`min-w-0 flex-1 truncate ${pdf.status === 'missing' ? 'text-app-danger/80' : ''}`}>
