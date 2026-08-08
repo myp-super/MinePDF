@@ -90,6 +90,11 @@ export function PdfViewer({ pdf, onMissing }: PdfViewerProps) {
   const scaleRef = useRef(scale);
   const docRef = useRef<PDFDocumentProxy | null>(null);
   const currentPdfIdRef = useRef<number | null>(null);
+  const [panning, setPanning] = useState(false);
+  const [canPan, setCanPan] = useState(false);
+  const canPanRef = useRef(false);
+  const panStartRef = useRef<{ x: number; y: number; sl: number; st: number } | null>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     scaleRef.current = scale;
@@ -98,6 +103,53 @@ export function PdfViewer({ pdf, onMissing }: PdfViewerProps) {
   useEffect(() => {
     docRef.current = doc;
   }, [doc]);
+
+  // ---------- 放大后可抓取平移 ----------
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const update = () => {
+      const overflow =
+        el.scrollWidth > el.clientWidth + 2 || el.scrollHeight > el.clientHeight + 2;
+      canPanRef.current = overflow;
+      setCanPan(overflow);
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    if (contentRef.current) ro.observe(contentRef.current);
+    window.addEventListener('resize', update);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener('resize', update);
+    };
+  }, [doc, scale, mode, pdf.id]);
+
+  const onPanMouseDown = (e: React.MouseEvent) => {
+    if (screenshotMode || highlightMode || !canPanRef.current) return;
+    if (e.button !== 0) return;
+    const el = scrollRef.current;
+    if (!el) return;
+    e.preventDefault();
+    panStartRef.current = { x: e.clientX, y: e.clientY, sl: el.scrollLeft, st: el.scrollTop };
+    setPanning(true);
+    // 按下瞬间立即挂监听，保证跟手；mouseup 时移除
+    const onMove = (ev: MouseEvent) => {
+      const elc = scrollRef.current;
+      const s = panStartRef.current;
+      if (!elc || !s) return;
+      elc.scrollLeft = s.sl - (ev.clientX - s.x);
+      elc.scrollTop = s.st - (ev.clientY - s.y);
+    };
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      panStartRef.current = null;
+      setPanning(false);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  };
 
   // ---------- document load (with LRU cache for fast reopening) ----------
   useEffect(() => {
@@ -618,10 +670,23 @@ export function PdfViewer({ pdf, onMissing }: PdfViewerProps) {
         {doc ? (
           <div
             ref={scrollRef}
-            className="h-full overflow-auto bg-[var(--app-canvas)]"
+            data-pan-scroll
+            className={`h-full overflow-auto bg-[var(--app-canvas)] ${
+              panning
+                ? 'cursor-grabbing select-none'
+                : canPan && !highlightMode && !screenshotMode
+                  ? 'cursor-grab'
+                  : ''
+            }`}
+            title={
+              canPan && !highlightMode && !screenshotMode && !panning
+                ? t('viewer.dragToPan')
+                : undefined
+            }
+            onMouseDown={onPanMouseDown}
             onMouseUp={handleMouseUp}
           >
-            <div className="flex flex-col items-center gap-4 px-6 py-5">
+            <div ref={contentRef} className="flex flex-col items-center gap-4 px-6 py-5">
               {mode === 'single'
                 ? pages.map(renderPage)
                 : pageRows.map((row, i) => (

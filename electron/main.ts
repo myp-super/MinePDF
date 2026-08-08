@@ -348,6 +348,29 @@ async function createMainWindow(): Promise<BrowserWindow> {
                   })()
                 `);
                 console.log('[capture] fontDiag', JSON.stringify(fontDiag));
+                const panDiag = await win.webContents.executeJavaScript(`
+                  (async () => {
+                    const el = document.querySelector('[data-pan-scroll]');
+                    if (!el) return { scroll: false };
+                    const rect = el.getBoundingClientRect();
+                    const cx = rect.left + rect.width / 2;
+                    const cy = rect.top + rect.height / 2;
+                    el.dispatchEvent(new WheelEvent('wheel', { deltaY: -140, ctrlKey: true, bubbles: true, cancelable: true, clientX: cx, clientY: cy }));
+                    await new Promise((r) => setTimeout(r, 900));
+                    const overflow = el.scrollWidth > el.clientWidth + 2 || el.scrollHeight > el.clientHeight + 2;
+                    const cursorBefore = getComputedStyle(el).cursor;
+                    const sl0 = el.scrollLeft, st0 = el.scrollTop;
+                    el.dispatchEvent(new MouseEvent('mousedown', { button: 0, clientX: cx, clientY: cy, bubbles: true, cancelable: true }));
+                    await new Promise((r) => setTimeout(r, 80));
+                    window.dispatchEvent(new MouseEvent('mousemove', { clientX: cx + 220, clientY: cy + 140, bubbles: true }));
+                    const cursorDuring = getComputedStyle(el).cursor;
+                    window.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+                    await new Promise((r) => setTimeout(r, 120));
+                    const moved = el.scrollLeft !== sl0 || el.scrollTop !== st0;
+                    return { overflow, cursorBefore, cursorDuring, moved, sl: sl0 + '->' + el.scrollLeft, st: st0 + '->' + el.scrollTop };
+                  })()
+                `);
+                console.log('[capture] panDiag', JSON.stringify(panDiag));
                 const resizeDiag = await win.webContents.executeJavaScript(`
                   (async () => {
                     const h = document.querySelector('[data-resize="sidebar"]');
