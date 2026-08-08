@@ -17,6 +17,7 @@ import {
   PenLine,
   Pin,
   Plus,
+  Save,
   StickyNote,
   Trash2,
   X,
@@ -564,6 +565,15 @@ function NotesPanel({ pdf }: { pdf: PdfRecord }) {
           </Button>
           <Button size="sm" variant="outline" disabled={exporting || !md.trim()} onClick={() => void exportPdf()}>
             <FileDown size={11} /> {exporting ? t('common.saving') : t('note.exportPdf')}
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={saving || !md.trim()}
+            title={t('note.saveHint')}
+            onClick={() => void save(md)}
+          >
+            <Save size={11} /> {t('note.save')}
           </Button>
           {saving ? (
             <span className="flex items-center gap-1">

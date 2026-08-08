@@ -163,6 +163,15 @@ export function PdfViewer({ pdf, onMissing }: PdfViewerProps) {
     let loadingTask: ReturnType<typeof pdfjsLib.getDocument> | null = null;
     let owned: PDFDocumentProxy | null = null;
     let finished = false;
+    // 每次打开 PDF 只应用一次默认面板：有书签默认书签页，无书签默认笔记页
+    let outlineTabApplied = false;
+    const applyOutline = (tree: Awaited<ReturnType<typeof getOutlineTree>>) => {
+      setStoreOutline(tree);
+      if (!outlineTabApplied) {
+        outlineTabApplied = true;
+        setInspectorTab(tree.length > 0 ? 'outline' : 'notes');
+      }
+    };
     currentPdfIdRef.current = pdf.id;
     setDoc(null);
     setLoadError(null);
@@ -180,7 +189,7 @@ export function PdfViewer({ pdf, onMissing }: PdfViewerProps) {
       void setAnnotationsFromCache(cached, pdf);
       void getOutlineTree(cached).then((tree) => {
         if (currentPdfIdRef.current !== pdf.id) return;
-        setStoreOutline(tree);
+        applyOutline(tree);
       });
       return;
     }
@@ -204,7 +213,7 @@ export function PdfViewer({ pdf, onMissing }: PdfViewerProps) {
         cacheDoc(pdf.id, owned);
         setDoc(owned);
         void getOutlineTree(owned).then((tree) => {
-          if (!cancelled) setStoreOutline(tree);
+          if (!cancelled) applyOutline(tree);
         });
         const p1 = await owned.getPage(1);
         const vp1 = p1.getViewport({ scale: 1 });

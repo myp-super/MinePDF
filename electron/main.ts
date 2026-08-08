@@ -47,10 +47,13 @@ if (!gotLock) {
 
 app.setAppUserModelId('com.minepdf.desktop');
 
-/** 生成一份最小但合法、且带内置书签的一页 PDF（用于冒烟测试与截图） */
-function buildTestPdf(): string {
+/**
+ * 生成一份最小但合法的一页 PDF（用于冒烟测试与截图）。
+ * noOutline=true 时不带内置书签，用于验证“无书签默认打开笔记页”。
+ */
+function buildTestPdf(noOutline = false): string {
   const objects: Record<number, string> = {};
-  objects[1] = '1 0 obj\n<< /Type /Catalog /Pages 2 0 R /Outlines 6 0 R >>\nendobj\n';
+  objects[1] = `1 0 obj\n<< /Type /Catalog /Pages 2 0 R${noOutline ? '' : ' /Outlines 6 0 R'} >>\nendobj\n`;
   objects[2] = '2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n';
   // 三个独立文本段，让 PDF.js 文本层生成多个 span，便于验证高亮合并
   const content =
@@ -59,23 +62,29 @@ function buildTestPdf(): string {
   objects[3] =
     '3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> /Annots [8 0 R] >>\nendobj\n';
   objects[5] = '5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n';
-  objects[6] = '6 0 obj\n<< /Type /Outlines /First 7 0 R /Last 7 0 R /Count 1 >>\nendobj\n';
-  objects[7] = '7 0 obj\n<< /Title (Smoke Bookmark) /Parent 6 0 R /Dest [3 0 R /Fit] >>\nendobj\n';
+  if (!noOutline) {
+    objects[6] = '6 0 obj\n<< /Type /Outlines /First 7 0 R /Last 7 0 R /Count 1 >>\nendobj\n';
+    objects[7] = '7 0 obj\n<< /Title (Smoke Bookmark) /Parent 6 0 R /Dest [3 0 R /Fit] >>\nendobj\n';
+  }
   objects[8] =
     '8 0 obj\n<< /Type /Annot /Subtype /Link /Rect [72 700 400 730] /Border [0 0 0] /Dest [3 0 R /XYZ 0 792 null] >>\nendobj\n';
 
   let pdf = '%PDF-1.4\n';
   const offsets: number[] = [];
-  for (let i = 1; i <= 8; i++) {
+  const ids = Object.keys(objects)
+    .map(Number)
+    .sort((a, b) => a - b);
+  for (const i of ids) {
     offsets[i] = Buffer.byteLength(pdf, 'latin1');
     pdf += objects[i];
   }
+  const maxId = Math.max(...ids);
   const xrefStart = Buffer.byteLength(pdf, 'latin1');
-  pdf += 'xref\n0 9\n0000000000 65535 f \n';
-  for (let i = 1; i <= 8; i++) {
-    pdf += `${String(offsets[i]).padStart(10, '0')} 00000 n \n`;
+  pdf += `xref\n0 ${maxId + 1}\n0000000000 65535 f \n`;
+  for (let i = 1; i <= maxId; i++) {
+    pdf += offsets[i] != null ? `${String(offsets[i]).padStart(10, '0')} 00000 n \n` : '0000000000 65535 f \n';
   }
-  pdf += `trailer\n<< /Size 9 /Root 1 0 R >>\nstartxref\n${xrefStart}\n%%EOF\n`;
+  pdf += `trailer\n<< /Size ${maxId + 1} /Root 1 0 R >>\nstartxref\n${xrefStart}\n%%EOF\n`;
   return pdf;
 }
 
@@ -170,7 +179,7 @@ async function createMainWindow(): Promise<BrowserWindow> {
         fs.mkdirSync(path.dirname(testPdfPath), { recursive: true });
         fs.writeFileSync(testPdfPath, buildTestPdf(), 'latin1');
         fs.mkdirSync(path.dirname(autoScanPdfPath), { recursive: true });
-        fs.writeFileSync(autoScanPdfPath, buildTestPdf().replace('2026', '2027'), 'latin1');
+        fs.writeFileSync(autoScanPdfPath, buildTestPdf(true).replace('2026', '2027'), 'latin1');
       } catch (err) {
         console.error('[smoke] cannot write test pdf', err);
         app.exit(1);
@@ -463,7 +472,7 @@ async function createMainWindow(): Promise<BrowserWindow> {
                 // 文档切换验证：A -> B -> A，每步都应有实际渲染内容
                 try {
                   fs.mkdirSync(path.dirname(autoScanPdfPath), { recursive: true });
-                  fs.writeFileSync(autoScanPdfPath, buildTestPdf().replace('2026', '2027'), 'latin1');
+                  fs.writeFileSync(autoScanPdfPath, buildTestPdf(true).replace('2026', '2027'), 'latin1');
                 } catch {
                   /* ignore */
                 }
@@ -495,6 +504,29 @@ async function createMainWindow(): Promise<BrowserWindow> {
                   })()
                 `);
                 console.log('[capture] switchDiag', JSON.stringify(switchDiag));
+                const tabDiag = await win.webContents.executeJavaScript(`
+                  (async () => {
+                    const snap = await window.pkm.getSnapshot();
+                    const a = snap.pdfs.find((p) => p.filename === 'smoke-test.pdf');
+                    const b = snap.pdfs.find((p) => p.filename === 'smoke-autoscan.pdf');
+                    if (!a || !b) return { files: !!a && !!b };
+                    const activeTab = () => {
+                      const btn = [...document.querySelectorAll('button')].find((x) => {
+                        const cls = x.className || '';
+                        return cls.includes('rounded-t-md') && cls.includes('bg-app-base');
+                      });
+                      return btn ? (btn.textContent || '').trim() : null;
+                    };
+                    window.__pkmOpenPdf(b.id);
+                    await new Promise((r) => setTimeout(r, 1500));
+                    const bTab = activeTab();
+                    window.__pkmOpenPdf(a.id);
+                    await new Promise((r) => setTimeout(r, 1500));
+                    const aTab = activeTab();
+                    return { aTab, bTab, ok: aTab === '书签' && bTab === '笔记' };
+                  })()
+                `);
+                console.log('[capture] tabDiag', JSON.stringify(tabDiag));
                 // 多选验证：Ctrl+点击两个 PDF，检查操作栏与批量删除确认
                 const multiDiag = await win.webContents.executeJavaScript(`
                   (async () => {
@@ -559,6 +591,9 @@ async function createMainWindow(): Promise<BrowserWindow> {
                     const notesTab = [...document.querySelectorAll('button')].find((b) => (b.textContent || '').trim() === '笔记');
                     if (notesTab) notesTab.click();
                     await new Promise((r) => setTimeout(r, 250));
+                    const saveBtnShown = [...document.querySelectorAll('button')].some(
+                      (b) => (b.textContent || '').trim() === '保存',
+                    );
                     const shotBtn = [...document.querySelectorAll('button')].find((b) => (b.getAttribute('title') || '').includes('拖拽框选') || (b.textContent || '').trim() === '截图');
                     if (!shotBtn) return { btn: false };
                     shotBtn.click();
@@ -626,7 +661,7 @@ async function createMainWindow(): Promise<BrowserWindow> {
                     await new Promise((r) => setTimeout(r, 1000));
                     const note = await window.pkm.getNote(a.id);
                     const inserted = !!(note && note.markdown.includes('assets/'));
-                    return { btn: true, overlayShown: true, exitBtnShown, exitWorks, reenter: true, barShown, maskPersist, moved, resized, inserted };
+                    return { btn: true, overlayShown: true, exitBtnShown, exitWorks, reenter: true, barShown, maskPersist, moved, resized, inserted, saveBtnShown };
                   })()
                 `);
                 console.log('[capture] shotDiag', JSON.stringify(shotDiag));
