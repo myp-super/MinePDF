@@ -28,7 +28,7 @@ export function PdfToolbar({
   outlineCount,
   highlightMode,
   highlightColor,
-  fullscreen,
+  immersive,
   ready,
   onPageChange,
   onPrev,
@@ -42,7 +42,7 @@ export function PdfToolbar({
   onToggleHighlight,
   onColorChange,
   onToggleSearch,
-  onToggleFullscreen,
+  onToggleImmersive,
   onOpenExternal,
 }: {
   pdf: PdfRecord;
@@ -53,7 +53,7 @@ export function PdfToolbar({
   outlineCount: number;
   highlightMode: boolean;
   highlightColor: string;
-  fullscreen: boolean;
+  immersive: boolean;
   ready: boolean;
   onPageChange: (n: number) => void;
   onPrev: () => void;
@@ -67,7 +67,7 @@ export function PdfToolbar({
   onToggleHighlight: () => void;
   onColorChange: (c: string) => void;
   onToggleSearch: () => void;
-  onToggleFullscreen: () => void;
+  onToggleImmersive: () => void;
   onOpenExternal: () => void;
 }) {
   const t = useT();
@@ -191,8 +191,8 @@ export function PdfToolbar({
       <IconButton disabled={!ready} onClick={onOpenExternal} title={t('toolbar.openExternal')}>
         <ExternalLink size={14} />
       </IconButton>
-      <IconButton disabled={!ready} onClick={onToggleFullscreen} title={t('toolbar.fullscreen')}>
-        {fullscreen ? <Minimize size={14} /> : <Maximize size={14} />}
+      <IconButton disabled={!ready} onClick={onToggleImmersive} title={t('toolbar.immersive')}>
+        {immersive ? <Minimize size={14} /> : <Maximize size={14} />}
       </IconButton>
     </div>
   );

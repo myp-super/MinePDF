@@ -125,7 +125,7 @@ const zh: Dict = {
   'toolbar.inkWidth': '笔迹粗细',
   'toolbar.docSearch': '文档内搜索 (Ctrl+F)',
   'toolbar.openExternal': '在系统阅读器中打开',
-  'toolbar.fullscreen': '全屏',
+    'toolbar.immersive': '沉浸式阅读（收起边栏并放大，再点恢复）',
   'toolbar.highlighted': '已添加高亮{multi}，可在右侧添加备注',
   'toolbar.highlighted.multi': '（{n} 页）',
 
@@ -201,7 +201,7 @@ const zh: Dict = {
   'note.exportPdf': '导出 PDF',
   'note.revealFile': '在系统中显示笔记文件',
     'note.screenshot': '截图',
-    'note.screenshotHint': '在阅读区拖拽框选区域（可跨页），支持复制或直接插入笔记',
+    'note.screenshotHint': '拖拽框选区域（可跨页）；框定后可拖动选区或边框调整，再插入笔记',
   'note.screenshotExit': '退出',
   'note.screenshotInsert': '插入笔记',
 
@@ -423,7 +423,7 @@ const en: Dict = {
   'toolbar.inkWidth': 'Stroke width',
   'toolbar.docSearch': 'Search in document (Ctrl+F)',
   'toolbar.openExternal': 'Open in system reader',
-  'toolbar.fullscreen': 'Fullscreen',
+    'toolbar.immersive': 'Immersive reading (collapse panels & zoom, click again to restore)',
   'toolbar.highlighted': 'Highlight added{multi}; add a note on the right',
   'toolbar.highlighted.multi': ' ({n} pages)',
 
@@ -499,7 +499,7 @@ const en: Dict = {
   'note.exportPdf': 'Export PDF',
   'note.revealFile': 'Show note file in system',
     'note.screenshot': 'Screenshot',
-    'note.screenshotHint': 'Drag to select a region (across pages if needed), then copy it or insert it into the note',
+    'note.screenshotHint': 'Drag to select a region (across pages if needed); drag the selection or its borders to adjust before inserting',
   'note.screenshotExit': 'Exit',
   'note.screenshotInsert': 'Insert into note',
 

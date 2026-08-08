@@ -67,7 +67,7 @@ export function PdfViewer({ pdf, onMissing }: PdfViewerProps) {
   const [scale, setScale] = useState(1);
   const [mode, setMode] = useState<'single' | 'double'>('single');
   const [currentPage, setCurrentPage] = useState(1);
-  const [fullscreen, setFullscreen] = useState(false);
+  const [immersive, setImmersive] = useState(false);
   const [highlightMode, setHighlightMode] = useState(false);
   const [highlightColor, setHighlightColor] = useState('#fde047');
   const [searchOpen, setSearchOpen] = useState(false);
@@ -95,6 +95,9 @@ export function PdfViewer({ pdf, onMissing }: PdfViewerProps) {
   const canPanRef = useRef(false);
   const panStartRef = useRef<{ x: number; y: number; sl: number; st: number } | null>(null);
   const contentRef = useRef<HTMLDivElement>(null);
+  const immersivePrevRef = useRef<{ scale: number; sidebar: boolean; inspector: boolean } | null>(
+    null,
+  );
 
   useEffect(() => {
     scaleRef.current = scale;
@@ -253,11 +256,6 @@ export function PdfViewer({ pdf, onMissing }: PdfViewerProps) {
 
   const pageCount = doc?.numPages ?? 0;
 
-  useEffect(() => {
-    void window.pkm.isFullScreen().then(setFullscreen);
-    return window.pkm.onFullScreenChange(setFullscreen);
-  }, []);
-
   // ---------- page tracking ----------
   useEffect(() => {
     const el = scrollRef.current;
@@ -399,7 +397,7 @@ export function PdfViewer({ pdf, onMissing }: PdfViewerProps) {
         target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable;
       if (e.key === 'Escape') {
         if (searchOpen) setSearchOpen(false);
-        else if (fullscreen) void window.pkm.setFullScreen(false);
+        else if (immersive) toggleImmersive();
         return;
       }
       if (typing) return;
@@ -419,7 +417,7 @@ export function PdfViewer({ pdf, onMissing }: PdfViewerProps) {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [searchOpen, fullscreen, currentPage, gotoPage]);
+  }, [searchOpen, immersive, currentPage, gotoPage]);
 
   // ---------- in-document search ----------
   useEffect(() => {
@@ -583,6 +581,36 @@ export function PdfViewer({ pdf, onMissing }: PdfViewerProps) {
     setScale(Math.max(0.3, (h - 48) / baseH));
   };
 
+  /**
+   * 沉浸式阅读：收起左右边栏并自动放大一档；再次点击恢复到点击前的缩放与边栏状态。
+   */
+  const toggleImmersive = () => {
+    const s = useApp.getState();
+    if (!immersive) {
+      immersivePrevRef.current = {
+        scale,
+        sidebar: s.sidebarCollapsed,
+        inspector: s.inspectorCollapsed,
+      };
+      if (!s.sidebarCollapsed) s.setSidebarCollapsed(true);
+      if (!s.inspectorCollapsed) s.setInspectorCollapsed(true);
+      setImmersive(true);
+      // 等侧栏收起、布局稳定后按新视口适配宽度，再放大一档
+      setTimeout(() => {
+        fitWidth();
+        setTimeout(() => setScale((cur) => Math.min(4, cur * 1.2)), 80);
+      }, 120);
+    } else {
+      const prev = immersivePrevRef.current;
+      setImmersive(false);
+      if (prev) {
+        setScale(prev.scale);
+        if (prev.sidebar !== s.sidebarCollapsed) s.setSidebarCollapsed(prev.sidebar);
+        if (prev.inspector !== s.inspectorCollapsed) s.setInspectorCollapsed(prev.inspector);
+      }
+    }
+  };
+
   const pages: number[] = Array.from({ length: pageCount }, (_, i) => i + 1);
   const pageRows: number[][] = [];
   for (let i = 0; i < pages.length; i += 2) pageRows.push(pages.slice(i, i + 2));
@@ -631,7 +659,7 @@ export function PdfViewer({ pdf, onMissing }: PdfViewerProps) {
         outlineCount={outlineCount}
         highlightMode={highlightMode}
         highlightColor={highlightColor}
-        fullscreen={fullscreen}
+        immersive={immersive}
         ready={Boolean(doc)}
         onPageChange={(n) => gotoPage(n)}
         onPrev={() => gotoPage(currentPage - 1)}
@@ -648,7 +676,7 @@ export function PdfViewer({ pdf, onMissing }: PdfViewerProps) {
         onToggleHighlight={() => setHighlightMode((v) => !v)}
         onColorChange={setHighlightColor}
         onToggleSearch={() => setSearchOpen((v) => !v)}
-        onToggleFullscreen={() => void window.pkm.setFullScreen(!fullscreen)}
+        onToggleImmersive={toggleImmersive}
         onOpenExternal={() =>
           void window.pkm.openPdfExternal(pdf.id).catch((err: unknown) =>
             toast('error', terr(err instanceof Error ? err.message : String(err))),
@@ -845,6 +873,81 @@ function ScreenshotOverlay({
   const draggingRef = useRef(false);
   const rectRef = useRef(rect);
   rectRef.current = rect;
+  type EditMode = 'move' | 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw';
+  const editRef = useRef<EditMode | null>(null);
+  const editStartRef = useRef<{
+    x: number;
+    y: number;
+    rect: { x: number; y: number; w: number; h: number };
+  } | null>(null);
+
+  const clampNum = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
+
+  /**
+   * 框定后：拖动选区内部移动位置，拖动四角/四边调整大小；
+   * 结束编辑后按新选区重新截图，保证插入的图片与选区一致。
+   */
+  const startEdit = (e: React.MouseEvent, mode: EditMode) => {
+    const r = rectRef.current;
+    if (!r) return;
+    e.preventDefault();
+    e.stopPropagation();
+    editRef.current = mode;
+    editStartRef.current = { x: e.clientX, y: e.clientY, rect: { ...r } };
+    const onMove = (ev: MouseEvent) => {
+      const es = editStartRef.current;
+      if (!es) return;
+      const dx = ev.clientX - es.x;
+      const dy = ev.clientY - es.y;
+      const cw = containerRef.current?.clientWidth ?? 0;
+      const ch = containerRef.current?.clientHeight ?? 0;
+      const r0 = es.rect;
+      const min = 12;
+      let next = { ...r0 };
+      if (mode === 'move') {
+        next.x = clampNum(r0.x + dx, 0, Math.max(0, cw - r0.w));
+        next.y = clampNum(r0.y + dy, 0, Math.max(0, ch - r0.h));
+      } else {
+        if (mode.includes('e')) next.w = clampNum(r0.w + dx, min, cw - r0.x);
+        if (mode.includes('s')) next.h = clampNum(r0.h + dy, min, ch - r0.y);
+        if (mode.includes('w')) {
+          const nx = clampNum(r0.x + dx, 0, r0.x + r0.w - min);
+          next.x = nx;
+          next.w = r0.x + r0.w - nx;
+        }
+        if (mode.includes('n')) {
+          const ny = clampNum(r0.y + dy, 0, r0.y + r0.h - min);
+          next.y = ny;
+          next.h = r0.y + r0.h - ny;
+        }
+      }
+      rectRef.current = next;
+      setRect(next);
+    };
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      editRef.current = null;
+      editStartRef.current = null;
+      const rr = rectRef.current;
+      if (rr && rr.w >= 4 && rr.h >= 4 && containerRef.current) {
+        setDataUrl(captureRegion(containerRef.current, rr));
+      }
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  };
+
+  const EDIT_HANDLES: Array<{ id: EditMode; cursor: string; style: React.CSSProperties }> = [
+    { id: 'nw', cursor: 'nwse-resize', style: { left: -4, top: -4 } },
+    { id: 'n', cursor: 'ns-resize', style: { left: '50%', top: -4, transform: 'translateX(-50%)' } },
+    { id: 'ne', cursor: 'nesw-resize', style: { right: -4, top: -4 } },
+    { id: 'e', cursor: 'ew-resize', style: { right: -4, top: '50%', transform: 'translateY(-50%)' } },
+    { id: 'se', cursor: 'nwse-resize', style: { right: -4, bottom: -4 } },
+    { id: 's', cursor: 'ns-resize', style: { left: '50%', bottom: -4, transform: 'translateX(-50%)' } },
+    { id: 'sw', cursor: 'nesw-resize', style: { left: -4, bottom: -4 } },
+    { id: 'w', cursor: 'ew-resize', style: { left: -4, top: '50%', transform: 'translateY(-50%)' } },
+  ];
 
   useEffect(() => {
     const onMove = (e: MouseEvent) => {
@@ -928,7 +1031,7 @@ function ScreenshotOverlay({
       </button>
       {rect && rect.w > 0 && rect.h > 0 && (
         <div
-          className="absolute border-2 border-app-accent"
+          className={`absolute border-2 border-app-accent ${dataUrl ? 'cursor-grab' : ''}`}
           style={{
             left: rect.x,
             top: rect.y,
@@ -937,7 +1040,22 @@ function ScreenshotOverlay({
             // 选中区域恢复原色：只有框外被压暗
             boxShadow: '0 0 0 100vmax rgba(0,0,0,0.35)',
           }}
-        />
+          onMouseDown={(e) => {
+            // 框定后按住选区内部可拖动挪位
+            if (!dataUrl) return;
+            startEdit(e, 'move');
+          }}
+        >
+          {dataUrl &&
+            EDIT_HANDLES.map((h) => (
+              <div
+                key={h.id}
+                className="absolute h-2.5 w-2.5 rounded-[2px] border border-white bg-app-accent shadow"
+                style={{ ...h.style, cursor: h.cursor }}
+                onMouseDown={(e) => startEdit(e, h.id)}
+              />
+            ))}
+        </div>
       )}
       {dataUrl && (
         <div

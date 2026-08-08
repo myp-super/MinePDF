@@ -412,6 +412,43 @@ async function createMainWindow(): Promise<BrowserWindow> {
                   })()
                 `);
                 console.log('[capture] sidebarDiag', JSON.stringify(sidebarDiag));
+                const immersiveDiag = await win.webContents.executeJavaScript(`
+                  (async () => {
+                    const btn = [...document.querySelectorAll('button')].find((b) => (b.getAttribute('title') || '').includes('沉浸式阅读'));
+                    if (!btn) return { btn: false };
+                    const readScale = () => {
+                      const c = document.querySelector('.pdf-page-sheet canvas');
+                      if (!c) return null;
+                      const w = parseFloat(c.style.width) || c.getBoundingClientRect().width;
+                      return +(w / 612).toFixed(2);
+                    };
+                    const before = {
+                      sidebarW: document.querySelector('aside').getBoundingClientRect().width,
+                      scale: readScale(),
+                    };
+                    btn.click();
+                    await new Promise((r) => setTimeout(r, 900));
+                    const during = {
+                      sidebarW: document.querySelector('aside').getBoundingClientRect().width,
+                      scale: readScale(),
+                    };
+                    btn.click();
+                    await new Promise((r) => setTimeout(r, 900));
+                    const after = {
+                      sidebarW: document.querySelector('aside').getBoundingClientRect().width,
+                      scale: readScale(),
+                    };
+                    return {
+                      btn: true,
+                      collapsed: during.sidebarW < before.sidebarW - 10,
+                      zoomed: during.scale > before.scale + 0.05,
+                      restoredW: Math.abs(after.sidebarW - before.sidebarW) < 5,
+                      restoredScale: Math.abs(after.scale - before.scale) < 0.05,
+                      before, during, after,
+                    };
+                  })()
+                `);
+                console.log('[capture] immersiveDiag', JSON.stringify(immersiveDiag));
                 await new Promise((r) => setTimeout(r, 600));
                 const image = await win.webContents.capturePage();
                 const outDir = path.join(process.cwd(), 'docs');
@@ -549,11 +586,42 @@ async function createMainWindow(): Promise<BrowserWindow> {
                     const maskPersist = [...document.querySelectorAll('div')].some(
                       (el) => (el.style.boxShadow || '').includes('100vmax'),
                     );
+                    // 框定后：拖动选区内部移动，拖右下角手柄调整大小
+                    let moved = false;
+                    let resized = false;
+                    const selDiv = [...document.querySelectorAll('div')].find(
+                      (el) => (el.style.boxShadow || '').includes('100vmax'),
+                    );
+                    if (selDiv) {
+                      const sr = selDiv.getBoundingClientRect();
+                      const sx = sr.left + sr.width / 2;
+                      const sy = sr.top + sr.height / 2;
+                      selDiv.dispatchEvent(new MouseEvent('mousedown', { button: 0, clientX: sx, clientY: sy, bubbles: true, cancelable: true }));
+                      await new Promise((r) => setTimeout(r, 80));
+                      window.dispatchEvent(new MouseEvent('mousemove', { clientX: sx + 50, clientY: sy + 40, bubbles: true }));
+                      window.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+                      await new Promise((r) => setTimeout(r, 150));
+                      const sr2 = selDiv.getBoundingClientRect();
+                      moved = Math.abs(sr2.left - sr.left) > 2 || Math.abs(sr2.top - sr.top) > 2;
+                      const seHandle = [...selDiv.querySelectorAll('div')].find(
+                        (d) => d.style.right === '-4px' && d.style.bottom === '-4px',
+                      );
+                      if (seHandle) {
+                        const hr = seHandle.getBoundingClientRect();
+                        seHandle.dispatchEvent(new MouseEvent('mousedown', { button: 0, clientX: hr.left + 1, clientY: hr.top + 1, bubbles: true, cancelable: true }));
+                        await new Promise((r) => setTimeout(r, 80));
+                        window.dispatchEvent(new MouseEvent('mousemove', { clientX: hr.left + 70, clientY: hr.top + 50, bubbles: true }));
+                        window.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+                        await new Promise((r) => setTimeout(r, 150));
+                        const sr3 = selDiv.getBoundingClientRect();
+                        resized = sr3.width > sr2.width + 2 && sr3.height > sr2.height + 2;
+                      }
+                    }
                     if (insertBtn) insertBtn.click();
                     await new Promise((r) => setTimeout(r, 1000));
                     const note = await window.pkm.getNote(a.id);
                     const inserted = !!(note && note.markdown.includes('assets/'));
-                    return { btn: true, overlayShown: true, exitBtnShown, exitWorks, reenter: true, barShown, maskPersist, inserted };
+                    return { btn: true, overlayShown: true, exitBtnShown, exitWorks, reenter: true, barShown, maskPersist, moved, resized, inserted };
                   })()
                 `);
                 console.log('[capture] shotDiag', JSON.stringify(shotDiag));

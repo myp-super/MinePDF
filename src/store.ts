@@ -66,6 +66,7 @@ interface AppState {
   setView: (v: ViewMode) => void;
   setInspectorTab: (t: InspectorTab) => void;
   toggleInspectorCollapsed: () => void;
+  setInspectorCollapsed: (v: boolean) => void;
   setSearchOpen: (v: boolean) => void;
   setScreenshotMode: (v: boolean) => void;
   bumpNoteRevision: () => void;
@@ -76,6 +77,7 @@ interface AppState {
   setSidebarWidth: (w: number) => void;
   setInspectorWidth: (w: number) => void;
   toggleSidebarCollapsed: () => void;
+  setSidebarCollapsed: (v: boolean) => void;
   toast: (kind: Toast['kind'], text: string) => void;
   dismissToast: (id: number) => void;
 }
@@ -141,6 +143,7 @@ export const useApp = create<AppState>((set, get) => ({
   setView: (v) => set({ view: v }),
   setInspectorTab: (t) => set({ inspectorTab: t }),
   toggleInspectorCollapsed: () => set((s) => ({ inspectorCollapsed: !s.inspectorCollapsed })),
+  setInspectorCollapsed: (v) => set({ inspectorCollapsed: v }),
   setSearchOpen: (v) => set({ searchOpen: v }),
   setScreenshotMode: (v) => set({ screenshotMode: v }),
   bumpNoteRevision: () => set((s) => ({ noteRevision: s.noteRevision + 1 })),
@@ -159,6 +162,7 @@ export const useApp = create<AppState>((set, get) => ({
     set({ inspectorWidth: v });
   },
   toggleSidebarCollapsed: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
+  setSidebarCollapsed: (v) => set({ sidebarCollapsed: v }),
   toast: (kind, text) => {
     // 成功/信息类操作提示不再弹出（直接操作即可）；仅保留错误提示
     if (kind !== 'error') return;
