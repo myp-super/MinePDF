@@ -12,7 +12,6 @@ import {
   Palette,
   RefreshCw,
   Save,
-  Settings2,
   Sun,
 } from 'lucide-react';
 import React, { useEffect, useState } from 'react';
@@ -38,6 +37,14 @@ export function SettingsPage() {
       .isDefaultPdfApp()
       .then(setDefaultPdf)
       .catch(() => setDefaultPdf(null));
+    const onFocus = () => {
+      void window.pkm
+        .isDefaultPdfApp()
+        .then(setDefaultPdf)
+        .catch(() => setDefaultPdf(null));
+    };
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
   }, []);
 
   const update = async (patch: Partial<AppSettings>) => {
@@ -236,20 +243,23 @@ export function SettingsPage() {
           <div className="mb-3 flex items-center gap-2 text-xs font-semibold">
             <FileText size={14} className="text-app-accent" /> {t('settings.defaultPdf')}
           </div>
-          <div className="mb-2 flex items-center justify-between gap-3">
-            <div className="min-w-0 text-[11.5px] text-app-text/90">
-              {t('settings.defaultPdfStatus', {
-                status:
-                  defaultPdf === true
-                    ? t('settings.defaultPdfYes')
-                    : defaultPdf === false
-                      ? t('settings.defaultPdfNo')
-                      : t('settings.defaultPdfUnknown'),
-              })}
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <div className="text-[11.5px] text-app-text/90">
+                {t('settings.defaultPdfStatus', {
+                  status:
+                    defaultPdf === true
+                      ? t('settings.defaultPdfYes')
+                      : defaultPdf === false
+                        ? t('settings.defaultPdfNo')
+                        : t('settings.defaultPdfUnknown'),
+                })}
+              </div>
             </div>
-            <Button size="sm" variant="primary" onClick={() => void window.pkm.openDefaultApps()}>
-              <Settings2 size={12} /> {t('settings.openDefaultApps')}
-            </Button>
+            <Toggle
+              checked={defaultPdf === true}
+              onChange={() => void window.pkm.openDefaultApps()}
+            />
           </div>
           <p className="text-[10.5px] leading-relaxed text-app-muted/80">{t('settings.defaultPdfHint')}</p>
         </section>

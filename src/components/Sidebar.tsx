@@ -16,7 +16,6 @@ import {
   RefreshCcw,
   Settings,
   Trash2,
-  X,
 } from 'lucide-react';
 import React, { useEffect, useMemo, useState } from 'react';
 import { useT, useTError } from '../i18n';
@@ -91,6 +90,9 @@ export function Sidebar() {
   const [moveOpen, setMoveOpen] = useState(false);
   const [inboxOpen, setInboxOpen] = useState(true);
   const [inboxMoveId, setInboxMoveId] = useState<number | null>(null);
+  const [inboxHeight, setInboxHeight] = useState<number>(
+    () => Number(localStorage.getItem('pkm.inboxHeight')) || 160,
+  );
   const [appVersion, setAppVersion] = useState('1.0.0');
 
   useEffect(() => {
@@ -438,18 +440,6 @@ export function Sidebar() {
         </div>
       </div>
 
-      {selectedPdfIds.length > 0 && (
-        <div className="mx-3 mb-2 flex items-center gap-1.5 rounded-md border border-app-accent/40 bg-app-accent/10 px-2 py-1">
-          <span className="min-w-0 flex-1 truncate text-[11px] text-app-accent">
-            {t('sidebar.selectedCount', { n: selectedPdfIds.length })}
-          </span>
-          <span className="shrink-0 text-[10px] text-app-muted">{t('sidebar.multiHint')}</span>
-          <IconButton title={t('sidebar.clearSelection')} onClick={clearSelectedPdfs}>
-            <X size={13} />
-          </IconButton>
-        </div>
-      )}
-
       <div className="px-3 pb-2">
         <div className="flex items-center gap-2">
           <input
@@ -464,7 +454,13 @@ export function Sidebar() {
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
+      <div
+        className="min-h-0 flex-1 overflow-y-auto px-2 pb-2"
+        onClick={(e) => {
+          // 点击树区空白处取消多选
+          if (!(e.target as HTMLElement).closest('[role="treeitem"]')) clearSelectedPdfs();
+        }}
+      >
         {searchPdfs ? (
           <div className="mt-1">
             <div className="px-1.5 py-1 text-[11px] font-medium text-app-muted">
@@ -580,6 +576,35 @@ export function Sidebar() {
         )}
       </div>
 
+      {/* 临时区分隔条：可拖拽调整列表高度 */}
+      <div
+        className="h-1 shrink-0 cursor-row-resize bg-transparent transition-colors hover:bg-app-accent/50 active:bg-app-accent"
+        title={t('inbox.resize')}
+        onMouseDown={(e) => {
+          e.preventDefault();
+          const startY = e.clientY;
+          const startH = inboxHeight;
+          const move = (ev: MouseEvent) => {
+            const next = Math.min(420, Math.max(90, startH - (ev.clientY - startY)));
+            const el = document.querySelector('[data-inbox-panel]') as HTMLElement | null;
+            if (el) el.style.setProperty('height', `${next}px`);
+          };
+          const up = (ev: MouseEvent) => {
+            const next = Math.min(420, Math.max(90, startH - (ev.clientY - startY)));
+            localStorage.setItem('pkm.inboxHeight', String(next));
+            setInboxHeight(next);
+            window.removeEventListener('mousemove', move);
+            window.removeEventListener('mouseup', up);
+            document.body.style.userSelect = '';
+            document.body.style.cursor = '';
+          };
+          window.addEventListener('mousemove', move);
+          window.addEventListener('mouseup', up);
+          document.body.style.userSelect = 'none';
+          document.body.style.cursor = 'row-resize';
+        }}
+      />
+
       {/* 临时阅读区：双击 / “打开方式”打开的 PDF，不进入知识库 */}
       <div className="border-t border-app-border">
         <div className="flex items-center justify-between px-2 py-1">
@@ -606,7 +631,11 @@ export function Sidebar() {
           </div>
         </div>
         {inboxOpen && (
-          <div className="max-h-36 overflow-y-auto px-2 pb-2">
+          <div
+            data-inbox-panel
+            className="overflow-y-auto px-2 pb-2"
+            style={{ height: inboxHeight }}
+          >
             {inboxPdfs.length === 0 && (
               <div className="px-2 py-2 text-[10.5px] leading-relaxed text-app-muted/80">
                 {t('inbox.empty')}

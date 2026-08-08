@@ -401,7 +401,7 @@ async function createMainWindow(): Promise<BrowserWindow> {
                     pdfRows[0].dispatchEvent(new MouseEvent('click', { ctrlKey: true, bubbles: true }));
                     pdfRows[1].dispatchEvent(new MouseEvent('click', { ctrlKey: true, bubbles: true }));
                     await new Promise((r) => setTimeout(r, 150));
-                    const bar = document.body.textContent.includes('已选 2 项');
+                    const noBar = !document.body.textContent.includes('已选 2 项');
                     const noTopDelete = ![...document.querySelectorAll('button')].some((b) => (b.textContent || '').includes('删除所选'));
                     pdfRows[0].dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 120, clientY: 120 }));
                     await new Promise((r) => setTimeout(r, 150));
@@ -409,7 +409,7 @@ async function createMainWindow(): Promise<BrowserWindow> {
                     const menuMove = document.body.textContent.includes('移动到…');
                     const cancel = [...document.querySelectorAll('button')].find((b) => (b.textContent || '').trim() === '取消');
                     if (cancel) cancel.click();
-                    return { rows: pdfRows.length, bar, noTopDelete, menuDelete, menuMove };
+                    return { rows: pdfRows.length, noBar, noTopDelete, menuDelete, menuMove };
                   })()
                 `);
                 console.log('[capture] multiDiag', JSON.stringify(multiDiag));
@@ -423,7 +423,19 @@ async function createMainWindow(): Promise<BrowserWindow> {
                     if (inboxRow) inboxRow.click();
                     await new Promise((r) => setTimeout(r, 2000));
                     const c = document.querySelector('.pdf-page-sheet canvas');
-                    return { added: !!item, inboxRow: !!inboxRow, openedCanvas: c ? c.width : 0 };
+                    const panel = document.querySelector('[data-inbox-panel]');
+                    const bar = [...document.querySelectorAll('div')].find((el) => (el.className || '').includes('cursor-row-resize'));
+                    let resized = false;
+                    if (panel && bar) {
+                      const before = panel.getBoundingClientRect().height;
+                      bar.dispatchEvent(new MouseEvent('mousedown', { clientY: 0, bubbles: true }));
+                      window.dispatchEvent(new MouseEvent('mousemove', { clientY: -120, bubbles: true }));
+                      window.dispatchEvent(new MouseEvent('mouseup', { clientY: -120, bubbles: true }));
+                      await new Promise((r) => setTimeout(r, 120));
+                      const after = panel.getBoundingClientRect().height;
+                      resized = after > before;
+                    }
+                    return { added: !!item, inboxRow: !!inboxRow, openedCanvas: c ? c.width : 0, resized };
                   })()
                 `);
                 console.log('[capture] inboxDiag', JSON.stringify(inboxDiag));

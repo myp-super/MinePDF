@@ -22,6 +22,7 @@ win:
       name: PDF Document
       description: PDF Document
       role: Viewer
+      icon: build/file-assoc.ico
   target:
     - target: nsis
       arch: [x64]
