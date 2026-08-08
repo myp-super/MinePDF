@@ -28,6 +28,10 @@ export function getSettings(): AppSettings {
   } catch {
     cache = { ...DEFAULTS };
   }
+  // 旧配置里可能保存了空的 updateUrl（早期默认值），回退到内置默认更新源
+  if (!cache.updateUrl?.trim()) {
+    cache.updateUrl = DEFAULTS.updateUrl;
+  }
   cache.libraryPath = getLibraryRoot();
   cache.libraryPdfDir = getLibraryPdfDir();
   return cache;
