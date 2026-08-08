@@ -1,6 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
 import { execFile, spawn } from 'child_process';
 import fs from 'fs';
+import path from 'path';
 import type {
   AnnotationRecord,
   AppInfo,
@@ -196,6 +197,63 @@ export function registerIpc(): void {
   // ---------- 笔记 ----------
   handle('note:get', (pdfId: number) => repository.getNote(pdfId));
   handle('note:save', (pdfId: number, markdown: string) => repository.upsertNote(pdfId, markdown));
+  handle('note:reveal', (pdfId: number) => {
+    const note = repository.getNote(pdfId);
+    if (!note?.noteFile) throw new Error('笔记文件尚未创建');
+    shell.showItemInFolder(note.noteFile);
+  });
+  handle('note:export-pdf', async (payload: { html: string; suggestedName: string }) => {
+    let katexCss = '';
+    try {
+      const katexDir = path.join(app.getAppPath(), 'node_modules', 'katex');
+      katexCss = fs
+        .readFileSync(path.join(katexDir, 'dist', 'katex.min.css'), 'utf8')
+        .replace(
+          /url\((fonts\/[^)]+)\)/g,
+          (_m: string, p1: string) => `url(file://${path.join(katexDir, 'dist', p1).replace(/\\/g, '/')})`,
+        );
+    } catch {
+      /* ignore */
+    }
+    const html = payload.html.replace('/*__KATEX_CSS__*/', katexCss);
+    const tmp = path.join(app.getPath('temp'), `minepdf-export-${Date.now()}.html`);
+    fs.writeFileSync(tmp, html, 'utf8');
+    const win = new BrowserWindow({ show: false, webPreferences: { sandbox: true } });
+    try {
+      await win.loadFile(tmp);
+      const pdf = await win.webContents.printToPDF({
+        pageSize: 'A4',
+        printBackground: true,
+        margins: { top: 0.55, bottom: 0.55, left: 0.6, right: 0.6 },
+      });
+      win.destroy();
+      fs.unlinkSync(tmp);
+      const res = await dialog.showSaveDialog(mainWin!, {
+        title: '导出笔记为 PDF',
+        defaultPath: payload.suggestedName,
+        filters: [{ name: 'PDF 文档', extensions: ['pdf'] }],
+      });
+      if (res.canceled || !res.filePath) return null;
+      fs.writeFileSync(res.filePath, pdf);
+      return res.filePath;
+    } finally {
+      if (!win.isDestroyed()) win.destroy();
+      try {
+        fs.unlinkSync(tmp);
+      } catch {
+        /* ignore */
+      }
+    }
+  });
+  handle('note:save-image', (pdfId: number, dataUrl: string) => {
+    const m = /^data:image\/png;base64,(.+)$/.exec(dataUrl);
+    if (!m) throw new Error('无效的图片数据');
+    const dir = path.join(getDataDir(), 'notes', 'assets');
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, `${pdfId}-${Date.now()}.png`);
+    fs.writeFileSync(file, Buffer.from(m[1], 'base64'));
+    return `assets/${path.basename(file)}`;
+  });
 
   // ---------- 标注 ----------
   handle('annotation:list', (pdfId: number) => repository.listAnnotations(pdfId));

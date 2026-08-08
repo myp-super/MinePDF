@@ -4,8 +4,10 @@ import {
   Check,
   Copy,
   ExternalLink,
+  FileDown,
   FileSearch,
   FileText,
+  FolderOpen,
   Hash,
   Info,
   Loader2,
@@ -20,6 +22,7 @@ import {
 } from 'lucide-react';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
+import { renderToStaticMarkup } from 'react-dom/server';
 import rehypeKatex from 'rehype-katex';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
@@ -28,6 +31,29 @@ import type { AnnotationRecord, PdfRecord } from '../shared/types';
 import { useApp } from '../store';
 import { Button, formatBytes, formatDate, IconButton, Toggle } from './ui';
 import { InspectorOutline } from './InspectorOutline';
+import { NoteEditor } from './NoteEditor';
+
+/** 导出 PDF 时使用的精简 Markdown 样式 */
+const MD_EXPORT_CSS = `
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 32px 36px; background: #fff; color: #1d2129;
+    font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+    font-size: 14px; line-height: 1.75; -webkit-print-color-adjust: exact; }
+  h1,h2,h3,h4,h5,h6 { margin: 1.1em 0 0.5em; font-weight: 600; line-height: 1.35; }
+  h1 { font-size: 1.6em; padding-bottom: 0.3em; border-bottom: 1px solid #d9dde4; }
+  h2 { font-size: 1.35em; } h3 { font-size: 1.2em; }
+  p { margin: 0.55em 0; }
+  ul,ol { padding-left: 1.5em; margin: 0.55em 0; }
+  blockquote { border-left: 3px solid #5b8def; margin: 0.7em 0; padding-left: 0.9em; color: #555; }
+  code { font-family: Consolas, monospace; font-size: 0.9em; background: #f1f3f7; padding: 0.12em 0.35em; border-radius: 4px; }
+  pre { background: #0c0f16; color: #d6e2f2; border-radius: 8px; padding: 12px 14px; overflow-x: auto; }
+  pre code { background: transparent; padding: 0; }
+  table { border-collapse: collapse; margin: 0.7em 0; width: 100%; }
+  th,td { border: 1px solid #d9dde4; padding: 5px 9px; text-align: left; }
+  th { background: #f0f2f5; }
+  img { max-width: 100%; }
+  del { color: #888; }
+`;
 
 export function Inspector() {
   const t = useT();
@@ -387,6 +413,9 @@ function NotesPanel({ pdf }: { pdf: PdfRecord }) {
   const [dirty, setDirty] = useState(false);
   const [savedAt, setSavedAt] = useState<Date | null>(null);
   const [saving, setSaving] = useState(false);
+  const [noteFile, setNoteFile] = useState<string | null>(null);
+  const [notesDir, setNotesDir] = useState('');
+  const [exporting, setExporting] = useState(false);
   const loadedRef = useRef(false);
 
   useEffect(() => {
@@ -395,7 +424,10 @@ function NotesPanel({ pdf }: { pdf: PdfRecord }) {
     void (async () => {
       try {
         const note = await window.pkm.getNote(pdf.id);
-        if (note) setMd(note.markdown);
+        if (note) {
+          setMd(note.markdown);
+          setNoteFile(note.noteFile ?? null);
+        }
       } catch {
         /* ignore */
       }
@@ -404,6 +436,13 @@ function NotesPanel({ pdf }: { pdf: PdfRecord }) {
       setLoading(false);
     })();
   }, [pdf.id]);
+
+  useEffect(() => {
+    void window.pkm
+      .getAppInfo()
+      .then((info) => setNotesDir(`${info.dataDir.replace(/\\/g, '/')}/notes`))
+      .catch(() => undefined);
+  }, []);
 
   const save = useCallback(
     async (text: string, silent = false) => {
@@ -439,6 +478,47 @@ function NotesPanel({ pdf }: { pdf: PdfRecord }) {
     return () => window.removeEventListener('keydown', onKey);
   }, [md, save]);
 
+  const resolveAsset = (src?: string): string | undefined => {
+    if (!src) return undefined;
+    if (/^(https?:|file:|data:|blob:)/.test(src)) return src;
+    if (notesDir && src.startsWith('assets/')) return `file://${notesDir}/${src}`;
+    return src;
+  };
+
+  const exportPdf = async () => {
+    setExporting(true);
+    try {
+      const body = renderToStaticMarkup(
+        <div className="md-body">
+          <ReactMarkdown
+            remarkPlugins={[remarkGfm, remarkMath]}
+            rehypePlugins={[rehypeKatex]}
+            components={{
+              img: ({ src, alt }) => <img src={resolveAsset(src)} alt={alt ?? ''} />,
+            }}
+          >
+            {md}
+          </ReactMarkdown>
+        </div>,
+      );
+      const html = `<!doctype html><html><head><meta charset="utf-8"/>
+<style>/*__KATEX_CSS__*/</style>
+<style>${MD_EXPORT_CSS}</style>
+</head><body>${body}</body></html>`;
+      const saved = await window.pkm.exportNoteToPdf({
+        html,
+        suggestedName: `${pdf.title || pdf.filename} 笔记.pdf`,
+      });
+      if (!saved) {
+        toast('error', t('inspector.saveFailed', { msg: '导出已取消' }));
+      }
+    } catch (err) {
+      toast('error', t('inspector.saveFailed', { msg: err instanceof Error ? err.message : String(err) }));
+    } finally {
+      setExporting(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex h-40 items-center justify-center text-app-muted">
@@ -450,7 +530,7 @@ function NotesPanel({ pdf }: { pdf: PdfRecord }) {
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-center justify-between border-b border-app-border px-3 py-1.5">
-        <div className="flex gap-1">
+        <div className="flex items-center gap-1">
           <button
             className={`rounded-md px-2 py-1 text-[11px] ${mode === 'edit' ? 'bg-app-panel2 text-app-text' : 'text-app-muted hover:text-app-text'}`}
             onClick={() => setMode('edit')}
@@ -464,7 +544,10 @@ function NotesPanel({ pdf }: { pdf: PdfRecord }) {
             {t('inspector.preview')}
           </button>
         </div>
-        <div className="flex items-center gap-2 text-[10.5px] text-app-muted">
+        <div className="flex items-center gap-1.5 text-[10.5px] text-app-muted">
+          <Button size="sm" variant="outline" disabled={exporting || !md.trim()} onClick={() => void exportPdf()}>
+            <FileDown size={11} /> {exporting ? t('common.saving') : t('note.exportPdf')}
+          </Button>
           {saving ? (
             <span className="flex items-center gap-1">
               <Loader2 size={10} className="animate-spin" /> {t('common.saving')}
@@ -484,25 +567,13 @@ function NotesPanel({ pdf }: { pdf: PdfRecord }) {
       </div>
 
       {mode === 'edit' ? (
-        <textarea
-          className="min-h-0 flex-1 resize-none bg-transparent px-3.5 py-3 font-mono text-[12.5px] leading-relaxed outline-none placeholder:text-app-muted/60"
-          placeholder={t('inspector.notePlaceholder')}
+        <NoteEditor
           value={md}
-          onChange={(e) => {
-            setMd(e.target.value);
+          onChange={(v) => {
+            setMd(v);
             setDirty(true);
           }}
-          onKeyDown={(e) => {
-            if (e.key === 'Tab') {
-              e.preventDefault();
-              const el = e.target as HTMLTextAreaElement;
-              const { selectionStart, selectionEnd } = el;
-              const next = md.slice(0, selectionStart) + '  ' + md.slice(selectionEnd);
-              setMd(next);
-              setDirty(true);
-              requestAnimationFrame(() => el.setSelectionRange(selectionStart + 2, selectionStart + 2));
-            }
-          }}
+          placeholder={t('inspector.notePlaceholder')}
         />
       ) : (
         <div className="min-h-0 flex-1 overflow-y-auto px-3.5 py-3">
@@ -511,6 +582,9 @@ function NotesPanel({ pdf }: { pdf: PdfRecord }) {
               remarkPlugins={[remarkGfm, remarkMath]}
               rehypePlugins={[rehypeKatex]}
               className="md-body"
+              components={{
+                img: ({ src, alt }) => <img src={resolveAsset(src)} alt={alt ?? ''} />,
+              }}
             >
               {md}
             </ReactMarkdown>
@@ -520,8 +594,19 @@ function NotesPanel({ pdf }: { pdf: PdfRecord }) {
         </div>
       )}
 
-      <div className="border-t border-app-border px-3 py-1.5 text-[10.5px] text-app-muted/70">
-        {t('inspector.noteMirror', { id: pdf.id })}
+      <div className="flex items-center justify-between gap-2 border-t border-app-border px-3 py-1.5 text-[10.5px] text-app-muted/70">
+        <span className="min-w-0 truncate">
+          {noteFile ? noteFile.split(/[\\/]/).pop() : t('inspector.noteMirror', { id: pdf.id })}
+        </span>
+        {noteFile && (
+          <button
+            className="flex shrink-0 items-center gap-1 rounded px-1 py-0.5 text-app-muted transition-colors hover:bg-app-panel2 hover:text-app-text"
+            title={t('note.revealFile')}
+            onClick={() => void window.pkm.revealNoteFile(pdf.id)}
+          >
+            <FolderOpen size={11} />
+          </button>
+        )}
       </div>
     </div>
   );

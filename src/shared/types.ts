@@ -40,6 +40,8 @@ export interface NoteRecord {
   id: number;
   pdfId: number;
   markdown: string;
+  /** 笔记镜像文件路径（data/notes/<PDF标题> 笔记.md） */
+  noteFile?: string;
   updatedAt: string;
 }
 
@@ -175,6 +177,9 @@ export interface PkmApi {
 
   getNote(pdfId: number): Promise<NoteRecord | null>;
   saveNote(pdfId: number, markdown: string): Promise<NoteRecord>;
+  revealNoteFile(pdfId: number): Promise<void>;
+  exportNoteToPdf(payload: { html: string; suggestedName: string }): Promise<string | null>;
+  saveNoteImage(pdfId: number, dataUrl: string): Promise<string>;
 
   listAnnotations(pdfId: number): Promise<AnnotationRecord[]>;
   createAnnotation(data: NewAnnotation): Promise<AnnotationRecord>;

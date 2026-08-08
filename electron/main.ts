@@ -154,7 +154,7 @@ async function createMainWindow(): Promise<BrowserWindow> {
       const watchdog = setTimeout(() => {
         console.error('[smoke] watchdog timeout');
         app.exit(2);
-      }, 20000);
+      }, 60000);
       // 冒烟测试：验证 preload + React 挂载 + 核心 IPC 全链路
       const testPdfPath = path.join(app.getPath('temp'), 'pkm-smoke-docs', 'smoke-test.pdf');
       const autoScanPdfPath = path.join(
@@ -220,7 +220,12 @@ async function createMainWindow(): Promise<BrowserWindow> {
               if (inbox2) await step('inboxRemove', () => window.pkm.inboxRemove(inbox2.id));
               await step('inboxClear', () => window.pkm.inboxClear());
             }
-            await step('saveNote', () => window.pkm.saveNote(pdf.id, '# 测试笔记\\n$$E=mc^2$$'));
+            const note = await step('saveNote', () => window.pkm.saveNote(pdf.id, '# 测试笔记\\n$$E=mc^2$$'));
+            if (note) await step('noteFileNamed', () => (note.noteFile || '').endsWith(' 笔记.md'));
+            const imgRel = await step('saveNoteImage', () =>
+              window.pkm.saveNoteImage(pdf.id, 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='),
+            );
+            if (imgRel) await step('noteImageAsset', () => String(imgRel).startsWith('assets/'));
             const ann = await step('createAnnotation', () => window.pkm.createAnnotation({ pdfId: pdf.id, page: 1, content: '测试高亮', note: '备注', position: JSON.stringify([{x:10,y:20,w:100,h:12}]), color: '#fde047' }));
             if (ann) {
               await step('updateAnnotation', () => window.pkm.updateAnnotation(ann.id, { note: '更新的备注' }));
@@ -439,6 +444,23 @@ async function createMainWindow(): Promise<BrowserWindow> {
                   })()
                 `);
                 console.log('[capture] inboxDiag', JSON.stringify(inboxDiag));
+                const shotDiag = await win.webContents.executeJavaScript(`
+                  (async () => {
+                    const snap = await window.pkm.getSnapshot();
+                    const a = snap.pdfs.find((p) => p.filename === 'smoke-test.pdf');
+                    if (!a) return { pdf: false };
+                    window.__pkmOpenPdf(a.id);
+                    await new Promise((r) => setTimeout(r, 2000));
+                    const btn = [...document.querySelectorAll('button')].find((b) => (b.getAttribute('title') || '').includes('截取当前页'));
+                    if (!btn) return { btn: false };
+                    btn.click();
+                    await new Promise((r) => setTimeout(r, 1000));
+                    const note = await window.pkm.getNote(a.id);
+                    const inserted = !!(note && note.markdown.includes('assets/'));
+                    return { btn: true, inserted };
+                  })()
+                `);
+                console.log('[capture] shotDiag', JSON.stringify(shotDiag));
               } catch (err) {
                 console.error('[capture] failed', err);
               }

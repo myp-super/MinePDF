@@ -66,6 +66,9 @@ const api: PkmApi = {
 
   getNote: (pdfId) => invoke('note:get', pdfId),
   saveNote: (pdfId, markdown) => invoke('note:save', pdfId, markdown),
+  revealNoteFile: (pdfId) => invoke('note:reveal', pdfId),
+  exportNoteToPdf: (payload) => invoke('note:export-pdf', payload),
+  saveNoteImage: (pdfId, dataUrl) => invoke('note:save-image', pdfId, dataUrl),
 
   listAnnotations: (pdfId) => invoke('annotation:list', pdfId),
   createAnnotation: (data) => invoke('annotation:create', data),

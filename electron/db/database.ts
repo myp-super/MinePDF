@@ -91,6 +91,11 @@ function migrateSchema(db: Database.Database): void {
   if (!pdfCols.some((c) => c.name === 'scope')) {
     db.exec(`ALTER TABLE pdfs ADD COLUMN scope TEXT NOT NULL DEFAULT 'library'`);
   }
+  // notes.note_file（笔记镜像文件路径，Obsidian 式可读文件名）
+  const noteCols = db.prepare('PRAGMA table_info(notes)').all() as Array<{ name: string }>;
+  if (!noteCols.some((c) => c.name === 'note_file')) {
+    db.exec(`ALTER TABLE notes ADD COLUMN note_file TEXT`);
+  }
 }
 
 /**

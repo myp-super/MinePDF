@@ -29,7 +29,6 @@ export function SettingsPage() {
   const toast = useApp((s) => s.toast);
   const [busy, setBusy] = useState(false);
   const [checking, setChecking] = useState(false);
-  const [updateUrlDraft, setUpdateUrlDraft] = useState(settings.updateUrl);
   const [defaultPdf, setDefaultPdf] = useState<boolean | null>(null);
 
   useEffect(() => {
@@ -73,15 +72,6 @@ export function SettingsPage() {
       toast('error', terr(err instanceof Error ? err.message : String(err)));
     } finally {
       setBusy(false);
-    }
-  };
-
-  const saveUpdateUrl = async () => {
-    try {
-      await update({ updateUrl: updateUrlDraft.trim() });
-      toast('success', t('settings.updateSourceSaved'));
-    } catch (err) {
-      toast('error', terr(err instanceof Error ? err.message : String(err)));
     }
   };
 
@@ -209,18 +199,6 @@ export function SettingsPage() {
           <div className="mb-3 flex items-center gap-2 text-xs font-semibold">
             <RefreshCw size={14} className="text-app-accent" /> {t('settings.updateSection')}
           </div>
-          <div className="mb-2 flex items-center gap-2">
-            <input
-              className="h-8 min-w-0 flex-1 rounded-md border border-app-border bg-app-panel2 px-2.5 text-[11.5px] outline-none placeholder:text-app-muted focus:border-app-accent/70"
-              placeholder="https://example.com/updates/update.json"
-              value={updateUrlDraft}
-              onChange={(e) => setUpdateUrlDraft(e.target.value)}
-              onBlur={() => void saveUpdateUrl()}
-            />
-            <Button size="sm" variant="outline" onClick={() => void saveUpdateUrl()}>
-              {t('common.confirm')}
-            </Button>
-          </div>
           <div className="flex flex-wrap items-center gap-2">
             <Button size="sm" variant="primary" disabled={checking} onClick={() => void checkUpdate()}>
               <RefreshCw size={12} /> {checking ? t('settings.checking') : t('settings.checkUpdate')}
@@ -236,7 +214,6 @@ export function SettingsPage() {
               onChange={(v) => void update({ updateAutoCheck: v })}
             />
           </div>
-          <p className="mt-2 text-[10.5px] leading-relaxed text-app-muted/80">{t('settings.updateUrlHint')}</p>
         </section>
 
         <section className="mb-4 rounded-xl border border-app-border bg-app-panel p-4">

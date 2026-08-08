@@ -1,5 +1,6 @@
 import {
   BookMarked,
+  Camera,
   ChevronLeft,
   ChevronRight,
   Columns2,
@@ -42,6 +43,7 @@ export function PdfToolbar({
   onToggleHighlight,
   onColorChange,
   onToggleSearch,
+  onScreenshot,
   onToggleFullscreen,
   onOpenExternal,
 }: {
@@ -67,6 +69,7 @@ export function PdfToolbar({
   onToggleHighlight: () => void;
   onColorChange: (c: string) => void;
   onToggleSearch: () => void;
+  onScreenshot: () => void;
   onToggleFullscreen: () => void;
   onOpenExternal: () => void;
 }) {
@@ -187,6 +190,9 @@ export function PdfToolbar({
 
       <IconButton disabled={!ready} onClick={onToggleSearch} title={t('toolbar.docSearch')}>
         <Search size={14} />
+      </IconButton>
+      <IconButton disabled={!ready} onClick={onScreenshot} title={t('note.screenshot')}>
+        <Camera size={14} />
       </IconButton>
       <IconButton disabled={!ready} onClick={onOpenExternal} title={t('toolbar.openExternal')}>
         <ExternalLink size={14} />

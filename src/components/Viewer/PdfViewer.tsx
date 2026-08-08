@@ -546,6 +546,23 @@ export function PdfViewer({ pdf, onMissing }: PdfViewerProps) {
     />
   );
 
+  const handleScreenshot = async () => {
+    const canvas = document.querySelector(
+      `.pdf-page-sheet[data-page-number="${currentPage}"] canvas`,
+    ) as HTMLCanvasElement | null;
+    if (!canvas) return;
+    try {
+      const dataUrl = canvas.toDataURL('image/png');
+      const rel = await window.pkm.saveNoteImage(pdf.id, dataUrl);
+      const note = await window.pkm.getNote(pdf.id);
+      const markdown = `${note?.markdown ?? ''}\n\n![${pdf.title || pdf.filename} 截图](${rel})\n`;
+      await window.pkm.saveNote(pdf.id, markdown);
+      setInspectorTab('notes');
+    } catch (err) {
+      toast('error', terr(err instanceof Error ? err.message : String(err)));
+    }
+  };
+
   return (
     <main className="flex min-w-0 flex-1 flex-col bg-app-base">
       <PdfToolbar
@@ -574,6 +591,7 @@ export function PdfViewer({ pdf, onMissing }: PdfViewerProps) {
         onToggleHighlight={() => setHighlightMode((v) => !v)}
         onColorChange={setHighlightColor}
         onToggleSearch={() => setSearchOpen((v) => !v)}
+        onScreenshot={() => void handleScreenshot()}
         onToggleFullscreen={() => void window.pkm.setFullScreen(!fullscreen)}
         onOpenExternal={() =>
           void window.pkm.openPdfExternal(pdf.id).catch((err: unknown) =>

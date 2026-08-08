@@ -49,6 +49,22 @@ function now(): string {
   return new Date().toISOString();
 }
 
+/** 去掉文件名中的非法字符 */
+function sanitizeFilename(name: string): string {
+  return name.replace(/[<>:"/\\|?*\u0000-\u001f]/g, '').trim() || '笔记';
+}
+
+/** data/notes 下的唯一笔记文件名：<标题> 笔记.md / (1).md ... */
+function uniqueNotePath(dir: string, base: string): string {
+  let candidate = path.join(dir, `${base}.md`);
+  let i = 1;
+  while (fs.existsSync(candidate)) {
+    candidate = path.join(dir, `${base} (${i}).md`);
+    i++;
+  }
+  return candidate;
+}
+
 const ILLEGAL_FOLDER_CHARS = /[<>:"/\\|?*\u0000-\u001f]/;
 
 /** Validate a folder name and normalize it (Windows-safe). */
@@ -95,15 +111,6 @@ function uniqueFileInDir(dir: string, filename: string): string {
 function isInside(target: string, dir: string): boolean {
   const rel = path.relative(path.resolve(dir), path.resolve(target));
   return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
-}
-
-/** Write the note mirror file (also useful for direct browsing / backup). */
-function writeNoteMirror(pdfId: number, markdown: string): void {
-  try {
-    fs.writeFileSync(path.join(getDataDir(), 'notes', `${pdfId}.md`), markdown, 'utf8');
-  } catch {
-    /* mirror failure does not affect main flow */
-  }
 }
 
 /** Write the annotation mirror file. */
@@ -511,6 +518,7 @@ export const repository = {
   deletePdf(id: number): void {
     const db = getDb();
     const pdf = this.getPdf(id);
+    const noteRow = db.prepare('SELECT note_file FROM notes WHERE pdf_id = ?').get(id) as Row | undefined;
     db.prepare('DELETE FROM pdfs WHERE id = ?').run(id);
     // Files inside the managed Library tree are owned by the app; remove them.
     if (pdf) {
@@ -524,9 +532,23 @@ export const repository = {
         }
       }
     }
-    // Clean up mirror files.
-    for (const f of [`${id}.md`, `${id}.json`]) {
-      const p = path.join(getDataDir(), f.includes('.md') ? 'notes' : 'annotations', f);
+    // Clean up mirror files（笔记文件、旧版 <id>.md、标注镜像）
+    if (noteRow && noteRow.note_file) {
+      try {
+        if (fs.existsSync(String(noteRow.note_file))) fs.unlinkSync(String(noteRow.note_file));
+      } catch {
+        /* ignore */
+      }
+    } else {
+      const legacy = path.join(getDataDir(), 'notes', `${id}.md`);
+      try {
+        if (fs.existsSync(legacy)) fs.unlinkSync(legacy);
+      } catch {
+        /* ignore */
+      }
+    }
+    for (const f of [`${id}.json`]) {
+      const p = path.join(getDataDir(), 'annotations', f);
       try {
         if (fs.existsSync(p)) fs.unlinkSync(p);
       } catch {
@@ -632,6 +654,7 @@ export const repository = {
       id: Number(r.id),
       pdfId: Number(r.pdf_id),
       markdown: String(r.markdown),
+      noteFile: r.note_file ? String(r.note_file) : undefined,
       updatedAt: String(r.updated_time),
     };
   },
@@ -639,12 +662,32 @@ export const repository = {
   upsertNote(pdfId: number, markdown: string): NoteRecord {
     const db = getDb();
     const t = now();
+    // 首次写笔记时，在 data/notes 下创建「PDF标题 笔记.md」可读镜像文件
+    let noteFile: string | null = null;
+    const pdf = this.getPdf(pdfId);
+    if (pdf) {
+      const dir = path.join(getDataDir(), 'notes');
+      fs.mkdirSync(dir, { recursive: true });
+      const base = sanitizeFilename(`${pdf.title} 笔记`);
+      noteFile = uniqueNotePath(dir, base);
+    }
     db.prepare(
-      `INSERT INTO notes (pdf_id, markdown, updated_time) VALUES (?, ?, ?)
-       ON CONFLICT(pdf_id) DO UPDATE SET markdown = excluded.markdown, updated_time = excluded.updated_time`,
-    ).run(pdfId, markdown, t);
-    writeNoteMirror(pdfId, markdown);
-    return { id: 0, pdfId, markdown, updatedAt: t };
+      `INSERT INTO notes (pdf_id, markdown, note_file, updated_time) VALUES (?, ?, ?, ?)
+       ON CONFLICT(pdf_id) DO UPDATE SET
+         markdown = excluded.markdown,
+         note_file = COALESCE(notes.note_file, excluded.note_file),
+         updated_time = excluded.updated_time`,
+    ).run(pdfId, markdown, noteFile, t);
+    const row = db.prepare('SELECT note_file FROM notes WHERE pdf_id = ?').get(pdfId) as Row | undefined;
+    const file = row && row.note_file ? String(row.note_file) : noteFile;
+    if (file) {
+      try {
+        fs.writeFileSync(file, markdown, 'utf8');
+      } catch {
+        /* mirror failure does not affect main flow */
+      }
+    }
+    return { id: 0, pdfId, markdown, noteFile: file ?? undefined, updatedAt: t };
   },
 
   // ---------- annotations ----------
