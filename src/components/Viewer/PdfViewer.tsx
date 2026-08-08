@@ -925,7 +925,7 @@ function ScreenshotOverlay({
       >
         {t('note.screenshotExit')} (Esc)
       </button>
-      {rect && !dataUrl && rect.w > 0 && rect.h > 0 && (
+      {rect && rect.w > 0 && rect.h > 0 && (
         <div
           className="absolute border-2 border-app-accent"
           style={{

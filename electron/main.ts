@@ -537,11 +537,14 @@ async function createMainWindow(): Promise<BrowserWindow> {
                     await new Promise((r) => setTimeout(r, 300));
                     const insertBtn = [...document.querySelectorAll('button')].find((b) => (b.textContent || '').trim() === '插入笔记');
                     const barShown = !!insertBtn;
+                    const maskPersist = [...document.querySelectorAll('div')].some(
+                      (el) => (el.style.boxShadow || '').includes('100vmax'),
+                    );
                     if (insertBtn) insertBtn.click();
                     await new Promise((r) => setTimeout(r, 1000));
                     const note = await window.pkm.getNote(a.id);
                     const inserted = !!(note && note.markdown.includes('assets/'));
-                    return { btn: true, overlayShown: true, exitBtnShown, exitWorks, reenter: true, barShown, inserted };
+                    return { btn: true, overlayShown: true, exitBtnShown, exitWorks, reenter: true, barShown, maskPersist, inserted };
                   })()
                 `);
                 console.log('[capture] shotDiag', JSON.stringify(shotDiag));
