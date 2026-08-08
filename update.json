@@ -1,8 +1,8 @@
 {
-  "version": "1.3.0",
-  "url": "https://github.com/myp-super/MinePDF/releases/download/v1.3.0/MinePDF.Setup.1.3.0.exe",
+  "publishDate": "2026-08-08",
   "notes": [
-    "v1.3.0 - 应用显示名统一为 MinePDF"
+    "v1.3.1 - 沉浸式阅读：最大化窗口+固定161%缩放"
   ],
-  "publishDate": "2026-08-08"
+  "version": "1.3.1",
+  "url": "https://github.com/myp-super/MinePDF/releases/download/v1.3.1/MinePDF.Setup.1.3.1.exe"
 }
