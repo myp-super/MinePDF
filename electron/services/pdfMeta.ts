@@ -40,3 +40,25 @@ export function guessPageCount(filePath: string): number | null {
     return null;
   }
 }
+
+/**
+ * 轻量判断 PDF 是否带有书签（目录）：Catalog 里出现 /Outlines 引用即视为有。
+ * 仅用于打开文档前决定信息面板默认页，打开后由 PDF.js 精确校准。
+ */
+export function guessHasOutline(filePath: string): boolean {
+  try {
+    const fd = fs.openSync(filePath, 'r');
+    const stat = fs.fstatSync(fd);
+    if (stat.size <= 0) {
+      fs.closeSync(fd);
+      return false;
+    }
+    const headSize = Math.min(stat.size, 512 * 1024);
+    const head = Buffer.alloc(headSize);
+    fs.readSync(fd, head, 0, headSize, 0);
+    fs.closeSync(fd);
+    return /\/Outlines\s+\d+\s+\d+\s+R/i.test(head.toString('latin1'));
+  } catch {
+    return false;
+  }
+}

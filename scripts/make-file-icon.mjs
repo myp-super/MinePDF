@@ -1,4 +1,5 @@
-// PDF 文件关联图标生成器：白色纸张 + 折角 + 蓝色 PDF 徽章（与应用 Logo 区分）。
+// PDF 文件关联图标生成器：蓝色底 + 白色纸张 + 蓝色 PDF 字样（与应用 Logo 区分，
+// 且与系统里常见的白色文件图标一眼区分）。
 import { deflateSync } from 'node:zlib';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -57,16 +58,37 @@ function drawFileIcon(size) {
   const [c1r, c1g, c1b] = hexRgb('#2f54b0');
   const [c2r, c2g, c2b] = hexRgb('#5b8def');
 
+  // 蓝色渐变圆角背景（铺满整块图标）
+  const bgm = size * 0.02;
+  const bgrr = size * 0.14;
   for (let py = 0; py < size; py++) {
     for (let px = 0; px < size; px++) {
       for (let sy = 0; sy < ss; sy++) {
         for (let sx = 0; sx < ss; sx++) {
           const X = px + (sx + 0.5) / ss;
           const Y = py + (sy + 0.5) / ss;
+          if (X >= bgm && X <= size - bgm && Y >= bgm && Y <= size - bgm) {
+            const cx = Math.min(Math.max(X, bgm + bgrr), size - bgm - bgrr);
+            const cy = Math.min(Math.max(Y, bgm + bgrr), size - bgm - bgrr);
+            if (Math.hypot(X - cx, Y - cy) <= bgrr) {
+              const t = Math.min(1, Math.max(0, (X - size * 0.08) / (size * 0.84)));
+              blend(canvas, px, py, lerp(c1r, c2r, t), lerp(c1g, c2g, t), lerp(c1b, c2b, t), 255);
+            }
+          }
+        }
+      }
+    }
+  }
 
-          // 纸张（白色圆角矩形）
-          const m = size * 0.06;
-          const rr = size * 0.05;
+  // 白色纸张（圆角矩形，居中偏上）
+  const m = size * 0.16;
+  const rr = size * 0.07;
+  for (let py = 0; py < size; py++) {
+    for (let px = 0; px < size; px++) {
+      for (let sy = 0; sy < ss; sy++) {
+        for (let sx = 0; sx < ss; sx++) {
+          const X = px + (sx + 0.5) / ss;
+          const Y = py + (sy + 0.5) / ss;
           let inPaper = false;
           if (X >= m && X <= size - m && Y >= m && Y <= size - m) {
             const cx = Math.min(Math.max(X, m + rr), size - m - rr);
@@ -77,59 +99,34 @@ function drawFileIcon(size) {
             blend(canvas, px, py, 250, 251, 253, 255);
             continue;
           }
-          // 右上折角（深灰三角）
+          // 右上折角（蓝灰三角）
           if (pointInPoly(X, Y, [
-            [size * 0.66, size * 0.06],
-            [size * 0.94, size * 0.06],
+            [size * 0.66, size * 0.16],
+            [size * 0.84, size * 0.16],
             [size * 0.66, size * 0.34],
           ])) {
-            blend(canvas, px, py, 138, 144, 156, 255);
+            blend(canvas, px, py, 96, 122, 173, 255);
           } else if (pointInPoly(X, Y, [
-            [size * 0.66, size * 0.06],
-            [size * 0.94, size * 0.06],
-            [size * 0.94, size * 0.34],
+            [size * 0.66, size * 0.16],
+            [size * 0.84, size * 0.16],
+            [size * 0.84, size * 0.34],
             [size * 0.66, size * 0.34],
           ])) {
             // 折角阴影（纸张缺角处）
-            blend(canvas, px, py, 190, 195, 205, 255);
+            blend(canvas, px, py, 180, 194, 224, 255);
           }
         }
       }
     }
   }
 
-  // 蓝色徽章（圆角矩形）
-  const bx0 = size * 0.28;
-  const bx1 = size * 0.72;
-  const by0 = size * 0.22;
-  const by1 = size * 0.52;
-  const br = size * 0.045;
-  for (let py = 0; py < size; py++) {
-    for (let px = 0; px < size; px++) {
-      for (let sy = 0; sy < ss; sy++) {
-        for (let sx = 0; sx < ss; sx++) {
-          const X = px + (sx + 0.5) / ss;
-          const Y = py + (sy + 0.5) / ss;
-          if (X >= bx0 && X <= bx1 && Y >= by0 && Y <= by1) {
-            const cx = Math.min(Math.max(X, bx0 + br), bx1 - br);
-            const cy = Math.min(Math.max(Y, by0 + br), by1 - br);
-            if (Math.hypot(X - cx, Y - cy) <= br) {
-              const t = Math.min(1, Math.max(0, (X - bx0) / (bx1 - bx0)));
-              blend(canvas, px, py, lerp(c1r, c2r, t), lerp(c1g, c2g, t), lerp(c1b, c2b, t), 255);
-            }
-          }
-        }
-      }
-    }
-  }
-
-  // 白色 "PDF" 像素字
-  const cell = size * 0.026;
+  // 蓝色 "PDF" 像素字（白色纸上）
+  const cell = size * 0.032;
   const glyphW = 5 * cell;
   const glyphH = 7 * cell;
   const totalW = glyphW * 3 + cell * 2;
   const tx = (size - totalW) / 2;
-  const ty = by0 + (by1 - by0 - glyphH) / 2;
+  const ty = size * 0.24;
   for (let gi = 0; gi < 3; gi++) {
     const ch = ['P', 'D', 'F'][gi];
     const glyph = FONT[ch];
@@ -140,15 +137,24 @@ function drawFileIcon(size) {
         const py0 = ty + gy * cell;
         for (let y = 0; y < cell; y++) {
           for (let x = 0; x < cell; x++) {
-            blend(canvas, Math.round(px0 + x), Math.round(py0 + y), 255, 255, 255, 255);
+            const t = Math.min(1, Math.max(0, (px0 - size * 0.16) / (size * 0.68)));
+            blend(
+              canvas,
+              Math.round(px0 + x),
+              Math.round(py0 + y),
+              lerp(c1r, c2r, t),
+              lerp(c1g, c2g, t),
+              lerp(c1b, c2b, t),
+              255,
+            );
           }
         }
       }
     }
   }
 
-  // 三条灰色文字行（纸面下方）
-  const lineY = [size * 0.62, size * 0.71, size * 0.8];
+  // 三条浅蓝文字行（纸面下方）
+  const lineY = [size * 0.62, size * 0.72, size * 0.82];
   for (let py = 0; py < size; py++) {
     for (let px = 0; px < size; px++) {
       for (let sy = 0; sy < ss; sy++) {
@@ -156,8 +162,8 @@ function drawFileIcon(size) {
           const X = px + (sx + 0.5) / ss;
           const Y = py + (sy + 0.5) / ss;
           for (const ly of lineY) {
-            if (X >= size * 0.2 && X <= size * 0.8 && Math.abs(Y - ly) <= size * 0.014) {
-              blend(canvas, px, py, 176, 182, 194, 220);
+            if (X >= size * 0.26 && X <= size * 0.74 && Math.abs(Y - ly) <= size * 0.016) {
+              blend(canvas, px, py, 122, 146, 196, 235);
             }
           }
         }

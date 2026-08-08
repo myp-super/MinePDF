@@ -39,6 +39,7 @@ const mapPdf = (r: Row): PdfRecord => ({
   folderId: r.folder_id == null ? null : Number(r.folder_id),
   size: Number(r.size ?? 0),
   pageCount: r.page_count == null ? null : Number(r.page_count),
+  hasOutline: Number(r.has_outline ?? 0) === 1,
   createdAt: String(r.created_time),
   updatedAt: String(r.updated_time),
   status: r.status === 'missing' ? 'missing' : 'ok',
@@ -425,6 +426,7 @@ export const repository = {
     folderId: number | null;
     size: number;
     pageCount: number | null;
+    hasOutline?: boolean;
     scope?: 'library' | 'inbox';
   }): PdfRecord {
     const db = getDb();
@@ -432,8 +434,8 @@ export const repository = {
     const scope = input.scope ?? 'library';
     const res = db
       .prepare(
-        `INSERT INTO pdfs (filename, filepath, title, folder_id, size, page_count, scope, created_time, updated_time, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'ok')`,
+        `INSERT INTO pdfs (filename, filepath, title, folder_id, size, page_count, has_outline, scope, created_time, updated_time, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ok')`,
       )
       .run(
         input.filename,
@@ -442,6 +444,7 @@ export const repository = {
         input.folderId,
         input.size,
         input.pageCount,
+        input.hasOutline ? 1 : 0,
         scope,
         t,
         t,
@@ -493,6 +496,12 @@ export const repository = {
     getDb()
       .prepare('UPDATE pdfs SET page_count = ?, updated_time = ? WHERE id = ?')
       .run(pageCount, now(), id);
+  },
+
+  updatePdfHasOutline(id: number, hasOutline: boolean): void {
+    getDb()
+      .prepare('UPDATE pdfs SET has_outline = ?, updated_time = ? WHERE id = ?')
+      .run(hasOutline ? 1 : 0, now(), id);
   },
 
   relocatePdf(id: number, newPath: string): PdfRecord {

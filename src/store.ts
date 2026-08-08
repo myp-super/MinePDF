@@ -45,6 +45,8 @@ interface AppState {
   noteRevision: number;
   /** 当前 PDF 的内置书签（目录），供信息面板显示 */
   outline: OutlineNode[];
+  /** 每个 PDF 已解析过的书签缓存（pdfId -> 目录树），用于打开时直接决定默认面板 */
+  outlines: Record<number, OutlineNode[]>;
   /** 信息面板请求跳转的页码（由阅读器消费） */
   jumpPage: number | null;
   /** 当前阅读器所在页码（用于书签高亮） */
@@ -71,6 +73,7 @@ interface AppState {
   setScreenshotMode: (v: boolean) => void;
   bumpNoteRevision: () => void;
   setOutline: (nodes: OutlineNode[]) => void;
+  setOutlineFor: (pdfId: number, nodes: OutlineNode[]) => void;
   requestJump: (page: number) => void;
   consumeJump: () => void;
   setCurrentPage: (page: number) => void;
@@ -102,6 +105,7 @@ export const useApp = create<AppState>((set, get) => ({
   screenshotMode: false,
   noteRevision: 0,
   outline: [],
+  outlines: {},
   jumpPage: null,
   currentPage: 1,
   sidebarWidth: Number(localStorage.getItem('pkm.sidebarWidth')) || 268,
@@ -128,7 +132,25 @@ export const useApp = create<AppState>((set, get) => ({
       get().toast('error', err instanceof Error ? err.message : String(err));
     }
   },
-  openPdf: (id) => set({ activePdfId: id, inspectorTab: 'meta' }),
+  openPdf: (id) => {
+    if (id == null) {
+      set({ activePdfId: null, inspectorTab: 'meta' });
+      return;
+    }
+    const s = get();
+    const pdf = s.pdfs.find((p) => p.id === id) ?? s.inboxPdfs.find((p) => p.id === id);
+    // 有书签默认书签页，无书签默认笔记页（避免先闪“信息”再跳转）
+    const cached = s.outlines[id];
+    const tab: InspectorTab =
+      cached !== undefined
+        ? cached.length > 0
+          ? 'outline'
+          : 'notes'
+        : pdf?.hasOutline
+          ? 'outline'
+          : 'notes';
+    set({ activePdfId: id, inspectorTab: tab });
+  },
   setSelectedFolder: (id) => set({ selectedFolderId: id, tagFilterId: null }),
   setInboxPdfs: (items) => set({ inboxPdfs: items }),
   setSelectedPdfIds: (ids) => set({ selectedPdfIds: ids }),
@@ -148,6 +170,8 @@ export const useApp = create<AppState>((set, get) => ({
   setScreenshotMode: (v) => set({ screenshotMode: v }),
   bumpNoteRevision: () => set((s) => ({ noteRevision: s.noteRevision + 1 })),
   setOutline: (nodes) => set({ outline: nodes }),
+  setOutlineFor: (pdfId, nodes) =>
+    set((s) => ({ outlines: { ...s.outlines, [pdfId]: nodes } })),
   requestJump: (page) => set({ jumpPage: page }),
   consumeJump: () => set({ jumpPage: null }),
   setCurrentPage: (page) => set({ currentPage: page }),

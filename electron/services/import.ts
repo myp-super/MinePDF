@@ -3,7 +3,7 @@ import path from 'path';
 import type { ImportResult } from '../../src/shared/types';
 import { getLibraryPdfDir } from '../db/database';
 import { repository } from '../db/repository';
-import { guessPageCount } from './pdfMeta';
+import { guessHasOutline, guessPageCount } from './pdfMeta';
 
 export interface ImportOptions {
   /** Replace metadata (instead of skipping) when the file already exists */
@@ -101,6 +101,7 @@ export async function importPdfs(
       folderId: folderIdForPdf,
       size: st.size,
       pageCount: guessPageCount(filePath),
+      hasOutline: guessHasOutline(filePath),
     });
     existingByLower.set(lower, filePath);
     counts.imported++;

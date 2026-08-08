@@ -50,6 +50,7 @@ const api: PkmApi = {
   movePdf: (id, folderId) => invoke('pdf:move', id, folderId),
   updatePdfTitle: (id, title) => invoke('pdf:update-title', id, title),
   updatePdfPageCount: (id, count) => invoke('pdf:update-page-count', id, count),
+  updatePdfHasOutline: (id, has) => invoke('pdf:update-has-outline', id, has),
   relocatePdf: (id) => invoke('pdf:relocate', id),
   revealPdf: (id) => invoke('pdf:reveal', id),
   revealFolder: (id) => invoke('folder:reveal', id),

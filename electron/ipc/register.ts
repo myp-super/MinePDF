@@ -241,6 +241,9 @@ export function registerIpc(): void {
   handle('pdf:move', (id: number, folderId: number | null) => repository.movePdf(id, folderId));
   handle('pdf:update-title', (id: number, title: string) => repository.updatePdfTitle(id, title));
   handle('pdf:update-page-count', (id: number, count: number) => repository.updatePdfPageCount(id, count));
+  handle('pdf:update-has-outline', (id: number, has: boolean) =>
+    repository.updatePdfHasOutline(id, Boolean(has)),
+  );
 
   handle<PdfRecord>('pdf:relocate', async (id: number) => {
     const res = await dialog.showOpenDialog(mainWin!, {

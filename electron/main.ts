@@ -454,7 +454,7 @@ async function createMainWindow(): Promise<BrowserWindow> {
                       btn: true,
                       collapsed: during.sidebarW < before.sidebarW - 10,
                       maximizedDuring: during.maximized === true,
-                      zoom161: Math.abs(during.scale - 1.61) < 0.02,
+                      zoom121: Math.abs(during.scale - 1.21) < 0.02,
                       restoredW: Math.abs(after.sidebarW - before.sidebarW) < 5,
                       restoredScale: Math.abs(after.scale - before.scale) < 0.05,
                       restoredMax: after.maximized === before.maximized,

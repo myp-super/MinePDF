@@ -29,6 +29,8 @@ export interface PdfRecord {
   folderId: number | null;
   size: number;
   pageCount: number | null;
+  /** 是否带有书签（目录），用于打开文档时决定信息面板默认页 */
+  hasOutline: boolean;
   createdAt: string;
   updatedAt: string;
   status: 'ok' | 'missing';
@@ -167,6 +169,7 @@ export interface PkmApi {
   movePdf(id: number, folderId: number | null): Promise<void>;
   updatePdfTitle(id: number, title: string): Promise<void>;
   updatePdfPageCount(id: number, pageCount: number): Promise<void>;
+  updatePdfHasOutline(id: number, hasOutline: boolean): Promise<void>;
   relocatePdf(id: number): Promise<PdfRecord>;
   readPdf(id: number): Promise<ArrayBuffer>;
   openPdfExternal(id: number): Promise<void>;

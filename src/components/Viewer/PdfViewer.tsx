@@ -167,6 +167,9 @@ export function PdfViewer({ pdf, onMissing }: PdfViewerProps) {
     let outlineTabApplied = false;
     const applyOutline = (tree: Awaited<ReturnType<typeof getOutlineTree>>) => {
       setStoreOutline(tree);
+      // 缓存书签结果并写回数据库，下次打开直接决定默认面板，不再闪“信息”
+      useApp.getState().setOutlineFor(pdf.id, tree);
+      void window.pkm.updatePdfHasOutline(pdf.id, tree.length > 0).catch(() => undefined);
       if (!outlineTabApplied) {
         outlineTabApplied = true;
         setInspectorTab(tree.length > 0 ? 'outline' : 'notes');
@@ -611,7 +614,7 @@ export function PdfViewer({ pdf, onMissing }: PdfViewerProps) {
       if (!s.sidebarCollapsed) s.setSidebarCollapsed(true);
       if (!s.inspectorCollapsed) s.setInspectorCollapsed(true);
       setImmersive(true);
-      setScale(1.61);
+      setScale(1.21);
     } else {
       const prev = immersivePrevRef.current;
       setImmersive(false);

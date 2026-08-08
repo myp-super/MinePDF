@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS pdfs (
   folder_id INTEGER REFERENCES folders(id) ON DELETE SET NULL,
   size INTEGER NOT NULL DEFAULT 0,
   page_count INTEGER,
+  has_outline INTEGER NOT NULL DEFAULT 0,
   scope TEXT NOT NULL DEFAULT 'library',
   created_time TEXT NOT NULL,
   updated_time TEXT NOT NULL,
