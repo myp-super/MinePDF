@@ -1,8 +1,8 @@
 {
-  "url": "https://github.com/myp-super/MinePDF/releases/download/v1.0.3/MinePDF.Setup.1.0.3.exe",
-  "notes": [
-    "请前往 GitHub Release 页面查看更新详情：https://github.com/myp-super/MinePDF/releases/tag/v1.0.3"
-  ],
+  "version": "1.0.4",
   "publishDate": "2026-08-08",
-  "version": "1.0.3"
+  "url": "https://github.com/myp-super/MinePDF/releases/download/v1.0.4/MinePDF.Setup.1.0.4.exe",
+  "notes": [
+    "请前往 GitHub Release 页面查看更新详情：https://github.com/myp-super/MinePDF/releases/tag/v1.0.4"
+  ]
 }
