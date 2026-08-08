@@ -1,5 +1,5 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
-import { spawn } from 'child_process';
+import { execFile, spawn } from 'child_process';
 import fs from 'fs';
 import type {
   AnnotationRecord,
@@ -110,6 +110,35 @@ export function registerIpc(): void {
   handle('folder:rename', (id: number, name: string) => repository.renameFolder(id, name));
   handle('folder:delete', (id: number) => repository.deleteFolder(id));
   handle('folder:move', (id: number, parentId: number | null) => repository.moveFolder(id, parentId));
+
+  // ---------- 临时阅读区（Inbox） ----------
+  handle('inbox:list', () => repository.getInboxPdfs());
+  handle('inbox:add', (filePath: string) => repository.addToInbox(filePath));
+  handle('inbox:remove', (id: number) => repository.deletePdf(id));
+  handle('inbox:clear', () => repository.clearInbox());
+  handle('inbox:to-library', (id: number, folderId: number | null) =>
+    repository.moveInboxToLibrary(id, folderId),
+  );
+
+  // ---------- 默认 PDF 应用 ----------
+  handle('app:is-default-pdf', async () => {
+    return new Promise<boolean>((resolve) => {
+      execFile(
+        'reg',
+        [
+          'query',
+          'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\.pdf\\UserChoice',
+          '/v',
+          'ProgId',
+        ],
+        (err, stdout) => {
+          if (err) return resolve(false);
+          resolve(/mine/i.test(stdout));
+        },
+      );
+    });
+  });
+  handle('app:open-defaultapps', () => shell.openExternal('ms-settings:defaultapps'));
 
   // ---------- PDF ----------
   handle<ImportResult>('pdf:import', (paths: string[], folderId: number | null, opts?: { replace?: boolean }) =>

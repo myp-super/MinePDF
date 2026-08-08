@@ -26,6 +26,7 @@ interface AppState {
   ready: boolean;
   folders: Folder[];
   pdfs: PdfRecord[];
+  inboxPdfs: PdfRecord[];
   tags: Tag[];
   settings: AppSettings;
   activePdfId: number | null;
@@ -52,6 +53,7 @@ interface AppState {
   refresh: () => Promise<void>;
   openPdf: (id: number | null) => void;
   setSelectedFolder: (id: number | null) => void;
+  setInboxPdfs: (items: PdfRecord[]) => void;
   setSelectedPdfIds: (ids: number[]) => void;
   toggleSelectedPdf: (id: number) => void;
   clearSelectedPdfs: () => void;
@@ -77,6 +79,7 @@ export const useApp = create<AppState>((set, get) => ({
   ready: false,
   folders: [],
   pdfs: [],
+  inboxPdfs: [],
   tags: [],
   settings: DEFAULT_SETTINGS,
   activePdfId: null,
@@ -98,21 +101,25 @@ export const useApp = create<AppState>((set, get) => ({
   setReady: (v) => set({ ready: v }),
   refresh: async () => {
     try {
-      const snap = await window.pkm.getSnapshot();
+      const [snap, inbox] = await Promise.all([window.pkm.getSnapshot(), window.pkm.inboxList()]);
       set({
         folders: snap.folders,
         pdfs: snap.pdfs,
+        inboxPdfs: inbox,
         tags: snap.tags,
         settings: snap.settings,
       });
       const active = get().activePdfId;
-      if (active != null && !snap.pdfs.some((p) => p.id === active)) set({ activePdfId: null });
+      if (active != null && !snap.pdfs.some((p) => p.id === active) && !inbox.some((p) => p.id === active)) {
+        set({ activePdfId: null });
+      }
     } catch (err) {
       get().toast('error', err instanceof Error ? err.message : String(err));
     }
   },
   openPdf: (id) => set({ activePdfId: id, inspectorTab: 'meta' }),
   setSelectedFolder: (id) => set({ selectedFolderId: id, tagFilterId: null }),
+  setInboxPdfs: (items) => set({ inboxPdfs: items }),
   setSelectedPdfIds: (ids) => set({ selectedPdfIds: ids }),
   toggleSelectedPdf: (id) =>
     set((s) => ({

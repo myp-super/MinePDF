@@ -2,6 +2,7 @@ import {
   ArrowLeft,
   Database,
   Download,
+  FileText,
   FolderInput,
   FolderOpen,
   HardDrive,
@@ -11,9 +12,10 @@ import {
   Palette,
   RefreshCw,
   Save,
+  Settings2,
   Sun,
 } from 'lucide-react';
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useT, useTError } from '../i18n';
 import type { AppSettings } from '../shared/types';
 import { useApp } from '../store';
@@ -29,6 +31,14 @@ export function SettingsPage() {
   const [busy, setBusy] = useState(false);
   const [checking, setChecking] = useState(false);
   const [updateUrlDraft, setUpdateUrlDraft] = useState(settings.updateUrl);
+  const [defaultPdf, setDefaultPdf] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    void window.pkm
+      .isDefaultPdfApp()
+      .then(setDefaultPdf)
+      .catch(() => setDefaultPdf(null));
+  }, []);
 
   const update = async (patch: Partial<AppSettings>) => {
     try {
@@ -220,6 +230,28 @@ export function SettingsPage() {
             />
           </div>
           <p className="mt-2 text-[10.5px] leading-relaxed text-app-muted/80">{t('settings.updateUrlHint')}</p>
+        </section>
+
+        <section className="mb-4 rounded-xl border border-app-border bg-app-panel p-4">
+          <div className="mb-3 flex items-center gap-2 text-xs font-semibold">
+            <FileText size={14} className="text-app-accent" /> {t('settings.defaultPdf')}
+          </div>
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <div className="min-w-0 text-[11.5px] text-app-text/90">
+              {t('settings.defaultPdfStatus', {
+                status:
+                  defaultPdf === true
+                    ? t('settings.defaultPdfYes')
+                    : defaultPdf === false
+                      ? t('settings.defaultPdfNo')
+                      : t('settings.defaultPdfUnknown'),
+              })}
+            </div>
+            <Button size="sm" variant="primary" onClick={() => void window.pkm.openDefaultApps()}>
+              <Settings2 size={12} /> {t('settings.openDefaultApps')}
+            </Button>
+          </div>
+          <p className="text-[10.5px] leading-relaxed text-app-muted/80">{t('settings.defaultPdfHint')}</p>
         </section>
 
         <section className="rounded-xl border border-app-border bg-app-panel p-4">

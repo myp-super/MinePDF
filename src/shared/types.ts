@@ -142,6 +142,15 @@ export interface PkmApi {
   deleteFolder(id: number): Promise<void>;
   moveFolder(id: number, parentId: number | null): Promise<void>;
 
+  inboxList(): Promise<PdfRecord[]>;
+  inboxAdd(filePath: string): Promise<PdfRecord>;
+  inboxRemove(id: number): Promise<void>;
+  inboxClear(): Promise<number>;
+  inboxToLibrary(id: number, folderId: number | null): Promise<PdfRecord>;
+  isDefaultPdfApp(): Promise<boolean>;
+  openDefaultApps(): Promise<void>;
+  onExternalPdf(cb: (filePath: string) => void): () => void;
+
   importPdfs(
     paths: string[],
     folderId: number | null,

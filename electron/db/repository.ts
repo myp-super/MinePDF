@@ -9,7 +9,7 @@ import type {
   Quad,
   Tag,
 } from '../../src/shared/types';
-import { getDataDir, getDb, getLibraryPdfDir } from './database';
+import { getDataDir, getDb, getInboxDir, getLibraryPdfDir } from './database';
 
 type Row = Record<string, unknown>;
 
@@ -376,7 +376,7 @@ export const repository = {
   getPdfs(): PdfRecord[] {
     const db = getDb();
     const list = (
-      db.prepare('SELECT * FROM pdfs ORDER BY created_time DESC').all() as Row[]
+      db.prepare("SELECT * FROM pdfs WHERE scope = 'library' ORDER BY created_time DESC").all() as Row[]
     ).map(mapPdf);
     const rows = db
       .prepare(
@@ -396,7 +396,9 @@ export const repository = {
 
   getAllFilepaths(): string[] {
     const db = getDb();
-    return (db.prepare('SELECT filepath FROM pdfs').all() as Row[]).map((r) => String(r.filepath));
+    return (db.prepare("SELECT filepath FROM pdfs WHERE scope = 'library'").all() as Row[]).map((r) =>
+      String(r.filepath),
+    );
   },
 
   insertPdf(input: {
@@ -406,15 +408,27 @@ export const repository = {
     folderId: number | null;
     size: number;
     pageCount: number | null;
+    scope?: 'library' | 'inbox';
   }): PdfRecord {
     const db = getDb();
     const t = now();
+    const scope = input.scope ?? 'library';
     const res = db
       .prepare(
-        `INSERT INTO pdfs (filename, filepath, title, folder_id, size, page_count, created_time, updated_time, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ok')`,
+        `INSERT INTO pdfs (filename, filepath, title, folder_id, size, page_count, scope, created_time, updated_time, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'ok')`,
       )
-      .run(input.filename, input.filepath, input.title, input.folderId, input.size, input.pageCount, t, t);
+      .run(
+        input.filename,
+        input.filepath,
+        input.title,
+        input.folderId,
+        input.size,
+        input.pageCount,
+        scope,
+        t,
+        t,
+      );
     const created = db.prepare('SELECT * FROM pdfs WHERE id = ?').get(res.lastInsertRowid) as Row;
     return mapPdf(row(created));
   },
@@ -501,7 +515,8 @@ export const repository = {
     // Files inside the managed Library tree are owned by the app; remove them.
     if (pdf) {
       const libraryDir = getLibraryPdfDir();
-      if (isInside(pdf.filepath, libraryDir)) {
+      const inboxDir = getInboxDir();
+      if (isInside(pdf.filepath, libraryDir) || isInside(pdf.filepath, inboxDir)) {
         try {
           if (fs.existsSync(pdf.filepath)) fs.unlinkSync(pdf.filepath);
         } catch {
@@ -518,6 +533,59 @@ export const repository = {
         /* ignore */
       }
     }
+  },
+
+  // ---------- 临时阅读区（Inbox，不进入知识库） ----------
+  getInboxPdfs(): PdfRecord[] {
+    const db = getDb();
+    const list = (
+      db.prepare("SELECT * FROM pdfs WHERE scope = 'inbox' ORDER BY created_time DESC").all() as Row[]
+    ).map(mapPdf);
+    for (const p of list) p.tags = this.getTagsForPdf(p.id);
+    return list;
+  },
+
+  /** 复制外部 PDF 到临时区并登记（不复制到 Library） */
+  addToInbox(sourcePath: string): PdfRecord {
+    const inboxDir = getInboxDir();
+    fs.mkdirSync(inboxDir, { recursive: true });
+    const dest = uniqueFileInDir(inboxDir, path.basename(sourcePath));
+    fs.copyFileSync(sourcePath, dest);
+    const st = fs.statSync(dest);
+    return this.insertPdf({
+      filename: path.basename(dest),
+      filepath: dest,
+      title: path.basename(dest).replace(/\.pdf$/i, ''),
+      folderId: null,
+      size: st.size,
+      pageCount: null,
+      scope: 'inbox',
+    });
+  },
+
+  /** 临时区 -> 知识库：移动文件并转为正式条目 */
+  moveInboxToLibrary(id: number, folderId: number | null): PdfRecord {
+    const db = getDb();
+    const pdf = this.getPdf(id);
+    if (!pdf) throw new Error('PDF 记录不存在');
+    if (!fs.existsSync(pdf.filepath)) throw new Error('源文件不存在或已被移动');
+    const targetDir = this.folderFsDir(folderId);
+    let dest = path.join(targetDir, pdf.filename);
+    if (fs.existsSync(dest) && path.resolve(dest) !== path.resolve(pdf.filepath)) {
+      dest = uniqueFileInDir(targetDir, pdf.filename);
+    }
+    fs.renameSync(pdf.filepath, dest);
+    db.prepare(
+      `UPDATE pdfs SET scope = 'library', folder_id = ?, filepath = ?, filename = ?, status = 'ok', updated_time = ? WHERE id = ?`,
+    ).run(folderId, dest, path.basename(dest), now(), id);
+    return this.getPdf(id)!;
+  },
+
+  /** 清空临时区（删除记录与 Inbox 副本） */
+  clearInbox(): number {
+    const items = this.getInboxPdfs();
+    for (const p of items) this.deletePdf(p.id);
+    return items.length;
   },
 
   // ---------- tags ----------
@@ -658,7 +726,7 @@ export const repository = {
     const like = `%${q}%`;
     const pdfRows = db
       .prepare(
-        `SELECT * FROM pdfs WHERE title LIKE ? OR filename LIKE ? ORDER BY updated_time DESC LIMIT 50`,
+        `SELECT * FROM pdfs WHERE scope = 'library' AND (title LIKE ? OR filename LIKE ?) ORDER BY updated_time DESC LIMIT 50`,
       )
       .all(like, like) as Row[];
     const pdfs = pdfRows.map(mapPdf);
@@ -666,7 +734,7 @@ export const repository = {
 
     const noteRows = db
       .prepare(
-        `SELECT p.*, n.markdown AS markdown FROM notes n JOIN pdfs p ON p.id = n.pdf_id
+        `SELECT p.*, n.markdown AS markdown FROM notes n JOIN pdfs p ON p.id = n.pdf_id AND p.scope = 'library'
          WHERE n.markdown LIKE ? ORDER BY n.updated_time DESC LIMIT 50`,
       )
       .all(like) as Row[];

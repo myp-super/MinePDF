@@ -9,6 +9,7 @@ import {
   FolderSearch,
   Hash,
   Import,
+  Inbox as InboxIcon,
   Library,
   PanelLeftClose,
   PanelLeftOpen,
@@ -72,12 +73,15 @@ export function Sidebar() {
   const selectedFolderId = useApp((s) => s.selectedFolderId);
   const setSelectedFolder = useApp((s) => s.setSelectedFolder);
   const openPdf = useApp((s) => s.openPdf);
+  const activePdfId = useApp((s) => s.activePdfId);
   const sidebarWidth = useApp((s) => s.sidebarWidth);
   const sidebarCollapsed = useApp((s) => s.sidebarCollapsed);
   const toggleSidebarCollapsed = useApp((s) => s.toggleSidebarCollapsed);
   const selectedPdfIds = useApp((s) => s.selectedPdfIds);
   const setSelectedPdfIds = useApp((s) => s.setSelectedPdfIds);
   const clearSelectedPdfs = useApp((s) => s.clearSelectedPdfs);
+  const inboxPdfs = useApp((s) => s.inboxPdfs);
+  const setInboxPdfs = useApp((s) => s.setInboxPdfs);
 
   const [query, setQuery] = useState('');
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
@@ -86,6 +90,8 @@ export function Sidebar() {
   const [importMenu, setImportMenu] = useState(false);
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
   const [moveOpen, setMoveOpen] = useState(false);
+  const [inboxOpen, setInboxOpen] = useState(true);
+  const [inboxMoveId, setInboxMoveId] = useState<number | null>(null);
   const [appVersion, setAppVersion] = useState('1.0.0');
 
   useEffect(() => {
@@ -188,6 +194,75 @@ export function Sidebar() {
     } catch (err) {
       toast('error', terr(err instanceof Error ? err.message : String(err)));
     }
+  };
+
+  // ---------- 临时阅读区 ----------
+  const removeInboxPdf = async (id: number) => {
+    try {
+      await window.pkm.inboxRemove(id);
+      setInboxPdfs(inboxPdfs.filter((p) => p.id !== id));
+      toast('success', t('inbox.removed'));
+    } catch (err) {
+      toast('error', terr(err instanceof Error ? err.message : String(err)));
+    }
+  };
+
+  const clearInbox = () => {
+    setConfirm({
+      title: t('inbox.clear'),
+      message: t('inbox.clearConfirm', { n: inboxPdfs.length }),
+      confirmLabel: t('common.delete'),
+      danger: true,
+      action: async () => {
+        try {
+          await window.pkm.inboxClear();
+          setInboxPdfs([]);
+          toast('success', t('inbox.cleared'));
+        } catch (err) {
+          toast('error', terr(err instanceof Error ? err.message : String(err)));
+        }
+      },
+    });
+  };
+
+  const moveInboxToLibrary = async (id: number, folderId: number | null) => {
+    setInboxMoveId(null);
+    try {
+      await window.pkm.inboxToLibrary(id, folderId);
+      await refresh();
+      toast('success', t('inbox.moved'));
+    } catch (err) {
+      toast('error', terr(err instanceof Error ? err.message : String(err)));
+    }
+  };
+
+  const openInboxMenu = (pdf: PdfRecord, x: number, y: number) => {
+    setMenu({
+      x,
+      y,
+      items: [
+        {
+          label: t('inbox.toLibrary'),
+          icon: <Library size={12} />,
+          onClick: () => setInboxMoveId(pdf.id),
+        },
+        {
+          label: t('sidebar.openInReader'),
+          icon: <FolderSearch size={12} />,
+          onClick: () => {
+            void window.pkm
+              .openPdfExternal(pdf.id)
+              .catch((err: unknown) => toast('error', terr(err instanceof Error ? err.message : String(err))));
+          },
+        },
+        {
+          label: t('inbox.remove'),
+          danger: true,
+          icon: <Trash2 size={12} />,
+          onClick: () => void removeInboxPdf(pdf.id),
+        },
+      ],
+    });
   };
 
   const requestRemovePdf = (pdf: PdfRecord) => {
@@ -506,6 +581,67 @@ export function Sidebar() {
         )}
       </div>
 
+      {/* 临时阅读区：双击 / “打开方式”打开的 PDF，不进入知识库 */}
+      <div className="border-t border-app-border">
+        <div className="flex items-center justify-between px-2 py-1">
+          <button
+            className="flex min-w-0 items-center gap-1.5 text-[11px] font-medium text-app-muted transition-colors hover:text-app-text"
+            onClick={() => setInboxOpen((v) => !v)}
+          >
+            <InboxIcon size={12} className="shrink-0 text-app-accent2/90" />
+            <span className="truncate">{t('inbox.title')}</span>
+            <span className="text-[10px] text-app-muted/70">{inboxPdfs.length}</span>
+          </button>
+          <div className="flex shrink-0 items-center">
+            {inboxPdfs.length > 0 && (
+              <IconButton title={t('inbox.clear')} onClick={clearInbox}>
+                <Trash2 size={12} />
+              </IconButton>
+            )}
+            <IconButton
+              title={inboxOpen ? t('inbox.collapse') : t('inbox.expand')}
+              onClick={() => setInboxOpen((v) => !v)}
+            >
+              {inboxOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+            </IconButton>
+          </div>
+        </div>
+        {inboxOpen && (
+          <div className="max-h-36 overflow-y-auto px-2 pb-2">
+            {inboxPdfs.length === 0 && (
+              <div className="px-2 py-2 text-[10.5px] leading-relaxed text-app-muted/80">
+                {t('inbox.empty')}
+              </div>
+            )}
+            {inboxPdfs.map((p) => (
+              <div
+                key={p.id}
+                role="treeitem"
+                tabIndex={0}
+                className={`flex cursor-pointer items-center gap-1.5 rounded-md py-[3px] text-xs transition-colors hover:bg-app-panel2 ${
+                  activePdfId === p.id
+                    ? 'bg-app-accent/12 text-app-text'
+                    : 'text-app-text/85'
+                }`}
+                style={{ paddingLeft: 14 }}
+                onClick={() => openPdf(p.id)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') openPdf(p.id);
+                }}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  openInboxMenu(p, e.clientX, e.clientY);
+                }}
+                title={p.filepath}
+              >
+                <FileText size={13} className="shrink-0 text-app-accent2/80" />
+                <span className="min-w-0 flex-1 truncate">{p.title}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
       <div className="max-h-44 overflow-y-auto border-t border-app-border px-3 py-2.5">
         <div className="mb-1.5 flex items-center justify-between">
           <span className="text-[11px] font-medium text-app-muted">{t('sidebar.tags')}</span>
@@ -603,6 +739,30 @@ export function Sidebar() {
                 className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs hover:bg-app-panel2"
                 style={{ paddingLeft: 8 + f.path.split('/').length * 12 }}
                 onClick={() => void batchMoveTo(f.id)}
+              >
+                <Folder size={13} className="shrink-0 text-app-accent2/90" />
+                <span className="min-w-0 flex-1 truncate">{f.name}</span>
+              </button>
+            ))}
+          </div>
+        </Modal>
+      )}
+      {inboxMoveId != null && (
+        <Modal open onClose={() => setInboxMoveId(null)} title={t('inbox.toLibrary')} width={360}>
+          <div className="max-h-[50vh] space-y-0.5 overflow-y-auto">
+            <button
+              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs hover:bg-app-panel2"
+              onClick={() => void moveInboxToLibrary(inboxMoveId, null)}
+            >
+              <BookMarked size={13} className="text-app-accent" />
+              {t('sidebar.moveToRoot')}
+            </button>
+            {folders.map((f) => (
+              <button
+                key={f.id}
+                className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs hover:bg-app-panel2"
+                style={{ paddingLeft: 8 + f.path.split('/').length * 12 }}
+                onClick={() => void moveInboxToLibrary(inboxMoveId, f.id)}
               >
                 <Folder size={13} className="shrink-0 text-app-accent2/90" />
                 <span className="min-w-0 flex-1 truncate">{f.name}</span>

@@ -14,6 +14,12 @@ const smokeTest = process.env.PKM_SMOKE_TEST === '1';
 
 let mainWindow: BrowserWindow | null = null;
 let splashWindow: BrowserWindow | null = null;
+/** 双击 PDF / “打开方式”传入的文件路径（临时预览） */
+const externalPdfs: string[] = [];
+
+function pdfFromArgv(argv: string[]): string[] {
+  return argv.filter((a) => a.toLowerCase().endsWith('.pdf') && fs.existsSync(a));
+}
 
 console.log('[main] boot', { isDev, smokeTest });
 
@@ -25,6 +31,13 @@ if (!gotLock) {
   app.quit();
 } else {
   app.on('second-instance', () => {
+    // 已运行时再次用 MinePDF 打开 PDF
+    const files = pdfFromArgv(process.argv.slice(1));
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      for (const f of files) mainWindow.webContents.send('app:external-pdf', f);
+    } else {
+      externalPdfs.push(...files);
+    }
     if (mainWindow) {
       if (mainWindow.isMinimized()) mainWindow.restore();
       mainWindow.focus();
@@ -193,6 +206,20 @@ async function createMainWindow(): Promise<BrowserWindow> {
               return !!back && back.filepath.toLowerCase().indexOf('\u5192\u70df\u6d4b\u8bd5') > -1;
             });
             await step('read', async () => (await window.pkm.readPdf(pdf.id)).byteLength);
+            const inboxItem = await step('inboxAdd', () => window.pkm.inboxAdd(path));
+            if (inboxItem) {
+              await step('inboxList', async () =>
+                (await window.pkm.inboxList()).some((p) => p.id === inboxItem.id),
+              );
+              const moved = await step('inboxToLibrary', () => window.pkm.inboxToLibrary(inboxItem.id, null));
+              if (moved) {
+                await step('inboxMovedToLibrary', () => moved.filepath.toLowerCase().indexOf('library') > -1);
+                await step('deleteInboxMoved', () => window.pkm.deletePdf(moved.id));
+              }
+              const inbox2 = await step('inboxAdd2', () => window.pkm.inboxAdd(path));
+              if (inbox2) await step('inboxRemove', () => window.pkm.inboxRemove(inbox2.id));
+              await step('inboxClear', () => window.pkm.inboxClear());
+            }
             await step('saveNote', () => window.pkm.saveNote(pdf.id, '# 测试笔记\\n$$E=mc^2$$'));
             const ann = await step('createAnnotation', () => window.pkm.createAnnotation({ pdfId: pdf.id, page: 1, content: '测试高亮', note: '备注', position: JSON.stringify([{x:10,y:20,w:100,h:12}]), color: '#fde047' }));
             if (ann) {
@@ -386,6 +413,20 @@ async function createMainWindow(): Promise<BrowserWindow> {
                   })()
                 `);
                 console.log('[capture] multiDiag', JSON.stringify(multiDiag));
+                const inboxDiag = await win.webContents.executeJavaScript(`
+                  (async () => {
+                    const item = await window.pkm.inboxAdd(${JSON.stringify(testPdfPath)});
+                    if (typeof window.__pkmRefresh === 'function') await window.__pkmRefresh();
+                    await new Promise((r) => setTimeout(r, 400));
+                    const rows = [...document.querySelectorAll('aside [role="treeitem"]')];
+                    const inboxRow = rows.find((el) => (el.getAttribute('title') || '').includes('Inbox'));
+                    if (inboxRow) inboxRow.click();
+                    await new Promise((r) => setTimeout(r, 2000));
+                    const c = document.querySelector('.pdf-page-sheet canvas');
+                    return { added: !!item, inboxRow: !!inboxRow, openedCanvas: c ? c.width : 0 };
+                  })()
+                `);
+                console.log('[capture] inboxDiag', JSON.stringify(inboxDiag));
               } catch (err) {
                 console.error('[capture] failed', err);
               }
@@ -440,6 +481,16 @@ app.whenReady().then(async () => {
   if (!smokeTest) splashWindow = createSplash();
   await createMainWindow();
   console.log('[main] main window created');
+
+  // 启动时若由系统以默认 PDF 应用唤起，把文件交给渲染进程做临时预览
+  if (!smokeTest) {
+    externalPdfs.push(...pdfFromArgv(process.argv.slice(1)));
+    setTimeout(() => {
+      for (const f of externalPdfs.splice(0)) {
+        mainWindow?.webContents.send('app:external-pdf', f);
+      }
+    }, 1500);
+  }
 
   // 启动后延迟自动检查更新（设置里开启且配置了更新源时）
   if (!smokeTest && getSettings().updateAutoCheck) {

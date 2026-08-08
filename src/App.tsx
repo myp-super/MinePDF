@@ -22,7 +22,9 @@ export default function App() {
   const dismissToast = useApp((s) => s.dismissToast);
   const settings = useApp((s) => s.settings);
   const view = useApp((s) => s.view);
-  const activePdf = useApp((s) => s.pdfs.find((p) => p.id === s.activePdfId));
+  const activePdf = useApp(
+    (s) => s.pdfs.find((p) => p.id === s.activePdfId) ?? s.inboxPdfs.find((p) => p.id === s.activePdfId),
+  );
   const selectedFolderId = useApp((s) => s.selectedFolderId);
   const sidebarWidth = useApp((s) => s.sidebarWidth);
   const setSidebarWidth = useApp((s) => s.setSidebarWidth);
@@ -37,10 +39,11 @@ export default function App() {
   useEffect(() => {
     void (async () => {
       try {
-        const snap = await window.pkm.getSnapshot();
+        const [snap, inbox] = await Promise.all([window.pkm.getSnapshot(), window.pkm.inboxList()]);
         useApp.setState({
           folders: snap.folders,
           pdfs: snap.pdfs,
+          inboxPdfs: inbox,
           tags: snap.tags,
           settings: snap.settings,
           ready: true,
@@ -59,14 +62,37 @@ export default function App() {
 
   useEffect(() => {
     if (window.location.hash.includes('capture')) {
-      (window as unknown as { __pkmOpenPdf?: (id: number) => void }).__pkmOpenPdf = (id: number) =>
-        useApp.getState().openPdf(id);
+      const w = window as unknown as {
+        __pkmOpenPdf?: (id: number) => void;
+        __pkmRefresh?: () => void;
+      };
+      w.__pkmOpenPdf = (id: number) => useApp.getState().openPdf(id);
+      w.__pkmRefresh = () => {
+        void refresh();
+      };
     }
-  }, []);
+  }, [refresh]);
 
   useEffect(() => {
     return window.pkm.onLibraryChanged(() => void refresh());
   }, [refresh]);
+
+  // 系统用 MinePDF 打开 PDF（双击 / 打开方式）→ 复制进临时区并预览
+  useEffect(() => {
+    return window.pkm.onExternalPdf((filePath) => {
+      void (async () => {
+        try {
+          const item = await window.pkm.inboxAdd(filePath);
+          await refresh();
+          useApp.getState().setSelectedFolder(null);
+          useApp.getState().openPdf(item.id);
+          toast('success', t('inbox.added'));
+        } catch (err) {
+          toast('error', terr(err instanceof Error ? err.message : String(err)));
+        }
+      })();
+    });
+  }, [refresh, t, terr, toast]);
 
   // Ctrl+B 折叠 / 展开左侧边栏（沉浸阅读）
   useEffect(() => {

@@ -17,6 +17,11 @@ asarUnpack:
 
 win:
   icon: build/icon.ico
+  fileAssociations:
+    - ext: pdf
+      name: PDF Document
+      description: PDF Document
+      role: Viewer
   target:
     - target: nsis
       arch: [x64]

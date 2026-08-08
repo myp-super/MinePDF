@@ -35,6 +35,15 @@ const api: PkmApi = {
   deleteFolder: (id) => invoke('folder:delete', id),
   moveFolder: (id, parentId) => invoke('folder:move', id, parentId),
 
+  inboxList: () => invoke('inbox:list'),
+  inboxAdd: (filePath) => invoke('inbox:add', filePath),
+  inboxRemove: (id) => invoke('inbox:remove', id),
+  inboxClear: () => invoke('inbox:clear'),
+  inboxToLibrary: (id, folderId) => invoke('inbox:to-library', id, folderId),
+  isDefaultPdfApp: () => invoke('app:is-default-pdf'),
+  openDefaultApps: () => invoke('app:open-defaultapps'),
+  onExternalPdf: (cb) => subscribe('app:external-pdf', (v) => cb(String(v))),
+
   importPdfs: (paths, folderId, opts) => invoke('pdf:import', paths, folderId, opts),
   deletePdf: (id) => invoke('pdf:delete', id),
   movePdf: (id, folderId) => invoke('pdf:move', id, folderId),

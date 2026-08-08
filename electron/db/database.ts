@@ -21,11 +21,17 @@ export function getLibraryPdfDir(): string {
   return path.join(getLibraryRoot(), 'Library');
 }
 
+/** 临时阅读区：默认打开/双击预览的 PDF 副本存放目录（不进入知识库） */
+export function getInboxDir(): string {
+  return path.join(getLibraryRoot(), 'Inbox');
+}
+
 function ensureDataDirs(): void {
   for (const sub of ['notes', 'annotations', 'config', 'backups']) {
     fs.mkdirSync(path.join(getDataDir(), sub), { recursive: true });
   }
   fs.mkdirSync(getLibraryPdfDir(), { recursive: true });
+  fs.mkdirSync(getInboxDir(), { recursive: true });
 }
 
 /** Migrate legacy data dir (PDFKnowledgeManager) to the MinePDF root once. */
@@ -79,6 +85,11 @@ function migrateSchema(db: Database.Database): void {
     for (const r of rows) {
       upd.run(resolve(Number(r.id)), Number(r.id));
     }
+  }
+  // pdfs.scope 列（知识库 / 临时区）
+  const pdfCols = db.prepare('PRAGMA table_info(pdfs)').all() as Array<{ name: string }>;
+  if (!pdfCols.some((c) => c.name === 'scope')) {
+    db.exec(`ALTER TABLE pdfs ADD COLUMN scope TEXT NOT NULL DEFAULT 'library'`);
   }
 }
 
