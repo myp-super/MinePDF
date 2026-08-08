@@ -466,16 +466,32 @@ async function createMainWindow(): Promise<BrowserWindow> {
                     const notesTab = [...document.querySelectorAll('button')].find((b) => (b.textContent || '').trim() === '笔记');
                     if (notesTab) notesTab.click();
                     await new Promise((r) => setTimeout(r, 250));
-                    const shotBtn = [...document.querySelectorAll('button')].find((b) => (b.getAttribute('title') || '').includes('截取当前页'));
+                    const shotBtn = [...document.querySelectorAll('button')].find((b) => (b.getAttribute('title') || '').includes('拖拽框选') || (b.textContent || '').trim() === '截图');
                     if (!shotBtn) return { btn: false };
                     shotBtn.click();
                     await new Promise((r) => setTimeout(r, 250));
                     const overlay = [...document.querySelectorAll('div')].find((el) => (el.className || '').includes('cursor-crosshair'));
                     if (!overlay) return { btn: true, overlayShown: false };
-                    const or = overlay.getBoundingClientRect();
-                    overlay.dispatchEvent(new MouseEvent('mousedown', { clientX: or.left + 100, clientY: or.top + 100, bubbles: true }));
-                    window.dispatchEvent(new MouseEvent('mousemove', { clientX: or.left + 320, clientY: or.top + 240, bubbles: true }));
-                    window.dispatchEvent(new MouseEvent('mouseup', { clientX: or.left + 320, clientY: or.top + 240, bubbles: true }));
+                    const exitBtnShown = [...document.querySelectorAll('button')].some((b) => (b.textContent || '').trim().startsWith('退出'));
+                    // 先验证右上角常驻「退出」按钮可以退出截图模式
+                    let exitWorks = false;
+                    const exitBtn1 = [...document.querySelectorAll('button')].find((b) => (b.textContent || '').trim().startsWith('退出'));
+                    if (exitBtn1) {
+                      exitBtn1.click();
+                      await new Promise((r) => setTimeout(r, 250));
+                      exitWorks = ![...document.querySelectorAll('div')].some((el) => (el.className || '').includes('cursor-crosshair'));
+                    }
+                    if (!exitWorks) return { btn: true, overlayShown: true, exitBtnShown, exitWorks };
+                    // 重新进入截图模式并完成一次框选插入
+                    const shotBtn2 = [...document.querySelectorAll('button')].find((b) => (b.getAttribute('title') || '').includes('拖拽框选') || (b.textContent || '').trim() === '截图');
+                    if (shotBtn2) shotBtn2.click();
+                    await new Promise((r) => setTimeout(r, 250));
+                    const overlay2 = [...document.querySelectorAll('div')].find((el) => (el.className || '').includes('cursor-crosshair'));
+                    if (!overlay2) return { btn: true, overlayShown: true, exitBtnShown, exitWorks, reenter: false };
+                    const or2 = overlay2.getBoundingClientRect();
+                    overlay2.dispatchEvent(new MouseEvent('mousedown', { clientX: or2.left + 100, clientY: or2.top + 100, bubbles: true }));
+                    window.dispatchEvent(new MouseEvent('mousemove', { clientX: or2.left + 320, clientY: or2.top + 240, bubbles: true }));
+                    window.dispatchEvent(new MouseEvent('mouseup', { clientX: or2.left + 320, clientY: or2.top + 240, bubbles: true }));
                     await new Promise((r) => setTimeout(r, 300));
                     const insertBtn = [...document.querySelectorAll('button')].find((b) => (b.textContent || '').trim() === '插入笔记');
                     const barShown = !!insertBtn;
@@ -483,7 +499,7 @@ async function createMainWindow(): Promise<BrowserWindow> {
                     await new Promise((r) => setTimeout(r, 1000));
                     const note = await window.pkm.getNote(a.id);
                     const inserted = !!(note && note.markdown.includes('assets/'));
-                    return { btn: true, overlayShown: true, barShown, inserted };
+                    return { btn: true, overlayShown: true, exitBtnShown, exitWorks, reenter: true, barShown, inserted };
                   })()
                 `);
                 console.log('[capture] shotDiag', JSON.stringify(shotDiag));

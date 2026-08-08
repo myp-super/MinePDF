@@ -556,6 +556,8 @@ export function PdfViewer({ pdf, onMissing }: PdfViewerProps) {
       await window.pkm.saveNote(pdf.id, markdown);
       setScreenshotMode(false);
       setInspectorTab('notes');
+      // 通知笔记面板刷新，让插入的图片立刻显示
+      useApp.getState().bumpNoteRevision();
     } catch (err) {
       setScreenshotMode(false);
       toast('error', terr(err instanceof Error ? err.message : String(err)));
@@ -683,46 +685,50 @@ function captureRegion(
   container: HTMLElement,
   sel: { x: number; y: number; w: number; h: number },
 ): string | null {
-  const dpr = window.devicePixelRatio || 1;
-  const out = document.createElement('canvas');
-  out.width = Math.max(1, Math.round(sel.w * dpr));
-  out.height = Math.max(1, Math.round(sel.h * dpr));
-  const octx = out.getContext('2d');
-  if (!octx) return null;
-  octx.fillStyle = '#ffffff';
-  octx.fillRect(0, 0, out.width, out.height);
-  const cRect = container.getBoundingClientRect();
-  const selLeft = cRect.left + sel.x;
-  const selTop = cRect.top + sel.y;
-  const sheets = Array.from(document.querySelectorAll('.pdf-page-sheet'));
-  for (const sheet of sheets) {
-    const r = sheet.getBoundingClientRect();
-    const ix = Math.max(selLeft, r.left);
-    const iy = Math.max(selTop, r.top);
-    const ix2 = Math.min(selLeft + sel.w, r.right);
-    const iy2 = Math.min(selTop + sel.h, r.bottom);
-    if (ix2 <= ix || iy2 <= iy) continue;
-    const canvas = sheet.querySelector('canvas') as HTMLCanvasElement | null;
-    if (!canvas) continue;
-    const rx = canvas.width / r.width;
-    const ry = canvas.height / r.height;
-    const sx = Math.round((ix - r.left) * rx);
-    const sy = Math.round((iy - r.top) * ry);
-    const sw = Math.round((ix2 - ix) * rx);
-    const sh = Math.round((iy2 - iy) * ry);
-    octx.drawImage(
-      canvas,
-      sx,
-      sy,
-      sw,
-      sh,
-      Math.round((ix - selLeft) * dpr),
-      Math.round((iy - selTop) * dpr),
-      Math.round((ix2 - ix) * dpr),
-      Math.round((iy2 - iy) * dpr),
-    );
+  try {
+    const dpr = window.devicePixelRatio || 1;
+    const out = document.createElement('canvas');
+    out.width = Math.max(1, Math.round(sel.w * dpr));
+    out.height = Math.max(1, Math.round(sel.h * dpr));
+    const octx = out.getContext('2d');
+    if (!octx) return null;
+    octx.fillStyle = '#ffffff';
+    octx.fillRect(0, 0, out.width, out.height);
+    const cRect = container.getBoundingClientRect();
+    const selLeft = cRect.left + sel.x;
+    const selTop = cRect.top + sel.y;
+    const sheets = Array.from(document.querySelectorAll('.pdf-page-sheet'));
+    for (const sheet of sheets) {
+      const r = sheet.getBoundingClientRect();
+      const ix = Math.max(selLeft, r.left);
+      const iy = Math.max(selTop, r.top);
+      const ix2 = Math.min(selLeft + sel.w, r.right);
+      const iy2 = Math.min(selTop + sel.h, r.bottom);
+      if (ix2 <= ix || iy2 <= iy) continue;
+      const canvas = sheet.querySelector('canvas') as HTMLCanvasElement | null;
+      if (!canvas) continue;
+      const rx = canvas.width / r.width;
+      const ry = canvas.height / r.height;
+      const sx = Math.round((ix - r.left) * rx);
+      const sy = Math.round((iy - r.top) * ry);
+      const sw = Math.round((ix2 - ix) * rx);
+      const sh = Math.round((iy2 - iy) * ry);
+      octx.drawImage(
+        canvas,
+        sx,
+        sy,
+        sw,
+        sh,
+        Math.round((ix - selLeft) * dpr),
+        Math.round((iy - selTop) * dpr),
+        Math.round((ix2 - ix) * dpr),
+        Math.round((iy2 - iy) * dpr),
+      );
+    }
+    return out.toDataURL('image/png');
+  } catch {
+    return null;
   }
-  return out.toDataURL('image/png');
 }
 
 /** 选区截图界面：拖拽框选，退出 / 复制图片 / 插入笔记 */
@@ -739,6 +745,7 @@ function ScreenshotOverlay({
   const [rect, setRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
   const [dataUrl, setDataUrl] = useState<string | null>(null);
   const startRef = useRef<{ x: number; y: number } | null>(null);
+  const draggingRef = useRef(false);
   const rectRef = useRef(rect);
   rectRef.current = rect;
 
@@ -759,6 +766,8 @@ function ScreenshotOverlay({
       setRect(next);
     };
     const onUp = () => {
+      if (!draggingRef.current) return;
+      draggingRef.current = false;
       startRef.current = null;
       const rr = rectRef.current;
       if (rr && rr.w >= 4 && rr.h >= 4 && containerRef.current) {
@@ -772,6 +781,15 @@ function ScreenshotOverlay({
       window.removeEventListener('mouseup', onUp);
     };
   }, [containerRef]);
+
+  // Esc 随时退出截图模式
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
 
   const copy = async () => {
     if (!dataUrl) return;
@@ -794,18 +812,33 @@ function ScreenshotOverlay({
     <div
       className="absolute inset-0 z-40 cursor-crosshair bg-black/35"
       onMouseDown={(e) => {
+        // 只有点击遮罩背景本身才开始框选；操作条按钮不受影响
+        if (e.target !== e.currentTarget) return;
         const r = containerRef.current?.getBoundingClientRect();
         if (!r) return;
         e.preventDefault();
+        draggingRef.current = true;
         setDataUrl(null);
         startRef.current = { x: e.clientX - r.left, y: e.clientY - r.top };
         const init = { x: startRef.current.x, y: startRef.current.y, w: 0, h: 0 };
         rectRef.current = init;
         setRect(init);
       }}
-      onDoubleClick={onClose}
+      onDoubleClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
       title={t('note.screenshotHint')}
     >
+      <div className="pointer-events-none absolute left-1/2 top-3 z-50 -translate-x-1/2 rounded-md bg-app-panel/90 px-3 py-1.5 text-[11px] text-app-muted shadow-lg">
+        {t('note.screenshotHint')}
+      </div>
+      <button
+        className="absolute right-3 top-3 z-50 rounded-md border border-app-border bg-app-panel px-2.5 py-1 text-[11px] text-app-muted transition-colors hover:bg-app-panel2 hover:text-app-text"
+        onMouseDown={(e) => e.stopPropagation()}
+        onClick={onClose}
+      >
+        {t('note.screenshotExit')} (Esc)
+      </button>
       {rect && !dataUrl && rect.w > 0 && rect.h > 0 && (
         <div
           className="absolute border border-app-accent bg-app-accent/20"
@@ -816,6 +849,7 @@ function ScreenshotOverlay({
         <div
           className="animate-pop absolute z-50 flex items-center gap-1 rounded-lg border border-app-border bg-app-panel p-1 shadow-2xl"
           style={{ left: barLeft, top: barTop }}
+          onMouseDown={(e) => e.stopPropagation()}
         >
           <button
             className="rounded-md px-2.5 py-1 text-[11px] text-app-muted transition-colors hover:bg-app-panel2 hover:text-app-text"

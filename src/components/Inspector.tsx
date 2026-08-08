@@ -419,6 +419,7 @@ function NotesPanel({ pdf }: { pdf: PdfRecord }) {
   const [noteFile, setNoteFile] = useState<string | null>(null);
   const [noteDir, setNoteDir] = useState<string | null>(null);
   const [notesDir, setNotesDir] = useState('');
+  const noteRevision = useApp((s) => s.noteRevision);
   const [exporting, setExporting] = useState(false);
   const loadedRef = useRef(false);
 
@@ -440,7 +441,7 @@ function NotesPanel({ pdf }: { pdf: PdfRecord }) {
       setDirty(false);
       setLoading(false);
     })();
-  }, [pdf.id]);
+  }, [pdf.id, noteRevision]);
 
   useEffect(() => {
     void window.pkm
