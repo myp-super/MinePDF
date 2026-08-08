@@ -235,7 +235,16 @@ export function SettingsPage() {
             </div>
             <Toggle
               checked={defaultPdf === true}
-              onChange={() => void window.pkm.openDefaultApps()}
+              onChange={(v) => {
+                void (async () => {
+                  try {
+                    await window.pkm.setPdfAssociation(v);
+                    setDefaultPdf(await window.pkm.isDefaultPdfApp());
+                  } catch {
+                    setDefaultPdf(null);
+                  }
+                })();
+              }}
             />
           </div>
           <p className="text-[10.5px] leading-relaxed text-app-muted/80">{t('settings.defaultPdfHint')}</p>

@@ -200,6 +200,9 @@ const zh: Dict = {
   'note.exportPdf': '导出 PDF',
   'note.revealFile': '在系统中显示笔记文件',
   'note.screenshot': '截取当前页插入笔记',
+  'note.screenshotExit': '退出',
+  'note.screenshotCopy': '复制图片',
+  'note.screenshotInsert': '插入笔记',
 
   'settings.back': '返回知识库',
   'settings.title': '设置',
@@ -493,6 +496,9 @@ const en: Dict = {
   'note.exportPdf': 'Export PDF',
   'note.revealFile': 'Show note file in system',
   'note.screenshot': 'Capture current page into note',
+  'note.screenshotExit': 'Exit',
+  'note.screenshotCopy': 'Copy image',
+  'note.screenshotInsert': 'Insert into note',
 
   'settings.back': 'Back to library',
   'settings.title': 'Settings',

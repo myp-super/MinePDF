@@ -428,6 +428,10 @@ async function createMainWindow(): Promise<BrowserWindow> {
                     if (inboxRow) inboxRow.click();
                     await new Promise((r) => setTimeout(r, 2000));
                     const c = document.querySelector('.pdf-page-sheet canvas');
+                    const tabLabels = ['书签', '笔记', '标注'];
+                    const tabs = tabLabels.map((label) =>
+                      [...document.querySelectorAll('button')].some((b) => (b.textContent || '').trim() === label),
+                    );
                     const panel = document.querySelector('[data-inbox-panel]');
                     const bar = [...document.querySelectorAll('div')].find((el) => (el.className || '').includes('cursor-row-resize'));
                     let resized = false;
@@ -440,7 +444,7 @@ async function createMainWindow(): Promise<BrowserWindow> {
                       const after = panel.getBoundingClientRect().height;
                       resized = after > before;
                     }
-                    return { added: !!item, inboxRow: !!inboxRow, openedCanvas: c ? c.width : 0, resized };
+                    return { added: !!item, inboxRow: !!inboxRow, openedCanvas: c ? c.width : 0, resized, tabs };
                   })()
                 `);
                 console.log('[capture] inboxDiag', JSON.stringify(inboxDiag));
@@ -451,13 +455,27 @@ async function createMainWindow(): Promise<BrowserWindow> {
                     if (!a) return { pdf: false };
                     window.__pkmOpenPdf(a.id);
                     await new Promise((r) => setTimeout(r, 2000));
-                    const btn = [...document.querySelectorAll('button')].find((b) => (b.getAttribute('title') || '').includes('截取当前页'));
-                    if (!btn) return { btn: false };
-                    btn.click();
+                    const notesTab = [...document.querySelectorAll('button')].find((b) => (b.textContent || '').trim() === '笔记');
+                    if (notesTab) notesTab.click();
+                    await new Promise((r) => setTimeout(r, 250));
+                    const shotBtn = [...document.querySelectorAll('button')].find((b) => (b.getAttribute('title') || '').includes('截取当前页'));
+                    if (!shotBtn) return { btn: false };
+                    shotBtn.click();
+                    await new Promise((r) => setTimeout(r, 250));
+                    const overlay = [...document.querySelectorAll('div')].find((el) => (el.className || '').includes('cursor-crosshair'));
+                    if (!overlay) return { btn: true, overlayShown: false };
+                    const or = overlay.getBoundingClientRect();
+                    overlay.dispatchEvent(new MouseEvent('mousedown', { clientX: or.left + 100, clientY: or.top + 100, bubbles: true }));
+                    window.dispatchEvent(new MouseEvent('mousemove', { clientX: or.left + 320, clientY: or.top + 240, bubbles: true }));
+                    window.dispatchEvent(new MouseEvent('mouseup', { clientX: or.left + 320, clientY: or.top + 240, bubbles: true }));
+                    await new Promise((r) => setTimeout(r, 300));
+                    const insertBtn = [...document.querySelectorAll('button')].find((b) => (b.textContent || '').trim() === '插入笔记');
+                    const barShown = !!insertBtn;
+                    if (insertBtn) insertBtn.click();
                     await new Promise((r) => setTimeout(r, 1000));
                     const note = await window.pkm.getNote(a.id);
                     const inserted = !!(note && note.markdown.includes('assets/'));
-                    return { btn: true, inserted };
+                    return { btn: true, overlayShown: true, barShown, inserted };
                   })()
                 `);
                 console.log('[capture] shotDiag', JSON.stringify(shotDiag));

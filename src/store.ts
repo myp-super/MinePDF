@@ -38,6 +38,8 @@ interface AppState {
   inspectorTab: InspectorTab;
   inspectorCollapsed: boolean;
   searchOpen: boolean;
+  /** 截图模式（由笔记工具栏触发，阅读器显示选区工具） */
+  screenshotMode: boolean;
   /** 当前 PDF 的内置书签（目录），供信息面板显示 */
   outline: OutlineNode[];
   /** 信息面板请求跳转的页码（由阅读器消费） */
@@ -62,6 +64,7 @@ interface AppState {
   setInspectorTab: (t: InspectorTab) => void;
   toggleInspectorCollapsed: () => void;
   setSearchOpen: (v: boolean) => void;
+  setScreenshotMode: (v: boolean) => void;
   setOutline: (nodes: OutlineNode[]) => void;
   requestJump: (page: number) => void;
   consumeJump: () => void;
@@ -90,6 +93,7 @@ export const useApp = create<AppState>((set, get) => ({
   inspectorTab: 'meta',
   inspectorCollapsed: false,
   searchOpen: false,
+  screenshotMode: false,
   outline: [],
   jumpPage: null,
   currentPage: 1,
@@ -133,6 +137,7 @@ export const useApp = create<AppState>((set, get) => ({
   setInspectorTab: (t) => set({ inspectorTab: t }),
   toggleInspectorCollapsed: () => set((s) => ({ inspectorCollapsed: !s.inspectorCollapsed })),
   setSearchOpen: (v) => set({ searchOpen: v }),
+  setScreenshotMode: (v) => set({ screenshotMode: v }),
   setOutline: (nodes) => set({ outline: nodes }),
   requestJump: (page) => set({ jumpPage: page }),
   consumeJump: () => set({ jumpPage: null }),

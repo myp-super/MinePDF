@@ -15,14 +15,12 @@ files:
 asarUnpack:
   - "**/node_modules/better-sqlite3/**"
 
+extraResources:
+  - from: build/file-assoc.ico
+    to: file-assoc.ico
+
 win:
   icon: build/icon.ico
-  fileAssociations:
-    - ext: pdf
-      name: PDF Document
-      description: PDF Document
-      role: Viewer
-      icon: build/file-assoc.ico
   target:
     - target: nsis
       arch: [x64]

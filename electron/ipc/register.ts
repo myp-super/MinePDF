@@ -139,6 +139,38 @@ export function registerIpc(): void {
       );
     });
   });
+  handle('app:set-pdf-association', async (enable: boolean) => {
+    const progId = 'MinePDF.pdf';
+    const icon = path.join(process.resourcesPath, 'file-assoc.ico');
+    const run = (args: string[]) =>
+      new Promise<void>((resolve) => execFile('reg', args, () => resolve()));
+    if (enable) {
+      await run(['add', 'HKCU\\Software\\Classes\\.pdf', '/ve', '/d', progId, '/f']);
+      await run([
+        'add',
+        `HKCU\\Software\\Classes\\${progId}\\shell\\open\\command`,
+        '/ve',
+        '/d',
+        `"${process.execPath}" "%1"`,
+        '/f',
+      ]);
+      await run(['add', `HKCU\\Software\\Classes\\${progId}\\DefaultIcon`, '/ve', '/d', `"${icon}"`, '/f']);
+      await shell.openExternal('ms-settings:defaultapps');
+      return true;
+    }
+    // 关闭：仅撤销本应用写入的关联
+    await new Promise<void>((resolve) => {
+      execFile('reg', ['query', 'HKCU\\Software\\Classes\\.pdf', '/ve'], (err, stdout) => {
+        if (!err && /mine/i.test(stdout)) {
+          void run(['delete', 'HKCU\\Software\\Classes\\.pdf', '/ve', '/f']).then(resolve);
+        } else {
+          resolve();
+        }
+      });
+    });
+    await run(['delete', `HKCU\\Software\\Classes\\${progId}`, '/f']);
+    return false;
+  });
   handle('app:open-defaultapps', () => shell.openExternal('ms-settings:defaultapps'));
 
   // ---------- PDF ----------

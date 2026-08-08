@@ -150,6 +150,7 @@ export interface PkmApi {
   inboxClear(): Promise<number>;
   inboxToLibrary(id: number, folderId: number | null): Promise<PdfRecord>;
   isDefaultPdfApp(): Promise<boolean>;
+  setPdfAssociation(enable: boolean): Promise<boolean>;
   openDefaultApps(): Promise<void>;
   onExternalPdf(cb: (filePath: string) => void): () => void;
 

@@ -59,6 +59,8 @@ export function PdfViewer({ pdf, onMissing }: PdfViewerProps) {
   const consumeJump = useApp((s) => s.consumeJump);
   const setStoreCurrentPage = useApp((s) => s.setCurrentPage);
   const outlineCount = useApp((s) => s.outline.length);
+  const screenshotMode = useApp((s) => s.screenshotMode);
+  const setScreenshotMode = useApp((s) => s.setScreenshotMode);
 
   const [doc, setDoc] = useState<PDFDocumentProxy | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -546,19 +548,16 @@ export function PdfViewer({ pdf, onMissing }: PdfViewerProps) {
     />
   );
 
-  const handleScreenshot = async () => {
-    const canvas = document.querySelector(
-      `.pdf-page-sheet[data-page-number="${currentPage}"] canvas`,
-    ) as HTMLCanvasElement | null;
-    if (!canvas) return;
+  const insertScreenshot = async (dataUrl: string) => {
     try {
-      const dataUrl = canvas.toDataURL('image/png');
       const rel = await window.pkm.saveNoteImage(pdf.id, dataUrl);
       const note = await window.pkm.getNote(pdf.id);
       const markdown = `${note?.markdown ?? ''}\n\n![${pdf.title || pdf.filename} 截图](${rel})\n`;
       await window.pkm.saveNote(pdf.id, markdown);
+      setScreenshotMode(false);
       setInspectorTab('notes');
     } catch (err) {
+      setScreenshotMode(false);
       toast('error', terr(err instanceof Error ? err.message : String(err)));
     }
   };
@@ -591,7 +590,6 @@ export function PdfViewer({ pdf, onMissing }: PdfViewerProps) {
         onToggleHighlight={() => setHighlightMode((v) => !v)}
         onColorChange={setHighlightColor}
         onToggleSearch={() => setSearchOpen((v) => !v)}
-        onScreenshot={() => void handleScreenshot()}
         onToggleFullscreen={() => void window.pkm.setFullScreen(!fullscreen)}
         onOpenExternal={() =>
           void window.pkm.openPdfExternal(pdf.id).catch((err: unknown) =>
@@ -648,6 +646,14 @@ export function PdfViewer({ pdf, onMissing }: PdfViewerProps) {
             )}
           </div>
         )}
+
+        {screenshotMode && (
+          <ScreenshotOverlay
+            containerRef={scrollRef}
+            onClose={() => setScreenshotMode(false)}
+            onInsert={(d) => void insertScreenshot(d)}
+          />
+        )}
       </div>
 
       {annMenu && (
@@ -669,5 +675,168 @@ export function PdfViewer({ pdf, onMissing }: PdfViewerProps) {
         />
       )}
     </main>
+  );
+}
+
+/** 将阅读区选区截成 PNG：跨页自动拼接（高清画布像素） */
+function captureRegion(
+  container: HTMLElement,
+  sel: { x: number; y: number; w: number; h: number },
+): string | null {
+  const dpr = window.devicePixelRatio || 1;
+  const out = document.createElement('canvas');
+  out.width = Math.max(1, Math.round(sel.w * dpr));
+  out.height = Math.max(1, Math.round(sel.h * dpr));
+  const octx = out.getContext('2d');
+  if (!octx) return null;
+  octx.fillStyle = '#ffffff';
+  octx.fillRect(0, 0, out.width, out.height);
+  const cRect = container.getBoundingClientRect();
+  const selLeft = cRect.left + sel.x;
+  const selTop = cRect.top + sel.y;
+  const sheets = Array.from(document.querySelectorAll('.pdf-page-sheet'));
+  for (const sheet of sheets) {
+    const r = sheet.getBoundingClientRect();
+    const ix = Math.max(selLeft, r.left);
+    const iy = Math.max(selTop, r.top);
+    const ix2 = Math.min(selLeft + sel.w, r.right);
+    const iy2 = Math.min(selTop + sel.h, r.bottom);
+    if (ix2 <= ix || iy2 <= iy) continue;
+    const canvas = sheet.querySelector('canvas') as HTMLCanvasElement | null;
+    if (!canvas) continue;
+    const rx = canvas.width / r.width;
+    const ry = canvas.height / r.height;
+    const sx = Math.round((ix - r.left) * rx);
+    const sy = Math.round((iy - r.top) * ry);
+    const sw = Math.round((ix2 - ix) * rx);
+    const sh = Math.round((iy2 - iy) * ry);
+    octx.drawImage(
+      canvas,
+      sx,
+      sy,
+      sw,
+      sh,
+      Math.round((ix - selLeft) * dpr),
+      Math.round((iy - selTop) * dpr),
+      Math.round((ix2 - ix) * dpr),
+      Math.round((iy2 - iy) * dpr),
+    );
+  }
+  return out.toDataURL('image/png');
+}
+
+/** 选区截图界面：拖拽框选，退出 / 复制图片 / 插入笔记 */
+function ScreenshotOverlay({
+  containerRef,
+  onClose,
+  onInsert,
+}: {
+  containerRef: React.RefObject<HTMLDivElement | null>;
+  onClose: () => void;
+  onInsert: (dataUrl: string) => void;
+}) {
+  const t = useT();
+  const [rect, setRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+  const [dataUrl, setDataUrl] = useState<string | null>(null);
+  const startRef = useRef<{ x: number; y: number } | null>(null);
+  const rectRef = useRef(rect);
+  rectRef.current = rect;
+
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      const r = containerRef.current?.getBoundingClientRect();
+      const s = startRef.current;
+      if (!r || !s) return;
+      const x = Math.max(0, Math.min(r.width, e.clientX - r.left));
+      const y = Math.max(0, Math.min(r.height, e.clientY - r.top));
+      const next = {
+        x: Math.min(s.x, x),
+        y: Math.min(s.y, y),
+        w: Math.abs(x - s.x),
+        h: Math.abs(y - s.y),
+      };
+      rectRef.current = next;
+      setRect(next);
+    };
+    const onUp = () => {
+      startRef.current = null;
+      const rr = rectRef.current;
+      if (rr && rr.w >= 4 && rr.h >= 4 && containerRef.current) {
+        setDataUrl(captureRegion(containerRef.current, rr));
+      }
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+  }, [containerRef]);
+
+  const copy = async () => {
+    if (!dataUrl) return;
+    try {
+      const blob = await (await fetch(dataUrl)).blob();
+      await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const barLeft = rect
+    ? Math.max(8, Math.min(rect.x + rect.w / 2 - 110, (containerRef.current?.clientWidth ?? 300) - 240))
+    : 8;
+  const barTop = rect
+    ? Math.min(rect.y + rect.h + 10, (containerRef.current?.clientHeight ?? 300) - 44)
+    : 8;
+
+  return (
+    <div
+      className="absolute inset-0 z-40 cursor-crosshair bg-black/35"
+      onMouseDown={(e) => {
+        const r = containerRef.current?.getBoundingClientRect();
+        if (!r) return;
+        e.preventDefault();
+        setDataUrl(null);
+        startRef.current = { x: e.clientX - r.left, y: e.clientY - r.top };
+        const init = { x: startRef.current.x, y: startRef.current.y, w: 0, h: 0 };
+        rectRef.current = init;
+        setRect(init);
+      }}
+      onDoubleClick={onClose}
+      title={t('note.screenshot')}
+    >
+      {rect && !dataUrl && rect.w > 0 && rect.h > 0 && (
+        <div
+          className="absolute border border-app-accent bg-app-accent/20"
+          style={{ left: rect.x, top: rect.y, width: rect.w, height: rect.h }}
+        />
+      )}
+      {dataUrl && (
+        <div
+          className="animate-pop absolute z-50 flex items-center gap-1 rounded-lg border border-app-border bg-app-panel p-1 shadow-2xl"
+          style={{ left: barLeft, top: barTop }}
+        >
+          <button
+            className="rounded-md px-2.5 py-1 text-[11px] text-app-muted transition-colors hover:bg-app-panel2 hover:text-app-text"
+            onClick={onClose}
+          >
+            {t('note.screenshotExit')}
+          </button>
+          <button
+            className="rounded-md px-2.5 py-1 text-[11px] text-app-muted transition-colors hover:bg-app-panel2 hover:text-app-text"
+            onClick={() => void copy()}
+          >
+            {t('note.screenshotCopy')}
+          </button>
+          <button
+            className="rounded-md bg-app-accent px-2.5 py-1 text-[11px] text-white transition-colors hover:brightness-110"
+            onClick={() => onInsert(dataUrl)}
+          >
+            {t('note.screenshotInsert')}
+          </button>
+        </div>
+      )}
+    </div>
   );
 }

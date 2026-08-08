@@ -1,6 +1,7 @@
 import {
   AlertTriangle,
   BookMarked,
+  Camera,
   Check,
   Copy,
   ExternalLink,
@@ -57,7 +58,9 @@ const MD_EXPORT_CSS = `
 
 export function Inspector() {
   const t = useT();
-  const pdf = useApp((s) => s.pdfs.find((p) => p.id === s.activePdfId));
+  const pdf = useApp(
+    (s) => s.pdfs.find((p) => p.id === s.activePdfId) ?? s.inboxPdfs.find((p) => p.id === s.activePdfId),
+  );
   const tab = useApp((s) => s.inspectorTab);
   const setTab = useApp((s) => s.setInspectorTab);
   const collapsed = useApp((s) => s.inspectorCollapsed);
@@ -545,6 +548,14 @@ function NotesPanel({ pdf }: { pdf: PdfRecord }) {
           </button>
         </div>
         <div className="flex items-center gap-1.5 text-[10.5px] text-app-muted">
+          <Button
+            size="sm"
+            variant="outline"
+            title={t('note.screenshot')}
+            onClick={() => useApp.getState().setScreenshotMode(true)}
+          >
+            <Camera size={11} /> {t('note.screenshot')}
+          </Button>
           <Button size="sm" variant="outline" disabled={exporting || !md.trim()} onClick={() => void exportPdf()}>
             <FileDown size={11} /> {exporting ? t('common.saving') : t('note.exportPdf')}
           </Button>

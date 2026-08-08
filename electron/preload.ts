@@ -41,6 +41,7 @@ const api: PkmApi = {
   inboxClear: () => invoke('inbox:clear'),
   inboxToLibrary: (id, folderId) => invoke('inbox:to-library', id, folderId),
   isDefaultPdfApp: () => invoke('app:is-default-pdf'),
+  setPdfAssociation: (enable) => invoke('app:set-pdf-association', enable),
   openDefaultApps: () => invoke('app:open-defaultapps'),
   onExternalPdf: (cb) => subscribe('app:external-pdf', (v) => cb(String(v))),
 
