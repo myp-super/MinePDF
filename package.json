@@ -15,7 +15,7 @@
     "build:renderer": "vite build",
     "build": "npm run build:electron && npm run build:renderer",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.electron.json --noEmit",
-    "dist": "npm run build && electron-builder --win nsis portable --config electron-builder.yml",
+    "dist": "npm run build && electron-builder --win nsis portable --config electron-builder.yml --publish never",
     "dist:dir": "npm run build && electron-builder --win dir --config electron-builder.yml",
     "postinstall": "electron-builder install-app-deps"
   },
