@@ -30,7 +30,15 @@ jobs:
           Copy-Item $env:RUNNER_TEMP\7za-wrap.exe node_modules\7zip-bin\win\x64\7za.exe
 
       - name: Build & package
-        run: npm run dist
+        id: build
+        shell: pwsh
+        run: |
+          npm run dist 2>&1 | Tee-Object -FilePath dist-log.txt
+          if ($LASTEXITCODE -ne 0) {
+            "## Build failed (log tail)" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+            Get-Content dist-log.txt -Tail 60 | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+            exit $LASTEXITCODE
+          }
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
