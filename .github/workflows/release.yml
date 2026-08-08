@@ -21,7 +21,7 @@ jobs:
 
       # 国内镜像安装依赖（Electron 二进制走 npmmirror）
       - name: Install dependencies
-        run: npm ci
+        run: npm install --no-audit --no-fund
         env:
           ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
           ELECTRON_BUILDER_BINARIES_MIRROR: https://npmmirror.com/mirrors/electron-builder-binaries/
