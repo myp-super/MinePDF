@@ -6,6 +6,7 @@ import {
   getOutlineTree,
   pdfjsLib,
   searchInDocument,
+  setupPdfjs,
   type OutlineNode,
   type SearchMatch,
   type ViewportLike,
@@ -177,6 +178,8 @@ export function PdfViewer({ pdf, onMissing }: PdfViewerProps) {
       }
     };
     currentPdfIdRef.current = pdf.id;
+    // 首次打开 PDF 时才初始化 PDF.js worker（推迟 1.3MB worker 的加载，加快应用启动）
+    setupPdfjs();
     setDoc(null);
     setPdfiumInfo(null);
     setLoadError(null);

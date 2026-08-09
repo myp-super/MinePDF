@@ -1,11 +1,8 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
-import { setupPdfjs } from './lib/pdf';
 import './index.css';
 import 'katex/dist/katex.min.css';
-
-setupPdfjs();
 
 // 捕获未处理异常，便于定位启动期问题（正式版不依赖此日志）
 window.addEventListener('unhandledrejection', (e) => {

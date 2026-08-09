@@ -12,6 +12,10 @@ import { pdfiumShutdown } from './services/pdfium';
 const devServerUrl = process.env.VITE_DEV_SERVER_URL ?? '';
 const isDev = Boolean(devServerUrl);
 const smokeTest = process.env.PKM_SMOKE_TEST === '1';
+const bootT0 = Date.now();
+const elapsed = (label: string): void => {
+  console.log(`[boot:${label}] ${Date.now() - bootT0}ms`);
+};
 
 let mainWindow: BrowserWindow | null = null;
 let splashWindow: BrowserWindow | null = null;
@@ -23,6 +27,7 @@ function pdfFromArgv(argv: string[]): string[] {
 }
 
 console.log('[main] boot', { isDev, smokeTest });
+elapsed('module-loaded');
 
 // 单实例锁：重复启动时聚焦已有窗口
 // 冒烟测试跳过锁，避免残留锁文件导致误判为“第二实例”
@@ -162,6 +167,7 @@ async function createMainWindow(): Promise<BrowserWindow> {
       );
 
   win.once('ready-to-show', () => {
+    elapsed('ready-to-show');
     if (smokeTest) {
       const watchdog = setTimeout(() => {
         console.error('[smoke] watchdog timeout');
@@ -801,6 +807,7 @@ async function createMainWindow(): Promise<BrowserWindow> {
 
 app.whenReady().then(async () => {
   console.log('[main] whenReady');
+  elapsed('app-whenReady');
   process.on('unhandledRejection', (reason) => {
     console.error('[main] unhandledRejection', reason);
   });
@@ -824,8 +831,10 @@ app.whenReady().then(async () => {
   }
   registerIpc();
   console.log('[main] ipc registered');
+  elapsed('ipc-registered');
   initDatabase();
   console.log('[main] database initialized');
+  elapsed('db-initialized');
   if (!smokeTest) {
     // 旧版本安装包强写过的 .pdf 关联，只要用户没主动开启就自动撤销
     void ensureNoForcedPdfAssociation();
@@ -836,10 +845,13 @@ app.whenReady().then(async () => {
     }
   });
   console.log('[main] library watcher started');
+  elapsed('watcher-started');
 
   if (!smokeTest) splashWindow = createSplash();
+  elapsed('splash-created');
   await createMainWindow();
   console.log('[main] main window created');
+  elapsed('main-window-created');
 
   // 启动时若由系统以默认 PDF 应用唤起，把文件交给渲染进程做临时预览
   if (!smokeTest) {

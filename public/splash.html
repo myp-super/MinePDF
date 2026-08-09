@@ -52,7 +52,6 @@
         background: #5b8def;
         animation: grow 2.4s cubic-bezier(0.25, 0.7, 0.3, 1) 0.2s both;
       }
-      .ver { margin-top: 18px; font-size: 12px; color: #4b5668; }
       @keyframes pop {
         from { opacity: 0; transform: scale(0.82); }
         to { opacity: 1; transform: scale(1); }
@@ -77,7 +76,6 @@
       <h1>MinePDF</h1>
       <p class="step" id="step">正在初始化数据库…</p>
       <div class="bar"><div class="fill"></div></div>
-      <p class="ver">v1.0.0</p>
     </div>
     <script>
       var steps = ['正在初始化数据库…', '正在加载文件库…', '正在启动主界面…'];
@@ -88,7 +86,7 @@
         stepEl.textContent = steps[i];
         stepEl.style.opacity = 0;
         setTimeout(function () { stepEl.style.opacity = 1; }, 260);
-      }, 750);
+      }, 420);
     </script>
   </body>
 </html>
