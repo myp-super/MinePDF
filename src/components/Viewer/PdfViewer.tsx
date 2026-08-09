@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ChevronDown } from 'lucide-react';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import type { AnnotationRecord, PdfiumOpenResult, PdfRecord, Quad } from '../../shared/types';
 import { useT, useTError } from '../../i18n';
@@ -70,6 +71,7 @@ export function PdfViewer({ pdf, onMissing }: PdfViewerProps) {
   const [mode, setMode] = useState<'single' | 'double'>('single');
   const [currentPage, setCurrentPage] = useState(1);
   const [immersive, setImmersive] = useState(false);
+  const [toolbarCollapsed, setToolbarCollapsed] = useState(false);
   const [highlightMode, setHighlightMode] = useState(false);
   const [highlightColor, setHighlightColor] = useState('#fde047');
   const [searchOpen, setSearchOpen] = useState(false);
@@ -102,9 +104,13 @@ export function PdfViewer({ pdf, onMissing }: PdfViewerProps) {
     sidebar: boolean;
     inspector: boolean;
     maximized: boolean;
+    toolbarCollapsed: boolean;
   } | null>(null);
-  /** 已自动适配宽度的文档 id（每次打开只适配一次，避免覆盖用户手动缩放） */
-  const autoFitRef = useRef<number | null>(null);
+  const immersiveRef = useRef(false);
+
+  useEffect(() => {
+    immersiveRef.current = immersive;
+  }, [immersive]);
 
   useEffect(() => {
     scaleRef.current = scale;
@@ -294,15 +300,29 @@ export function PdfViewer({ pdf, onMissing }: PdfViewerProps) {
 
   const pageCount = doc?.numPages ?? 0;
 
-  // 打开 PDF 后自动适配宽度：页面以“合适尺寸”显示（居中 + 不留大空白）
+  // 自动适配宽度：打开文档、窗口拖拽松手、最大化/还原、边栏折叠/展开后，
+  // 阅读区宽度变化即自动 fitWidth（250ms 防抖模拟“松手”）；沉浸式保持 121%
   useEffect(() => {
-    if (!doc || !baseW || autoFitRef.current === pdf.id) return;
-    autoFitRef.current = pdf.id;
-    requestAnimationFrame(() => {
-      const w = scrollRef.current?.clientWidth ?? 800;
-      setScale(Math.max(0.3, (w - 48) / baseW));
-    });
-  }, [doc, baseW, pdf.id]);
+    if (!doc || !baseW) return;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const schedule = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        timer = null;
+        if (immersiveRef.current) return;
+        const w = scrollRef.current?.clientWidth ?? 800;
+        setScale(Math.max(0.3, (w - 48) / baseW));
+      }, 250);
+    };
+    window.addEventListener('resize', schedule);
+    const ro = new ResizeObserver(schedule);
+    if (scrollRef.current) ro.observe(scrollRef.current);
+    return () => {
+      window.removeEventListener('resize', schedule);
+      ro.disconnect();
+      if (timer) clearTimeout(timer);
+    };
+  }, [doc, baseW]);
 
   // ---------- page tracking ----------
   useEffect(() => {
@@ -642,10 +662,12 @@ export function PdfViewer({ pdf, onMissing }: PdfViewerProps) {
         sidebar: s.sidebarCollapsed,
         inspector: s.inspectorCollapsed,
         maximized: wasMax,
+        toolbarCollapsed,
       };
       if (!wasMax) await window.pkm.toggleMaximize();
       if (!s.sidebarCollapsed) s.setSidebarCollapsed(true);
       if (!s.inspectorCollapsed) s.setInspectorCollapsed(true);
+      setToolbarCollapsed(true);
       setImmersive(true);
       setScale(1.21);
     } else {
@@ -653,6 +675,7 @@ export function PdfViewer({ pdf, onMissing }: PdfViewerProps) {
       setImmersive(false);
       if (prev) {
         setScale(prev.scale);
+        setToolbarCollapsed(prev.toolbarCollapsed);
         if (prev.sidebar !== s.sidebarCollapsed) s.setSidebarCollapsed(prev.sidebar);
         if (prev.inspector !== s.inspectorCollapsed) s.setInspectorCollapsed(prev.inspector);
         if (!prev.maximized) {
@@ -704,41 +727,102 @@ export function PdfViewer({ pdf, onMissing }: PdfViewerProps) {
 
   return (
     <main className="flex min-w-0 flex-1 flex-col bg-app-base">
-      <PdfToolbar
-        pdf={pdf}
-        pageCount={pageCount}
-        currentPage={currentPage}
-        scale={scale}
-        mode={mode}
-        outlineCount={outlineCount}
-        highlightMode={highlightMode}
-        highlightColor={highlightColor}
-        immersive={immersive}
-        ready={Boolean(doc)}
-        onPageChange={(n) => gotoPage(n)}
-        onPrev={() => gotoPage(currentPage - 1)}
-        onNext={() => gotoPage(currentPage + 1)}
-        onZoomIn={() => setScale((s) => Math.min(4, s * 1.15))}
-        onZoomOut={() => setScale((s) => Math.max(0.3, s / 1.15))}
-        onFitWidth={fitWidth}
-        onFitPage={fitPage}
-        onToggleMode={() => setMode((m) => (m === 'single' ? 'double' : 'single'))}
-        onOpenOutline={() => {
-          if (useApp.getState().inspectorCollapsed) toggleInspectorCollapsed();
-          setInspectorTab('outline');
-        }}
-        onToggleHighlight={() => setHighlightMode((v) => !v)}
-        onColorChange={setHighlightColor}
-        onToggleSearch={() => setSearchOpen((v) => !v)}
-        onToggleImmersive={toggleImmersive}
-        onOpenExternal={() =>
-          void window.pkm.openPdfExternal(pdf.id).catch((err: unknown) =>
-            toast('error', terr(err instanceof Error ? err.message : String(err))),
-          )
-        }
-      />
+      {!immersive &&
+        (toolbarCollapsed ? (
+          <div className="flex h-6 shrink-0 items-center justify-center border-b border-app-border bg-app-panel">
+            <button
+              className="flex h-6 w-9 items-center justify-center text-app-muted transition-colors hover:bg-app-panel2 hover:text-app-text"
+              title={t('toolbar.expandToolbar')}
+              aria-label={t('toolbar.expandToolbar')}
+              onClick={() => setToolbarCollapsed(false)}
+            >
+              <ChevronDown size={13} />
+            </button>
+          </div>
+        ) : (
+          <PdfToolbar
+            pdf={pdf}
+            pageCount={pageCount}
+            currentPage={currentPage}
+            scale={scale}
+            mode={mode}
+            outlineCount={outlineCount}
+            highlightMode={highlightMode}
+            highlightColor={highlightColor}
+            immersive={immersive}
+            ready={Boolean(doc)}
+            onPageChange={(n) => gotoPage(n)}
+            onPrev={() => gotoPage(currentPage - 1)}
+            onNext={() => gotoPage(currentPage + 1)}
+            onZoomIn={() => setScale((s) => Math.min(4, s * 1.15))}
+            onZoomOut={() => setScale((s) => Math.max(0.3, s / 1.15))}
+            onFitWidth={fitWidth}
+            onFitPage={fitPage}
+            onToggleMode={() => setMode((m) => (m === 'single' ? 'double' : 'single'))}
+            onOpenOutline={() => {
+              if (useApp.getState().inspectorCollapsed) toggleInspectorCollapsed();
+              setInspectorTab('outline');
+            }}
+            onToggleHighlight={() => setHighlightMode((v) => !v)}
+            onColorChange={setHighlightColor}
+            onToggleSearch={() => setSearchOpen((v) => !v)}
+            onToggleImmersive={toggleImmersive}
+            onToggleToolbar={() => setToolbarCollapsed(true)}
+            onOpenExternal={() =>
+              void window.pkm.openPdfExternal(pdf.id).catch((err: unknown) =>
+                toast('error', terr(err instanceof Error ? err.message : String(err))),
+              )
+            }
+          />
+        ))}
 
       <div className="relative min-h-0 flex-1 overflow-hidden">
+        {immersive && (
+          <div
+            className="absolute inset-x-0 top-0 z-30"
+            onMouseEnter={() => setToolbarCollapsed(false)}
+            onMouseLeave={() => setToolbarCollapsed(true)}
+          >
+            {toolbarCollapsed ? (
+              <div className="h-5" />
+            ) : (
+              <PdfToolbar
+                pdf={pdf}
+                pageCount={pageCount}
+                currentPage={currentPage}
+                scale={scale}
+                mode={mode}
+                outlineCount={outlineCount}
+                highlightMode={highlightMode}
+                highlightColor={highlightColor}
+                immersive={immersive}
+                ready={Boolean(doc)}
+                onPageChange={(n) => gotoPage(n)}
+                onPrev={() => gotoPage(currentPage - 1)}
+                onNext={() => gotoPage(currentPage + 1)}
+                onZoomIn={() => setScale((s) => Math.min(4, s * 1.15))}
+                onZoomOut={() => setScale((s) => Math.max(0.3, s / 1.15))}
+                onFitWidth={fitWidth}
+                onFitPage={fitPage}
+                onToggleMode={() => setMode((m) => (m === 'single' ? 'double' : 'single'))}
+                onOpenOutline={() => {
+                  if (useApp.getState().inspectorCollapsed) toggleInspectorCollapsed();
+                  setInspectorTab('outline');
+                }}
+                onToggleHighlight={() => setHighlightMode((v) => !v)}
+                onColorChange={setHighlightColor}
+                onToggleSearch={() => setSearchOpen((v) => !v)}
+                onToggleImmersive={toggleImmersive}
+                onToggleToolbar={() => setToolbarCollapsed(true)}
+                onOpenExternal={() =>
+                  void window.pkm.openPdfExternal(pdf.id).catch((err: unknown) =>
+                    toast('error', terr(err instanceof Error ? err.message : String(err))),
+                  )
+                }
+              />
+            )}
+          </div>
+        )}
         {searchOpen && (
           <PdfSearchBar
             query={searchQuery}

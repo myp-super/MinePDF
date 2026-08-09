@@ -550,6 +550,64 @@ async function createMainWindow(): Promise<BrowserWindow> {
                   })()
                 `);
                 console.log('[capture] narrowDiag', JSON.stringify(narrowDiag));
+                // 便捷操作验证：边栏宽度变化后自动适配宽度；工具栏折叠/展开；沉浸式悬停下拉
+                const convenienceDiag = await win.webContents.executeJavaScript(`
+                  (async () => {
+                    const snap = await window.pkm.getSnapshot();
+                    const pdf = snap.pdfs.find((p) => p.filename === 'smoke-test.pdf');
+                    if (!pdf) return { pdf: false };
+                    window.__pkmOpenPdf(pdf.id);
+                    await new Promise((r) => setTimeout(r, 1500));
+                    const sheet = () => document.querySelector('.pdf-page-sheet');
+                    // 1) 真实窗口 resize：缩小/放大后松手，应自动适配宽度
+                    window.resizeTo(1100, 760);
+                    await new Promise((r) => setTimeout(r, 900));
+                    const w1 = sheet() ? sheet().getBoundingClientRect().width : 0;
+                    window.resizeTo(1700, 980);
+                    await new Promise((r) => setTimeout(r, 900));
+                    const w2 = sheet() ? sheet().getBoundingClientRect().width : 0;
+                    window.resizeTo(1440, 900);
+                    await new Promise((r) => setTimeout(r, 900));
+                    // 2) 工具栏折叠 → 出现“展开工具栏”按钮
+                    const collapseBtn = [...document.querySelectorAll('button')].find(
+                      (b) => b.title === '折叠工具栏' || b.title === 'Collapse toolbar',
+                    );
+                    if (collapseBtn) collapseBtn.click();
+                    await new Promise((r) => setTimeout(r, 250));
+                    const expandBtn = [...document.querySelectorAll('button')].find(
+                      (b) => b.title === '展开工具栏' || b.title === 'Expand toolbar',
+                    );
+                    // 3) 展开并进入沉浸式 → 工具栏自动折叠，hover 顶部自动下拉
+                    if (expandBtn) expandBtn.click();
+                    await new Promise((r) => setTimeout(r, 200));
+                    const immersiveBtn = [...document.querySelectorAll('button')].find(
+                      (b) => b.title === '沉浸式阅读（收起边栏并放大，再点恢复）' ||
+                        b.title === 'Immersive reading (collapse panels & zoom, click again to restore)',
+                    );
+                    if (immersiveBtn) immersiveBtn.click();
+                    await new Promise((r) => setTimeout(r, 800));
+                    const wrap = document.querySelector('.absolute.inset-x-0.top-0.z-30');
+                    const collapsedInImmersive = !!wrap && !wrap.querySelector('button');
+                    if (wrap) {
+                      wrap.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, relatedTarget: null }));
+                      await new Promise((r) => setTimeout(r, 250));
+                    }
+                    const hoverShowsToolbar = !!wrap && wrap.querySelectorAll('button').length > 3;
+                    // 退出沉浸式并彻底还原窗口状态，避免影响后续诊断
+                    // （按钮引用可能已随工具栏重建失效，需重新查找）
+                    const exitImmersiveBtn = [...document.querySelectorAll('button')].find(
+                      (b) => b.title === '沉浸式阅读（收起边栏并放大，再点恢复）' ||
+                        b.title === 'Immersive reading (collapse panels & zoom, click again to restore)',
+                    );
+                    if (exitImmersiveBtn) exitImmersiveBtn.click();
+                    await new Promise((r) => setTimeout(r, 700));
+                    if (await window.pkm.isMaximized()) await window.pkm.toggleMaximize();
+                    window.resizeTo(1440, 900);
+                    await new Promise((r) => setTimeout(r, 500));
+                    return { w1, w2, autoFitGrew: w2 > w1, collapseBtn: !!collapseBtn, expandBtn: !!expandBtn, collapsedInImmersive, hoverShowsToolbar };
+                  })()
+                `);
+                console.log('[capture] convenienceDiag', JSON.stringify(convenienceDiag));
                 // 应用内性能诊断：PDFium IPC 渲染真实 PDF 的每页耗时
                 const perfDiag = await win.webContents.executeJavaScript(`
                   (async () => {
@@ -680,6 +738,11 @@ async function createMainWindow(): Promise<BrowserWindow> {
                 console.log('[capture] sidebarDiag', JSON.stringify(sidebarDiag));
                 const immersiveDiag = await win.webContents.executeJavaScript(`
                   (async () => {
+                    // 固定打开 smoke-test.pdf（612pt），保证缩放读数基准一致
+                    const snap0 = await window.pkm.getSnapshot();
+                    const smoke = snap0.pdfs.find((p) => p.filename === 'smoke-test.pdf');
+                    if (smoke) window.__pkmOpenPdf(smoke.id);
+                    await new Promise((r) => setTimeout(r, 1600));
                     const btn = [...document.querySelectorAll('button')].find((b) => (b.getAttribute('title') || '').includes('沉浸式阅读'));
                     if (!btn) return { btn: false };
                     const readScale = () => {
@@ -698,9 +761,20 @@ async function createMainWindow(): Promise<BrowserWindow> {
                     const during = {
                       sidebarW: document.querySelector('aside').getBoundingClientRect().width,
                       scale: readScale(),
+                      canvasW: document.querySelector('.pdf-page-sheet canvas')?.style.width ?? null,
+                      winW: window.innerWidth,
                       maximized: await window.pkm.isMaximized(),
                     };
-                    btn.click();
+                    // 沉浸式工具栏已折叠，先 hover 顶部展开，再点退出按钮
+                    const wrap = document.querySelector('.absolute.inset-x-0.top-0.z-30');
+                    if (wrap) {
+                      wrap.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, relatedTarget: null }));
+                      await new Promise((r) => setTimeout(r, 300));
+                    }
+                    const exitBtn = [...document.querySelectorAll('button')].find(
+                      (b) => (b.getAttribute('title') || '').includes('沉浸式阅读'),
+                    );
+                    if (exitBtn) exitBtn.click();
                     await new Promise((r) => setTimeout(r, 1200));
                     const after = {
                       sidebarW: document.querySelector('aside').getBoundingClientRect().width,
@@ -713,7 +787,8 @@ async function createMainWindow(): Promise<BrowserWindow> {
                       maximizedDuring: during.maximized === true,
                       zoom121: Math.abs(during.scale - 1.21) < 0.02,
                       restoredW: Math.abs(after.sidebarW - before.sidebarW) < 5,
-                      restoredScale: Math.abs(after.scale - before.scale) < 0.05,
+                      // 退出后窗口还原会触发自动适配宽度，scale 变化是预期行为
+                      restoredScale: after.scale > 0.3,
                       restoredMax: after.maximized === before.maximized,
                       before, during, after,
                     };

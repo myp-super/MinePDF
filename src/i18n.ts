@@ -126,6 +126,8 @@ const zh: Dict = {
   'toolbar.docSearch': '文档内搜索 (Ctrl+F)',
   'toolbar.openExternal': '在系统阅读器中打开',
     'toolbar.immersive': '沉浸式阅读（收起边栏并放大，再点恢复）',
+    'toolbar.collapseToolbar': '折叠工具栏',
+    'toolbar.expandToolbar': '展开工具栏',
   'toolbar.highlighted': '已添加高亮{multi}，可在右侧添加备注',
   'toolbar.highlighted.multi': '（{n} 页）',
 
@@ -426,6 +428,8 @@ const en: Dict = {
   'toolbar.docSearch': 'Search in document (Ctrl+F)',
   'toolbar.openExternal': 'Open in system reader',
     'toolbar.immersive': 'Immersive reading (collapse panels & zoom, click again to restore)',
+    'toolbar.collapseToolbar': 'Collapse toolbar',
+    'toolbar.expandToolbar': 'Expand toolbar',
   'toolbar.highlighted': 'Highlight added{multi}; add a note on the right',
   'toolbar.highlighted.multi': ' ({n} pages)',
 

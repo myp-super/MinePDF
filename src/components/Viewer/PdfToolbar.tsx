@@ -1,5 +1,6 @@
 import {
   BookMarked,
+  ChevronUp,
   ChevronLeft,
   ChevronRight,
   Columns2,
@@ -43,6 +44,7 @@ export function PdfToolbar({
   onColorChange,
   onToggleSearch,
   onToggleImmersive,
+  onToggleToolbar,
   onOpenExternal,
 }: {
   pdf: PdfRecord;
@@ -68,6 +70,7 @@ export function PdfToolbar({
   onColorChange: (c: string) => void;
   onToggleSearch: () => void;
   onToggleImmersive: () => void;
+  onToggleToolbar: () => void;
   onOpenExternal: () => void;
 }) {
   const t = useT();
@@ -193,6 +196,9 @@ export function PdfToolbar({
       </IconButton>
       <IconButton disabled={!ready} onClick={onToggleImmersive} title={t('toolbar.immersive')}>
         {immersive ? <Minimize size={14} /> : <Maximize size={14} />}
+      </IconButton>
+      <IconButton onClick={onToggleToolbar} title={t('toolbar.collapseToolbar')}>
+        <ChevronUp size={14} />
       </IconButton>
     </div>
   );
