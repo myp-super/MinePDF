@@ -1,8 +1,8 @@
 {
-  "publishDate": "2026-08-09",
-  "version": "2.1.1",
   "notes": [
-    "v2.1.1 - 更新安装改向导模式：品牌安装界面+进度条+安装完成自动启动"
+    "v3.0.0 - 文档页签与分屏阅读、书签面板增强、功能键图标化"
   ],
-  "url": "https://github.com/myp-super/MinePDF/releases/download/v2.1.1/MinePDF.Setup.2.1.1.exe"
+  "url": "https://github.com/myp-super/MinePDF/releases/download/v3.0.0/MinePDF.Setup.3.0.0.exe",
+  "publishDate": "2026-08-09",
+  "version": "3.0.0"
 }
