@@ -1,8 +1,8 @@
 {
+  "url": "https://github.com/myp-super/MinePDF/releases/download/v2.0.8/MinePDF.Setup.2.0.8.exe",
   "notes": [
-    "v2.0.7 - 窗口/边栏变化自动适配宽度，工具栏可折叠，沉浸式悬停下拉"
+    "v2.0.8 - 大文件渲染加载动画、拖拽流畅优化、修复自动适配撤销手动缩放"
   ],
-  "version": "2.0.7",
-  "url": "https://github.com/myp-super/MinePDF/releases/download/v2.0.7/MinePDF.Setup.2.0.7.exe",
+  "version": "2.0.8",
   "publishDate": "2026-08-09"
 }
