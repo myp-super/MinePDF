@@ -694,6 +694,8 @@ async function createMainWindow(): Promise<BrowserWindow> {
                     await new Promise((r) => setTimeout(r, 80));
                     window.dispatchEvent(new MouseEvent('mousemove', { clientX: cx + 260, clientY: cy + 160, bubbles: true }));
                     const cursorDuring = getComputedStyle(el).cursor;
+                    // 拖拽位移经 rAF 节流异步应用，等一帧再松手
+                    await new Promise((r) => setTimeout(r, 120));
                     window.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
                     await new Promise((r) => setTimeout(r, 120));
                     const slMoved = el.scrollLeft !== sl0;
@@ -836,6 +838,23 @@ async function createMainWindow(): Promise<BrowserWindow> {
                   })()
                 `);
                 console.log('[capture] switchDiag', JSON.stringify(switchDiag));
+                // 加载动画验证：渲染完成后遮罩应消失、画布有内容
+                const loadingDiag = await win.webContents.executeJavaScript(`
+                  (async () => {
+                    const snap = await window.pkm.getSnapshot();
+                    const pdf = snap.pdfs.find((p) => p.filename === 'smoke-test.pdf');
+                    if (!pdf) return { pdf: false };
+                    window.__pkmOpenPdf(pdf.id);
+                    const t0 = Date.now();
+                    await new Promise((r) => setTimeout(r, 60));
+                    const during = !!document.querySelector('[data-testid="pdf-loading"]');
+                    await new Promise((r) => setTimeout(r, 1400));
+                    const after = !!document.querySelector('[data-testid="pdf-loading"]');
+                    const c = document.querySelector('.pdf-page-sheet canvas');
+                    return { during, after, canvasPainted: c ? c.width > 0 : false, waitMs: Date.now() - t0 };
+                  })()
+                `);
+                console.log('[capture] loadingDiag', JSON.stringify(loadingDiag));
                 const tabDiag = await win.webContents.executeJavaScript(`
                   (async () => {
                     const snap = await window.pkm.getSnapshot();

@@ -49,20 +49,19 @@ async function flush(): Promise<void> {
     groups.set(gk, list);
   }
 
-  await Promise.all(
-    [...groups.values()].map(async (list) => {
-      const scale = Math.max(...list.map((i) => i.scale));
-      const pages = list.map((i) => i.page);
-      try {
-        const results = await window.pkm.pdfiumRenderBatch(list[0].pdfId, pages, scale);
-        list.forEach((req, idx) => {
-          const res = results[idx];
-          if (res) req.resolve({ ...res, ms: res.ms });
-          else req.reject(new Error('ERR_PDF_RENDER_FAILED:批量渲染结果缺失'));
-        });
-      } catch (err) {
-        for (const req of list) req.reject(err);
-      }
-    }),
-  );
+  // 串行渲染各组，避免多组大位图并发转换造成主线程峰值卡顿
+  for (const list of groups.values()) {
+    const scale = Math.max(...list.map((i) => i.scale));
+    const pages = list.map((i) => i.page);
+    try {
+      const results = await window.pkm.pdfiumRenderBatch(list[0].pdfId, pages, scale);
+      list.forEach((req, idx) => {
+        const res = results[idx];
+        if (res) req.resolve({ ...res, ms: res.ms });
+        else req.reject(new Error('ERR_PDF_RENDER_FAILED:批量渲染结果缺失'));
+      });
+    } catch (err) {
+      for (const req of list) req.reject(err);
+    }
+  }
 }

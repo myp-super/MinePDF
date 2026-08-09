@@ -76,6 +76,7 @@ export function PdfPage({
   const [visible, setVisible] = useState(false);
   const [wrapEl, setWrapEl] = useState<HTMLDivElement | null>(null);
   const [renderError, setRenderError] = useState(false);
+  const [pending, setPending] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const textRef = useRef<HTMLDivElement>(null);
   const annRef = useRef<HTMLDivElement>(null);
@@ -222,6 +223,8 @@ export function PdfPage({
     const cssW = Math.floor(vp.width);
     const cssH = Math.floor(vp.height);
     const deviceScale = vp.scale * dpr;
+    // 渲染期间显示动态加载动画，避免大文件黑屏
+    setPending(true);
 
     // 1) 同质量（同缩放桶）缓存直接复用
     const bucket = scaleBucket(deviceScale);
@@ -230,6 +233,7 @@ export function PdfPage({
     if (hi) {
       paintBitmap(hi, cssW, cssH);
       hasRenderedRef.current = true;
+      setPending(false);
       // 位图命中缓存时仍需渲染文本层/链接层（选词、高亮、交叉引用）
       await renderTextAndAnnots(vp, seq);
       return;
@@ -249,10 +253,12 @@ export function PdfPage({
         if (seq2 !== renderSeqRef.current) return;
         paintBitmap(bmp, cssW, cssH);
         hasRenderedRef.current = true;
+        setPending(false);
         await renderTextAndAnnots(vp, seq2);
       } catch {
         if (seq2 === renderSeqRef.current) {
           // PDFium 渲染失败 → 回退 PDF.js 渲染该页
+          setPending(false);
           await renderWithPdfjs(vp);
         }
       }
@@ -262,6 +268,7 @@ export function PdfPage({
   /** PDF.js 回退路径：原有渲染逻辑 */
   async function renderWithPdfjs(vp: PageViewport): Promise<void> {
     const seq = ++renderSeqRef.current;
+    setPending(true);
     try {
       const page = await doc.getPage(pageNumber);
       if (seq !== renderSeqRef.current) return;
@@ -288,9 +295,13 @@ export function PdfPage({
       if (!dctx) return;
       dctx.drawImage(offscreen, 0, 0);
       hasRenderedRef.current = true;
+      setPending(false);
       await renderTextAndAnnots(vp, seq);
     } catch {
-      if (seq === renderSeqRef.current) setRenderError(true);
+      if (seq === renderSeqRef.current) {
+        setPending(false);
+        setRenderError(true);
+      }
     }
   }
 
@@ -311,6 +322,16 @@ export function PdfPage({
       <canvas ref={canvasRef} className="block" />
       <div ref={textRef} className="textLayer" />
       <div ref={annRef} className="annotationLayer" />
+
+      {/* 渲染中的动态加载动画（避免大文件黑屏） */}
+      {pending && !renderError && (
+        <div className="pdf-loading-overlay" data-testid="pdf-loading">
+          <div className="pdf-loading">
+            <img src="/logo.svg" alt="" className="pdf-loading-logo" draggable={false} />
+            <span className="pdf-loading-ring" />
+          </div>
+        </div>
+      )}
 
       {/* Highlight overlay. PDF y-axis points UP, so the top edge is q.y + q.h. */}
       {viewport &&

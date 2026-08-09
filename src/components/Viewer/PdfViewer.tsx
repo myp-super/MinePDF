@@ -63,6 +63,10 @@ export function PdfViewer({ pdf, onMissing }: PdfViewerProps) {
   const outlineCount = useApp((s) => s.outline.length);
   const screenshotMode = useApp((s) => s.screenshotMode);
   const setScreenshotMode = useApp((s) => s.setScreenshotMode);
+  const sidebarWidth = useApp((s) => s.sidebarWidth);
+  const inspectorWidth = useApp((s) => s.inspectorWidth);
+  const sidebarCollapsed = useApp((s) => s.sidebarCollapsed);
+  const inspectorCollapsed = useApp((s) => s.inspectorCollapsed);
 
   const [doc, setDoc] = useState<PDFDocumentProxy | null>(null);
   const [pdfiumInfo, setPdfiumInfo] = useState<PdfiumOpenResult | null>(null);
@@ -149,17 +153,26 @@ export function PdfViewer({ pdf, onMissing }: PdfViewerProps) {
     e.preventDefault();
     panStartRef.current = { x: e.clientX, y: e.clientY, sl: el.scrollLeft, st: el.scrollTop };
     setPanning(true);
+    let raf = 0;
+    let lastEv: MouseEvent | null = null;
     // 按下瞬间立即挂监听，保证跟手；mouseup 时移除
     const onMove = (ev: MouseEvent) => {
-      const elc = scrollRef.current;
-      const s = panStartRef.current;
-      if (!elc || !s) return;
-      elc.scrollLeft = s.sl - (ev.clientX - s.x);
-      elc.scrollTop = s.st - (ev.clientY - s.y);
+      lastEv = ev;
+      if (raf) return;
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        const e = lastEv;
+        const elc = scrollRef.current;
+        const s = panStartRef.current;
+        if (!e || !elc || !s) return;
+        elc.scrollLeft = s.sl - (e.clientX - s.x);
+        elc.scrollTop = s.st - (e.clientY - s.y);
+      });
     };
     const onUp = () => {
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
+      if (raf) cancelAnimationFrame(raf);
       panStartRef.current = null;
       setPanning(false);
     };
@@ -302,6 +315,7 @@ export function PdfViewer({ pdf, onMissing }: PdfViewerProps) {
 
   // 自动适配宽度：打开文档、窗口拖拽松手、最大化/还原、边栏折叠/展开后，
   // 阅读区宽度变化即自动 fitWidth（250ms 防抖模拟“松手”）；沉浸式保持 121%
+  // 注意：不能监听滚动容器宽度（页面放大产生滚动条会误触发并撤销用户缩放）
   useEffect(() => {
     if (!doc || !baseW) return;
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -314,15 +328,13 @@ export function PdfViewer({ pdf, onMissing }: PdfViewerProps) {
         setScale(Math.max(0.3, (w - 48) / baseW));
       }, 250);
     };
+    schedule(); // 打开文档即适配一次
     window.addEventListener('resize', schedule);
-    const ro = new ResizeObserver(schedule);
-    if (scrollRef.current) ro.observe(scrollRef.current);
     return () => {
       window.removeEventListener('resize', schedule);
-      ro.disconnect();
       if (timer) clearTimeout(timer);
     };
-  }, [doc, baseW]);
+  }, [doc, baseW, sidebarWidth, inspectorWidth, sidebarCollapsed, inspectorCollapsed]);
 
   // ---------- page tracking ----------
   useEffect(() => {
