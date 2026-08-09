@@ -8,6 +8,7 @@ import {
   Highlighter,
   Maximize,
   Minimize,
+  MoveHorizontal,
   PanelTop,
   Search,
   ZoomIn,
@@ -116,9 +117,10 @@ export function PdfToolbar({
         disabled={!ready}
         onClick={onFitWidth}
         title={t('toolbar.fitWidth')}
-        className="shrink-0 whitespace-nowrap rounded-md px-2 py-1 text-[11px] text-app-muted transition-colors hover:bg-app-panel2 hover:text-app-text disabled:opacity-40"
+        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-app-muted transition-colors hover:bg-app-panel2 hover:text-app-text disabled:opacity-40"
+        aria-label={t('toolbar.fitWidth')}
       >
-        {t('toolbar.fitWidth')}
+        <MoveHorizontal size={14} />
       </button>
 
       <div className="mx-2 h-4 w-px shrink-0 bg-app-border" />
@@ -132,8 +134,9 @@ export function PdfToolbar({
           }`}
           onClick={onToggleMode}
           title={t('toolbar.singleTitle')}
+          aria-label={t('toolbar.singleTitle')}
         >
-          <PanelTop size={12} /> {t('toolbar.single')}
+          <PanelTop size={14} />
         </button>
         <button
           className={`flex h-6 shrink-0 items-center gap-1 whitespace-nowrap border-l border-app-border px-2 text-[11px] transition-colors ${
@@ -143,8 +146,9 @@ export function PdfToolbar({
           }`}
           onClick={onToggleMode}
           title={t('toolbar.doubleTitle')}
+          aria-label={t('toolbar.doubleTitle')}
         >
-          <Columns2 size={12} /> {t('toolbar.double')}
+          <Columns2 size={14} />
         </button>
       </div>
 

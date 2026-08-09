@@ -2,7 +2,9 @@ import {
   BookMarked,
   ChevronDown,
   ChevronRight,
+  Columns2,
   FileText,
+  FilePlus2,
   Folder,
   FolderOpen,
   FolderPlus,
@@ -71,6 +73,8 @@ export function Sidebar() {
   const selectedFolderId = useApp((s) => s.selectedFolderId);
   const setSelectedFolder = useApp((s) => s.setSelectedFolder);
   const openPdf = useApp((s) => s.openPdf);
+  const openPdfInNewTab = useApp((s) => s.openPdfInNewTab);
+  const openInSplit = useApp((s) => s.openInSplit);
   const activePdfId = useApp((s) => s.activePdfId);
   const sidebarWidth = useApp((s) => s.sidebarWidth);
   const sidebarCollapsed = useApp((s) => s.sidebarCollapsed);
@@ -336,7 +340,17 @@ export function Sidebar() {
           icon: <Folder size={12} />,
           onClick: () => setMoveOpen(true),
         },
-        ...pdfMenuItems(pdf, refresh, toast, openPdf, () => requestRemovePdf(pdf), t, terr),
+        ...pdfMenuItems(
+          pdf,
+          refresh,
+          toast,
+          openPdf,
+          openPdfInNewTab,
+          openInSplit,
+          () => requestRemovePdf(pdf),
+          t,
+          terr,
+        ),
       ],
     });
   };
@@ -412,9 +426,14 @@ export function Sidebar() {
             <PanelLeftClose size={14} />
           </IconButton>
           <div className="relative">
-            <Button size="sm" variant="outline" onClick={() => setImportMenu((v) => !v)}>
+            <Button
+              size="sm"
+              variant="outline"
+              title={t('sidebar.import')}
+              aria-label={t('sidebar.import')}
+              onClick={() => setImportMenu((v) => !v)}
+            >
               <Import size={12} />
-              <span className="cq-import-label whitespace-nowrap">{t('sidebar.import')}</span>
             </Button>
             {importMenu && (
               <div
@@ -1081,12 +1100,24 @@ function pdfMenuItems(
   refresh: () => Promise<void>,
   toast: (kind: 'info' | 'success' | 'error', text: string) => void,
   openPdf: (id: number) => void,
+  openPdfInNewTab: (id: number) => void,
+  openInSplit: (id: number) => void,
   onRemove: () => void,
   t: TFunc,
   terr: (msg: string) => string,
 ): ContextMenuItem[] {
   return [
     { label: t('sidebar.openPdf'), icon: <FileText size={12} />, onClick: () => openPdf(pdf.id) },
+    {
+      label: t('sidebar.openNewTab'),
+      icon: <FilePlus2 size={12} />,
+      onClick: () => openPdfInNewTab(pdf.id),
+    },
+    {
+      label: t('sidebar.openInSplit'),
+      icon: <Columns2 size={12} />,
+      onClick: () => openInSplit(pdf.id),
+    },
     {
       label: t('sidebar.revealInSystem'),
       icon: <Folder size={12} />,

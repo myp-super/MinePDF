@@ -154,6 +154,8 @@ export interface ContextMenuItem {
   icon?: React.ReactNode;
   danger?: boolean;
   disabled?: boolean;
+  /** 分隔线项：渲染一条分隔线而不是按钮 */
+  divider?: boolean;
   onClick: () => void;
 }
 
@@ -199,24 +201,28 @@ export function ContextMenu({
       style={style}
     >
       {items.map((item, i) => (
-        <button
-          key={i}
-          className={clsx(
-            'flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs transition-colors',
-            item.danger
-              ? 'text-app-danger hover:bg-app-danger/10'
-              : 'text-app-text hover:bg-app-panel2',
-            item.disabled && 'cursor-not-allowed opacity-40',
-          )}
-          disabled={item.disabled}
-          onClick={() => {
-            item.onClick();
-            onClose();
-          }}
-        >
-          {item.icon}
-          {item.label}
-        </button>
+        item.divider ? (
+          <div key={i} className="mx-2 my-1 h-px bg-app-border" />
+        ) : (
+          <button
+            key={i}
+            className={clsx(
+              'flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs transition-colors',
+              item.danger
+                ? 'text-app-danger hover:bg-app-danger/10'
+                : 'text-app-text hover:bg-app-panel2',
+              item.disabled && 'cursor-not-allowed opacity-40',
+            )}
+            disabled={item.disabled}
+            onClick={() => {
+              item.onClick();
+              onClose();
+            }}
+          >
+            {item.icon}
+            {item.label}
+          </button>
+        )
       ))}
     </div>
   );

@@ -158,15 +158,16 @@ export function Inspector() {
           ).map(([key, label]) => (
             <button
               key={key}
-              className={`flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-t-md border border-b-0 px-3 py-1.5 text-[11.5px] transition-colors ${
+              className={`flex shrink-0 items-center justify-center rounded-t-md border border-b-0 px-2.5 py-1.5 transition-colors ${
                 tab === key
                   ? 'border-app-border bg-app-base text-app-text'
                   : 'border-transparent text-app-muted hover:text-app-text'
               }`}
               onClick={() => setTab(key)}
+              title={label}
+              aria-label={label}
             >
               {tabs.find((tabItem) => tabItem.key === key)?.icon}
-              <span className="cq-tab-label">{label}</span>
             </button>
           ))}
         </div>
@@ -561,13 +562,16 @@ function NotesPanel({ pdf }: { pdf: PdfRecord }) {
             title={t('note.screenshotHint')}
             onClick={() => useApp.getState().setScreenshotMode(true)}
           >
-            <Camera size={11} /> <span className="whitespace-nowrap">{t('note.screenshot')}</span>
+            <Camera size={12} />
           </Button>
-          <Button size="sm" variant="outline" disabled={exporting || !md.trim()} onClick={() => void exportPdf()}>
-            <FileDown size={11} />{' '}
-            <span className="whitespace-nowrap">
-              {exporting ? t('common.saving') : t('note.exportPdf')}
-            </span>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={exporting || !md.trim()}
+            title={t('note.exportPdf')}
+            onClick={() => void exportPdf()}
+          >
+            <FileDown size={12} />
           </Button>
           <Button
             size="sm"
@@ -576,7 +580,7 @@ function NotesPanel({ pdf }: { pdf: PdfRecord }) {
             title={t('note.saveHint')}
             onClick={() => void save(md)}
           >
-            <Save size={11} /> <span className="whitespace-nowrap">{t('note.save')}</span>
+            <Save size={12} />
           </Button>
           {saving ? (
             <span className="flex items-center gap-1 whitespace-nowrap">

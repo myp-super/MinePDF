@@ -21,6 +21,8 @@ import { PdfToolbar } from './PdfToolbar';
 interface PdfViewerProps {
   pdf: PdfRecord;
   onMissing: (pdf: PdfRecord) => void;
+  /** 是否为当前激活窗格：只有激活窗格上报页码并响应页面跳转 */
+  paneActive?: boolean;
 }
 
 /** LRU cache of opened PDFDocumentProxy so switching back is instant. */
@@ -50,7 +52,7 @@ function cacheDoc(id: number, doc: PDFDocumentProxy | null): void {
 }
 
 /** PDF viewer: load, zoom, single/double page, search and text highlights. */
-export function PdfViewer({ pdf, onMissing }: PdfViewerProps) {
+export function PdfViewer({ pdf, onMissing, paneActive = true }: PdfViewerProps) {
   const t = useT();
   const terr = useTError();
   const toast = useApp((s) => s.toast);
@@ -401,21 +403,42 @@ export function PdfViewer({ pdf, onMissing }: PdfViewerProps) {
 
   // ---------- shortcuts ----------
   const scrollToPage = useCallback((n: number) => {
-    pageRefs.current.get(n)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  }, []);
+    const pageEl = pageRefs.current.get(n);
+    if (pageEl) {
+      // 即时跳转（auto）：书签/恢复/翻页应立刻定位，不依赖平滑滚动
+      pageEl.scrollIntoView({ block: 'start' });
+      return;
+    }
+    // 目标页尚未渲染（大 PDF 只渲染视口附近页面）：按估算高度滚动触发渲染，
+    // 渲染完成后轮询精确对齐，保证“跳转”到任意页码都可用
+    const el = scrollRef.current;
+    if (!el || !baseH || !scale) return;
+    el.scrollTop = Math.max(0, Math.round((n - 1) * (baseH * scale + 16)));
+    let tries = 0;
+    const align = () => {
+      const p = pageRefs.current.get(n);
+      if (p) {
+        p.scrollIntoView({ block: 'start' });
+        return;
+      }
+      if (++tries < 30) requestAnimationFrame(align);
+    };
+    requestAnimationFrame(align);
+  }, [baseH, scale]);
 
   // 同步当前页到全局（信息面板书签高亮）
   useEffect(() => {
-    setStoreCurrentPage(currentPage);
-  }, [currentPage, setStoreCurrentPage]);
+    if (paneActive) setStoreCurrentPage(currentPage);
+  }, [currentPage, setStoreCurrentPage, paneActive]);
 
   // 信息面板书签点击 -> 阅读器跳转
   useEffect(() => {
+    if (!paneActive) return;
     if (jumpPage != null && pageCount > 0) {
       scrollToPage(Math.min(Math.max(1, jumpPage), pageCount));
       consumeJump();
     }
-  }, [jumpPage, pageCount, scrollToPage, consumeJump]);
+  }, [jumpPage, pageCount, scrollToPage, consumeJump, paneActive]);
 
   /** Link service for PDF internal links / cross references + external URLs. */
   const linkService = useMemo<PdfLinkService>(
@@ -738,7 +761,7 @@ export function PdfViewer({ pdf, onMissing }: PdfViewerProps) {
   };
 
   return (
-    <main className="flex min-w-0 flex-1 flex-col bg-app-base">
+    <main className="flex min-h-0 min-w-0 flex-1 flex-col bg-app-base">
       {!immersive &&
         (toolbarCollapsed ? (
           <div className="flex h-6 shrink-0 items-center justify-center border-b border-app-border bg-app-panel">

@@ -394,6 +394,8 @@ async function createMainWindow(): Promise<BrowserWindow> {
                 }
                 const linkClickDiag = await win.webContents.executeJavaScript(`
                   (async () => {
+                    if (window.__pkmAct) window.__pkmAct('closeAllTabs');
+                    await new Promise((r) => setTimeout(r, 200));
                     const p = ${JSON.stringify(linkTestPath)};
                     await window.pkm.importPdfs([p], null);
                     const snap = await window.pkm.getSnapshot();
@@ -414,9 +416,18 @@ async function createMainWindow(): Promise<BrowserWindow> {
                     }));
                     const sc = document.querySelector('[data-pan-scroll]');
                     const before = sc ? sc.scrollTop : -1;
+                    // 对照：直接设置 scrollTop 验证容器可滚动性
+                    if (sc) sc.scrollTop = 400;
+                    await new Promise((r) => setTimeout(r, 150));
+                    const manualScroll = sc ? sc.scrollTop : -1;
+                    if (sc) sc.scrollTop = 0;
                     if (links[0]) links[0].click();
                     await new Promise((r) => setTimeout(r, 700));
                     const after = sc ? sc.scrollTop : -1;
+                    const sheets = document.querySelectorAll('.pdf-page-sheet').length;
+                    const page2 = [...document.querySelectorAll('.pdf-page-sheet')].some(
+                      (el) => el.getAttribute('data-page-number') === '2',
+                    );
                     for (const a of links.slice(1)) if (a) a.click();
                     await new Promise((r) => setTimeout(r, 300));
                     window.pkm.openExternalUrl = orig;
@@ -425,6 +436,10 @@ async function createMainWindow(): Promise<BrowserWindow> {
                       internalJumped: after > before,
                       before,
                       after,
+                      sheets,
+                      page2,
+                      manualScroll,
+                      scCount: document.querySelectorAll('[data-pan-scroll]').length,
                       openCalls: window.__openCalls,
                     };
                   })()
@@ -864,6 +879,8 @@ async function createMainWindow(): Promise<BrowserWindow> {
                 // 会话记忆验证：翻页记录页码；模拟重启后自动恢复并跳转
                 const sessionDiag = await win.webContents.executeJavaScript(`
                   (async () => {
+                    if (window.__pkmAct) window.__pkmAct('closeAllTabs');
+                    await new Promise((r) => setTimeout(r, 200));
                     const snap = await window.pkm.getSnapshot();
                     const pid = snap.pdfs.find((p) => p.filename === 'PID-Tuning-Methods.pdf');
                     if (!pid) return { pid: false };
@@ -890,14 +907,126 @@ async function createMainWindow(): Promise<BrowserWindow> {
                     const rel = p3b && sc
                       ? Math.abs(p3b.getBoundingClientRect().top - sc.getBoundingClientRect().top)
                       : null;
+                    const st = window.__pkmStore();
+                    const st3 = sc ? sc.scrollTop : -1;
+                    // 对照：直接设置 scrollTop 验证容器可滚动性
+                    const scrollable = sc ? sc.scrollHeight > sc.clientHeight : false;
+                    if (sc) sc.scrollTop = 500;
+                    await new Promise((r) => setTimeout(r, 150));
+                    const manualScroll = sc ? sc.scrollTop : -1;
+                    if (sc) sc.scrollTop = 0;
                     return {
                       rec1Page: rec1 ? rec1.page : null,
                       rec2Page: rec2 ? rec2.page : null,
+                      restoredPdf: st.activePdfId === pid.id,
                       restoredToPage3: rel != null && rel < 80,
+                      jumpOrCurrent3: st.jumpPage === 3 || st.currentPage === 3,
+                      st3,
+                      p3Exists: !!p3b,
+                      scCount: document.querySelectorAll('[data-pan-scroll]').length,
+                      scrollable,
+                      manualScroll,
                     };
                   })()
                 `);
                 console.log('[capture] sessionDiag', JSON.stringify(sessionDiag));
+                // 3.0.0 标签页 + 分屏功能验证
+                const tabsDiag = await win.webContents.executeJavaScript(`
+                  (async () => {
+                    const snap = await window.pkm.getSnapshot();
+                    const a = snap.pdfs.find((p) => p.filename === 'smoke-test.pdf');
+                    const b = snap.pdfs.find((p) => p.filename === 'smoke-autoscan.pdf');
+                    const pid = snap.pdfs.find((p) => p.filename === 'PID-Tuning-Methods.pdf');
+                    if (!a || !b || !pid) return { files: !!a && !!b && !!pid };
+                    window.__pkmOpenPdf(a.id);
+                    await new Promise((r) => setTimeout(r, 500));
+                    window.__pkmOpenPdf(b.id);
+                    await new Promise((r) => setTimeout(r, 500));
+                    const t2 = window.__pkmStore().tabs.length;
+                    window.__pkmOpenPdf(a.id);
+                    await new Promise((r) => setTimeout(r, 300));
+                    const t3 = window.__pkmStore().tabs.length;
+                    const activeAfterA = window.__pkmStore().activePdfId === a.id;
+                    window.__pkmAct('openPdfInNewTab', a.id);
+                    await new Promise((r) => setTimeout(r, 300));
+                    const t4 = window.__pkmStore().tabs.length;
+                    const tabId = window.__pkmStore().activeTabId;
+                    window.__pkmAct('splitTab', tabId, 'split-h');
+                    await new Promise((r) => setTimeout(r, 600));
+                    const s1 = window.__pkmStore().splits[tabId];
+                    const splitPanes2 = s1 && s1.panes.length === 2;
+                    window.__pkmAct('openInSplit', pid.id);
+                    await new Promise((r) => setTimeout(r, 600));
+                    const s2 = window.__pkmStore().splits[tabId];
+                    const replacedWithPid = !!s2 && s2.panes.some((p) => p.pdfId === pid.id);
+                    const activePid = window.__pkmStore().activePdfId === pid.id;
+                    const viewerCount = document.querySelectorAll('.pdf-page-sheet').length;
+                    // 切换到单屏标签验证恢复
+                    window.__pkmAct('activateTab', window.__pkmStore().tabs[0].id);
+                    await new Promise((r) => setTimeout(r, 400));
+                    const singleViewer = document.querySelectorAll('.pdf-page-sheet').length <= 2;
+                    return { t2, t3, t4, activeAfterA, splitPanes2, replacedWithPid, activePid, viewerCount, singleViewer };
+                  })()
+                `);
+                console.log('[capture] tabsDiag', JSON.stringify(tabsDiag));
+                // 书签面板工具条（搜索/定位/折叠）验证
+                const outlineUiDiag = await win.webContents.executeJavaScript(`
+                  (async () => {
+                    const snap = await window.pkm.getSnapshot();
+                    const pdf = snap.pdfs.find((p) => p.filename === 'smoke-test.pdf');
+                    if (!pdf) return { pdf: false };
+                    window.__pkmOpenPdf(pdf.id);
+                    await new Promise((r) => setTimeout(r, 1500));
+                    const tabBtn = [...document.querySelectorAll('button')].find(
+                      (b) => (b.getAttribute('title') || '').includes('书签'),
+                    );
+                    if (tabBtn) tabBtn.click();
+                    await new Promise((r) => setTimeout(r, 300));
+                    const searchInput = [...document.querySelectorAll('input')].some(
+                      (i) => i.placeholder === '搜索书签' || i.placeholder === 'Search bookmarks',
+                    );
+                    const locateBtn = [...document.querySelectorAll('button')].some(
+                      (b) => (b.getAttribute('title') || '').includes('定位当前章节'),
+                    );
+                    const collapseBtn = [...document.querySelectorAll('button')].some(
+                      (b) =>
+                        (b.getAttribute('title') || '').includes('全部折叠') ||
+                        (b.getAttribute('title') || '').includes('全部展开'),
+                    );
+                    const items = [...document.querySelectorAll('aside button')].filter(
+                      (b) => (b.className || '').includes('py-[3px]'),
+                    ).length;
+                    return { tabBtn: !!tabBtn, searchInput, locateBtn, collapseBtn, items };
+                  })()
+                `);
+                console.log('[capture] outlineUiDiag', JSON.stringify(outlineUiDiag));
+                // 分屏窗格激活切换 + 高亮 + 新分屏打开验证
+                const paneDiag = await win.webContents.executeJavaScript(`
+                  (async () => {
+                    const snap = await window.pkm.getSnapshot();
+                    const a = snap.pdfs.find((p) => p.filename === 'smoke-test.pdf');
+                    const pid = snap.pdfs.find((p) => p.filename === 'PID-Tuning-Methods.pdf');
+                    if (!a || !pid) return { files: !!a && !!pid };
+                    window.__pkmAct('closeAllTabs');
+                    window.__pkmOpenPdf(a.id);
+                    await new Promise((r) => setTimeout(r, 500));
+                    const tabId = window.__pkmStore().activeTabId;
+                    window.__pkmAct('splitTab', tabId, 'split-h');
+                    await new Promise((r) => setTimeout(r, 600));
+                    const s1 = window.__pkmStore().splits[tabId];
+                    const paneB = s1.panes[1];
+                    window.__pkmAct('setActivePane', tabId, paneB.id);
+                    await new Promise((r) => setTimeout(r, 300));
+                    const activeSwitched = window.__pkmStore().activePdfId === paneB.pdfId;
+                    const ringCount = document.querySelectorAll('[class*="ring-app-accent"]').length;
+                    window.__pkmAct('openInSplit', pid.id);
+                    await new Promise((r) => setTimeout(r, 500));
+                    const s2 = window.__pkmStore().splits[tabId];
+                    const pids = s2.panes.map((p) => p.pdfId);
+                    return { activeSwitched, ringCount, hasBoth: pids.includes(a.id) && pids.includes(pid.id) };
+                  })()
+                `);
+                console.log('[capture] paneDiag', JSON.stringify(paneDiag));
                 const tabDiag = await win.webContents.executeJavaScript(`
                   (async () => {
                     const snap = await window.pkm.getSnapshot();

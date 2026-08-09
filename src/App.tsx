@@ -11,6 +11,7 @@ import { Sidebar } from './components/Sidebar';
 import { TitleBar } from './components/TitleBar';
 import { Button, Modal, ResizeHandle } from './components/ui';
 import { PdfViewer } from './components/Viewer/PdfViewer';
+import { TabBar } from './components/Viewer/TabBar';
 
 export default function App() {
   const t = useT();
@@ -25,6 +26,12 @@ export default function App() {
   const activePdf = useApp(
     (s) => s.pdfs.find((p) => p.id === s.activePdfId) ?? s.inboxPdfs.find((p) => p.id === s.activePdfId),
   );
+  const activeTabId = useApp((s) => s.activeTabId);
+  const tabs = useApp((s) => s.tabs);
+  const splits = useApp((s) => s.splits);
+  const setActivePane = useApp((s) => s.setActivePane);
+  const activeTab = tabs.find((t) => t.id === activeTabId) ?? null;
+  const activeSplit = activeTab ? splits[activeTab.id] : null;
   const selectedFolderId = useApp((s) => s.selectedFolderId);
   const sidebarWidth = useApp((s) => s.sidebarWidth);
   const setSidebarWidth = useApp((s) => s.setSidebarWidth);
@@ -70,10 +77,43 @@ export default function App() {
       const w = window as unknown as {
   __pkmOpenPdf?: (id: number) => void;
   __pkmRestoreSession?: () => void;
+  __pkmStore?: () => unknown;
+  __pkmAct?: (name: string, ...args: unknown[]) => void;
         __pkmRefresh?: () => void;
       };
   w.__pkmOpenPdf = (id: number) => useApp.getState().openPdf(id);
   w.__pkmRestoreSession = () => useApp.getState().restoreLastSession();
+  w.__pkmStore = () => {
+    const s = useApp.getState();
+    return {
+      tabs: s.tabs.map((t) => ({ id: t.id, pdfId: t.pdfId, title: t.title, kind: t.kind })),
+      activeTabId: s.activeTabId,
+      activePdfId: s.activePdfId,
+      jumpPage: s.jumpPage,
+      currentPage: s.currentPage,
+      splits: Object.fromEntries(
+        Object.entries(s.splits).map(([k, v]) => [
+          k,
+          { layout: v.layout, panes: v.panes.map((p) => ({ id: p.id, pdfId: p.pdfId })), activePaneId: v.activePaneId },
+        ]),
+      ),
+    };
+  };
+  w.__pkmAct = (name, ...args) => {
+    const s = useApp.getState();
+    const actions: Record<string, (...a: never[]) => void> = {
+      openPdfInNewTab: s.openPdfInNewTab,
+      splitTab: s.splitTab,
+      openInSplit: s.openInSplit,
+      closeTab: s.closeTab,
+      closeAllTabs: s.closeAllTabs,
+      closeOtherTabs: s.closeOtherTabs,
+      setActivePane: s.setActivePane,
+      unsplitTab: s.unsplitTab,
+      activateTab: s.activateTab,
+    };
+    (actions[name] as (...a: unknown[]) => void)?.(...args);
+  };
       w.__pkmRefresh = () => {
         void refresh();
       };
@@ -196,10 +236,59 @@ export default function App() {
         )}
         {view === 'settings' ? (
           <SettingsPage />
-        ) : activePdf ? (
-          <PdfViewer pdf={activePdf} onMissing={setMissingPdf} />
+        ) : activeTab ? (
+          <div className="flex min-h-0 flex-1 flex-col">
+            <TabBar />
+            {activeSplit && activeSplit.layout !== 'single' ? (
+              <div
+                className={`flex min-h-0 flex-1 ${
+                  activeSplit.layout === 'split-h' ? 'flex-row' : 'flex-col'
+                }`}
+              >
+                {activeSplit.panes.map((pane, i) => {
+                  const p =
+                    pane.kind === 'inbox'
+                      ? useApp.getState().inboxPdfs.find((x) => x.id === pane.pdfId)
+                      : useApp.getState().pdfs.find((x) => x.id === pane.pdfId);
+                  const paneActive = activeSplit.activePaneId === pane.id;
+                  return (
+                    <div
+                      key={pane.id}
+                      className={`relative flex min-h-0 min-w-0 flex-1 ${
+                        i > 0
+                          ? activeSplit.layout === 'split-h'
+                            ? 'border-l border-app-border'
+                            : 'border-t border-app-border'
+                          : ''
+                      } ${paneActive ? 'ring-1 ring-inset ring-app-accent/50' : ''}`}
+                      onClick={() => setActivePane(activeTab.id, pane.id)}
+                    >
+                      {p ? (
+                        <PdfViewer pdf={p} onMissing={setMissingPdf} paneActive={paneActive} />
+                      ) : (
+                        <EmptyState />
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : activePdf ? (
+              <div className="flex min-h-0 flex-1 flex-col">
+                <TabBar />
+                <PdfViewer pdf={activePdf} onMissing={setMissingPdf} paneActive />
+              </div>
+            ) : (
+              <div className="flex min-h-0 flex-1 flex-col">
+                <TabBar />
+                <EmptyState />
+              </div>
+            )}
+          </div>
         ) : (
-          <EmptyState />
+          <div className="flex min-h-0 flex-1 flex-col">
+            <TabBar />
+            <EmptyState />
+          </div>
         )}
         {!inspectorCollapsed && (
           <ResizeHandle
