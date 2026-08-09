@@ -11,6 +11,14 @@ export interface Toast {
   text: string;
 }
 
+/** 上次阅读会话：用于重启后恢复到关闭前阅读的 PDF 与页码 */
+export interface LastSession {
+  kind: 'library' | 'inbox';
+  pdfId: number;
+  page: number;
+  ts: number;
+}
+
 const DEFAULT_SETTINGS: AppSettings = {
   theme: 'dark',
   language: 'zh-CN',
@@ -31,6 +39,7 @@ interface AppState {
   tags: Tag[];
   settings: AppSettings;
   activePdfId: number | null;
+  lastSession: LastSession | null;
   selectedFolderId: number | null;
   /** 侧边栏多选（Ctrl+点击）的 PDF 集合 */
   selectedPdfIds: number[];
@@ -59,6 +68,7 @@ interface AppState {
   setReady: (v: boolean) => void;
   refresh: () => Promise<void>;
   openPdf: (id: number | null) => void;
+  restoreLastSession: () => void;
   setSelectedFolder: (id: number | null) => void;
   setInboxPdfs: (items: PdfRecord[]) => void;
   setSelectedPdfIds: (ids: number[]) => void;
@@ -95,6 +105,7 @@ export const useApp = create<AppState>((set, get) => ({
   tags: [],
   settings: DEFAULT_SETTINGS,
   activePdfId: null,
+  lastSession: null,
   selectedFolderId: null,
   selectedPdfIds: [],
   tagFilterId: null,
@@ -138,6 +149,15 @@ export const useApp = create<AppState>((set, get) => ({
       return;
     }
     const s = get();
+    // 记忆会话：记录本次打开的 PDF（库 / 临时区）与起始页
+    const kind: 'library' | 'inbox' = s.inboxPdfs.some((p) => p.id === id) ? 'inbox' : 'library';
+    const sess: LastSession = { kind, pdfId: id, page: 1, ts: Date.now() };
+    try {
+      localStorage.setItem('pkm.lastSession', JSON.stringify(sess));
+    } catch {
+      /* ignore */
+    }
+    set({ lastSession: sess });
     const pdf = s.pdfs.find((p) => p.id === id) ?? s.inboxPdfs.find((p) => p.id === id);
     // 有书签默认书签页，无书签默认笔记页（避免先闪“信息”再跳转）
     const cached = s.outlines[id];
@@ -150,6 +170,46 @@ export const useApp = create<AppState>((set, get) => ({
           ? 'outline'
           : 'notes';
     set({ activePdfId: id, inspectorTab: tab });
+  },
+  /**
+   * 启动恢复：读取上次会话，若对应 PDF 仍存在则自动打开并跳转到记录页码。
+   * PDF 已被删除时清除记录。
+   */
+  restoreLastSession: () => {
+    const s = get();
+    let raw: string | null = null;
+    try {
+      raw = localStorage.getItem('pkm.lastSession');
+    } catch {
+      return;
+    }
+    if (!raw) return;
+    let sess: LastSession;
+    try {
+      sess = JSON.parse(raw) as LastSession;
+    } catch {
+      return;
+    }
+    if (!sess || typeof sess.pdfId !== 'number') return;
+    const pdf = s.pdfs.find((p) => p.id === sess.pdfId) ?? s.inboxPdfs.find((p) => p.id === sess.pdfId);
+    if (!pdf) {
+      try {
+        localStorage.removeItem('pkm.lastSession');
+      } catch {
+        /* ignore */
+      }
+      return;
+    }
+    s.openPdf(sess.pdfId);
+    // openPdf 会把记录重置为第 1 页，这里恢复为上次阅读页码，保证记忆准确
+    const restored: LastSession = { ...sess, ts: Date.now() };
+    try {
+      localStorage.setItem('pkm.lastSession', JSON.stringify(restored));
+    } catch {
+      /* ignore */
+    }
+    set({ lastSession: restored });
+    if (sess.page > 1) s.requestJump(sess.page);
   },
   setSelectedFolder: (id) => set({ selectedFolderId: id, tagFilterId: null }),
   setInboxPdfs: (items) => set({ inboxPdfs: items }),
@@ -174,7 +234,21 @@ export const useApp = create<AppState>((set, get) => ({
     set((s) => ({ outlines: { ...s.outlines, [pdfId]: nodes } })),
   requestJump: (page) => set({ jumpPage: page }),
   consumeJump: () => set({ jumpPage: null }),
-  setCurrentPage: (page) => set({ currentPage: page }),
+  setCurrentPage: (page) => {
+    const s = get();
+    // 同步更新上次会话页码（翻页/滚动到新页时记忆阅读位置）
+    if (s.lastSession) {
+      const sess = { ...s.lastSession, page, ts: Date.now() };
+      try {
+        localStorage.setItem('pkm.lastSession', JSON.stringify(sess));
+      } catch {
+        /* ignore */
+      }
+      set({ currentPage: page, lastSession: sess });
+    } else {
+      set({ currentPage: page });
+    }
+  },
   setSidebarWidth: (w) => {
     const v = Math.min(420, Math.max(180, Math.round(w)));
     localStorage.setItem('pkm.sidebarWidth', String(v));

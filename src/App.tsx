@@ -55,6 +55,11 @@ export default function App() {
     })();
   }, [t, toast]);
 
+  // 启动后恢复上次阅读会话（关闭前正在读的 PDF 与页码）
+  useEffect(() => {
+    if (ready) useApp.getState().restoreLastSession();
+  }, [ready]);
+
   useEffect(() => {
     document.documentElement.dataset.theme = settings.theme;
     document.documentElement.lang = settings.language === 'en-US' ? 'en' : 'zh-CN';
@@ -63,10 +68,12 @@ export default function App() {
   useEffect(() => {
     if (window.location.hash.includes('capture')) {
       const w = window as unknown as {
-        __pkmOpenPdf?: (id: number) => void;
+  __pkmOpenPdf?: (id: number) => void;
+  __pkmRestoreSession?: () => void;
         __pkmRefresh?: () => void;
       };
-      w.__pkmOpenPdf = (id: number) => useApp.getState().openPdf(id);
+  w.__pkmOpenPdf = (id: number) => useApp.getState().openPdf(id);
+  w.__pkmRestoreSession = () => useApp.getState().restoreLastSession();
       w.__pkmRefresh = () => {
         void refresh();
       };

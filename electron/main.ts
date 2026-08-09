@@ -861,6 +861,43 @@ async function createMainWindow(): Promise<BrowserWindow> {
                   })()
                 `);
                 console.log('[capture] loadingDiag', JSON.stringify(loadingDiag));
+                // 会话记忆验证：翻页记录页码；模拟重启后自动恢复并跳转
+                const sessionDiag = await win.webContents.executeJavaScript(`
+                  (async () => {
+                    const snap = await window.pkm.getSnapshot();
+                    const pid = snap.pdfs.find((p) => p.filename === 'PID-Tuning-Methods.pdf');
+                    if (!pid) return { pid: false };
+                    window.__pkmOpenPdf(pid.id);
+                    await new Promise((r) => setTimeout(r, 1500));
+                    const p3 = [...document.querySelectorAll('.pdf-page-sheet')].find(
+                      (el) => el.getAttribute('data-page-number') === '3',
+                    );
+                    if (p3) p3.scrollIntoView();
+                    await new Promise((r) => setTimeout(r, 900));
+                    const rec1 = JSON.parse(localStorage.getItem('pkm.lastSession') || 'null');
+                    // 模拟“关闭后重启”：写入上次会话记录并触发恢复
+                    localStorage.setItem(
+                      'pkm.lastSession',
+                      JSON.stringify({ kind: 'library', pdfId: pid.id, page: 3, ts: Date.now() }),
+                    );
+                    if (window.__pkmRestoreSession) window.__pkmRestoreSession();
+                    await new Promise((r) => setTimeout(r, 1800));
+                    const rec2 = JSON.parse(localStorage.getItem('pkm.lastSession') || 'null');
+                    const sc = document.querySelector('[data-pan-scroll]');
+                    const p3b = [...document.querySelectorAll('.pdf-page-sheet')].find(
+                      (el) => el.getAttribute('data-page-number') === '3',
+                    );
+                    const rel = p3b && sc
+                      ? Math.abs(p3b.getBoundingClientRect().top - sc.getBoundingClientRect().top)
+                      : null;
+                    return {
+                      rec1Page: rec1 ? rec1.page : null,
+                      rec2Page: rec2 ? rec2.page : null,
+                      restoredToPage3: rel != null && rel < 80,
+                    };
+                  })()
+                `);
+                console.log('[capture] sessionDiag', JSON.stringify(sessionDiag));
                 const tabDiag = await win.webContents.executeJavaScript(`
                   (async () => {
                     const snap = await window.pkm.getSnapshot();
