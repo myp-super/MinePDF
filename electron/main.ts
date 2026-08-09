@@ -1011,16 +1011,35 @@ async function createMainWindow(): Promise<BrowserWindow> {
                     const a = snap.pdfs.find((p) => p.filename === 'smoke-test.pdf');
                     const pid = snap.pdfs.find((p) => p.filename === 'PID-Tuning-Methods.pdf');
                     if (!a || !pid) return { files: !!a && !!pid };
+                    const insp = document.querySelector('[data-panel="inspector"]');
+                    const inspW0 = insp ? insp.getBoundingClientRect().width : 0;
                     window.__pkmAct('clearScreens');
                     window.__pkmOpenPdf(a.id);
                     await new Promise((r) => setTimeout(r, 500));
                     window.__pkmAct('splitScreen', 'split-h');
                     await new Promise((r) => setTimeout(r, 600));
                     const screen2 = window.__pkmStore().screens[1];
+                    const inspW1 = insp ? insp.getBoundingClientRect().width : 0;
+                    const inspectorStable = Math.abs(inspW1 - inspW0) < 1;
                     window.__pkmAct('activateScreen', screen2.id);
                     await new Promise((r) => setTimeout(r, 300));
                     const activeSwitched = window.__pkmStore().activeScreenId === screen2.id;
-                    const ringCount = document.querySelectorAll('[class*="ring-app-accent"]').length;
+                    // 只有选中屏的标签栏带高亮标记（accent 底边），且只有选中屏的活动标签带顶部标记
+                    const accentBars = [...document.querySelectorAll('div')].filter(
+                      (d) => (d.className || '').includes('border-b-app-accent/70'),
+                    ).length;
+                    const tabMarks = [...document.querySelectorAll('span')].filter(
+                      (s) =>
+                        (s.className || '').includes('bg-app-accent') &&
+                        (s.className || '').includes('inset-x-0'),
+                    ).length;
+                    // 选中屏2后打开屏1已有的 PDF：应留在屏2打开（独立打开，不跳回屏1）
+                    window.__pkmOpenPdf(a.id);
+                    await new Promise((r) => setTimeout(r, 400));
+                    const stayedScreen2 = window.__pkmStore().activeScreenId === screen2.id;
+                    const aInScreen2 = window.__pkmStore()
+                      .screens.find((sc) => sc.id === screen2.id)
+                      .tabs.some((t) => t.pdfId === a.id);
                     // 分割线拖拽调整比例（用专属标识定位分屏分割线，避免误选侧边栏/信息面板的 resize 手柄）
                     const ratio0 = window.__pkmStore().splitRatio;
                     const divider = document.querySelector('[data-split-divider]');
@@ -1040,6 +1059,27 @@ async function createMainWindow(): Promise<BrowserWindow> {
                       await new Promise((r) => setTimeout(r, 250));
                       dragRatio = window.__pkmStore().splitRatio;
                     }
+                    // Ctrl+滚轮应只缩放所在屏，另一屏与信息面板均不受影响
+                    const scs = [...document.querySelectorAll('[data-pan-scroll]')];
+                    const sheetOf = (sc) => sc.querySelector('.pdf-page-sheet');
+                    const wBefore = scs.map((sc) => (sheetOf(sc) ? sheetOf(sc).getBoundingClientRect().width : 0));
+                    if (scs[0]) {
+                      const r = scs[0].getBoundingClientRect();
+                      scs[0].dispatchEvent(
+                        new WheelEvent('wheel', {
+                          ctrlKey: true,
+                          deltaY: -120,
+                          clientX: r.left + r.width / 2,
+                          clientY: r.top + 100,
+                          bubbles: true,
+                          cancelable: true,
+                        }),
+                      );
+                    }
+                    await new Promise((r) => setTimeout(r, 400));
+                    const wAfter = scs.map((sc) => (sheetOf(sc) ? sheetOf(sc).getBoundingClientRect().width : 0));
+                    const zoomScreen1 = wAfter[0] > wBefore[0] + 5;
+                    const zoomScreen2Untouched = Math.abs(wAfter[1] - wBefore[1]) < 1;
                     window.__pkmAct('openInSplit', pid.id);
                     await new Promise((r) => setTimeout(r, 500));
                     const hasPid = window.__pkmStore().screens.some((sc) =>
@@ -1047,10 +1087,16 @@ async function createMainWindow(): Promise<BrowserWindow> {
                     );
                     return {
                       activeSwitched,
-                      ringCount,
+                      inspectorStable,
+                      accentBars,
+                      tabMarks,
+                      stayedScreen2,
+                      aInScreen2,
                       ratio0,
                       dragRatio,
                       dividerFound: !!divider,
+                      zoomScreen1,
+                      zoomScreen2Untouched,
                       hasPid,
                     };
                   })()
@@ -1172,7 +1218,7 @@ async function createMainWindow(): Promise<BrowserWindow> {
                     // 重新进入截图模式并完成一次框选插入
                     const shotBtn2 = [...document.querySelectorAll('button')].find((b) => (b.getAttribute('title') || '').includes('拖拽框选') || (b.textContent || '').trim() === '截图');
                     if (shotBtn2) shotBtn2.click();
-                    await new Promise((r) => setTimeout(r, 250));
+                    await new Promise((r) => setTimeout(r, 600));
                     const overlay2 = [...document.querySelectorAll('div')].find((el) => (el.className || '').includes('cursor-crosshair'));
                     if (!overlay2) return { btn: true, overlayShown: true, exitBtnShown, exitWorks, reenter: false };
                     const or2 = overlay2.getBoundingClientRect();

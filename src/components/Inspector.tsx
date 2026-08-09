@@ -30,6 +30,7 @@ import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import { useT, useTError } from '../i18n';
 import type { AnnotationRecord, PdfRecord } from '../shared/types';
+import type { OutlineNode } from '../lib/pdf';
 import { useApp } from '../store';
 import { Button, formatBytes, formatDate, IconButton, Toggle } from './ui';
 import { InspectorOutline } from './InspectorOutline';
@@ -57,6 +58,9 @@ const MD_EXPORT_CSS = `
   del { color: #888; }
 `;
 
+/** 书签空列表常量：避免 selector 每次返回新引用触发无限重渲染 */
+const EMPTY_OUTLINE: OutlineNode[] = [];
+
 export function Inspector() {
   const t = useT();
   const pdf = useApp(
@@ -66,7 +70,10 @@ export function Inspector() {
   const setTab = useApp((s) => s.setInspectorTab);
   const collapsed = useApp((s) => s.inspectorCollapsed);
   const toggleCollapsed = useApp((s) => s.toggleInspectorCollapsed);
-  const outline = useApp((s) => s.outline);
+  // 书签跟随当前选中屏的 PDF（per-pdf 缓存），避免分屏时显示另一屏的书签
+  const outline = useApp((s) =>
+    s.activePdfId != null ? s.outlines[s.activePdfId] ?? EMPTY_OUTLINE : EMPTY_OUTLINE,
+  );
   const inspectorWidth = useApp((s) => s.inspectorWidth);
 
   const tabs = [

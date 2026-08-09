@@ -7,10 +7,11 @@ import { ContextMenu } from '../ui';
 
 /**
  * 单个阅读屏的标签栏（3.1.0）
- * - 一行横向标签：点击切换、× 关闭、中键关闭，当前标签高亮
+ * - 一行横向标签：点击切换、× 关闭、中键关闭
+ * - 只有选中屏的标签带有高亮标记；未选中屏整体变暗，便于区分当前屏
  * - 右键菜单：关闭 / 关闭其他 / 关闭全部 ｜ 上下分屏 / 左右分屏 / 取消分屏
  */
-export function TabBar({ screen }: { screen: ReaderScreen }) {
+export function TabBar({ screen, active }: { screen: ReaderScreen; active: boolean }) {
   const t = useT();
   const splitLayout = useApp((s) => s.splitLayout);
   const screenCount = useApp((s) => s.screens.length);
@@ -26,14 +27,20 @@ export function TabBar({ screen }: { screen: ReaderScreen }) {
   const isSplit = splitLayout !== 'single' && screenCount > 1;
 
   return (
-    <div className="flex h-8 shrink-0 items-stretch overflow-x-auto border-b border-app-border bg-app-panel">
+    <div
+      className={`flex h-8 shrink-0 items-stretch overflow-x-auto border-b bg-app-panel ${
+        active
+          ? 'border-b-2 border-b-app-accent/70'
+          : 'border-b-app-border bg-app-panel/40'
+      }`}
+    >
       {screen.tabs.map((tab) => {
-        const active = tab.id === screen.activeTabId;
+        const isTabActive = tab.id === screen.activeTabId;
         return (
           <div
             key={tab.id}
             className={`group relative flex min-w-0 max-w-[190px] shrink-0 items-center border-r border-app-border ${
-              active ? 'bg-app-panel2' : 'hover:bg-app-panel2/40'
+              active && isTabActive ? 'bg-app-panel2' : 'hover:bg-app-panel2/40'
             }`}
           >
             <button
@@ -53,7 +60,11 @@ export function TabBar({ screen }: { screen: ReaderScreen }) {
               ) : (
                 <FileText size={12} className="shrink-0 text-app-muted" />
               )}
-              <span className={`min-w-0 flex-1 truncate ${active ? 'text-app-text' : 'text-app-muted'}`}>
+              <span
+                className={`min-w-0 flex-1 truncate ${
+                  active && isTabActive ? 'text-app-text' : 'text-app-muted'
+                }`}
+              >
                 {tab.title}
               </span>
             </button>
@@ -65,7 +76,9 @@ export function TabBar({ screen }: { screen: ReaderScreen }) {
             >
               <X size={12} />
             </button>
-            {active && <span className="pointer-events-none absolute inset-x-0 top-0 h-0.5 bg-app-accent" />}
+            {active && isTabActive && (
+              <span className="pointer-events-none absolute inset-x-0 top-0 h-0.5 bg-app-accent" />
+            )}
           </div>
         );
       })}

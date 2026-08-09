@@ -8,13 +8,16 @@ import { TabBar } from './TabBar';
 
 /**
  * 单个阅读屏（3.1.0）：独立标签栏 + 一个 PDF 阅读器。
- * 点击屏内任意位置即选中该屏。
+ * 点击屏内任意位置即选中该屏；只有选中的屏拥有高亮标记，
+ * 且只有选中的屏响应信息面板的书签跳转/页码同步。
  */
 export function ScreenViewer({
   screen,
+  active,
   onMissing,
 }: {
   screen: ReaderScreen;
+  active: boolean;
   onMissing: (p: PdfRecord) => void;
 }) {
   const activateScreen = useApp((s) => s.activateScreen);
@@ -32,9 +35,9 @@ export function ScreenViewer({
       className="flex min-h-0 min-w-0 flex-1 flex-col"
       onClick={() => activateScreen(screen.id)}
     >
-      <TabBar screen={screen} />
+      <TabBar screen={screen} active={active} />
       {pdf ? (
-        <PdfViewer pdf={pdf} onMissing={onMissing} paneActive />
+        <PdfViewer pdf={pdf} onMissing={onMissing} paneActive={active} />
       ) : (
         <div className="flex min-h-0 flex-1">
           <EmptyState />

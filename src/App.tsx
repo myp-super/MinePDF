@@ -240,7 +240,7 @@ export default function App() {
         ) : activeScreen ? (
           splitLayout !== 'single' && screens.length > 1 ? (
             <div
-              className={`animate-pop flex min-h-0 flex-1 ${
+              className={`animate-pop flex min-h-0 min-w-0 flex-1 ${
                 splitLayout === 'split-h' ? 'flex-row' : 'flex-col'
               }`}
             >
@@ -256,8 +256,8 @@ export default function App() {
                   <div
                     className={`relative flex min-h-0 min-w-0 ${
                       screen.id === activeScreenId
-                        ? 'ring-1 ring-inset ring-app-accent/50'
-                        : ''
+                        ? 'ring-2 ring-inset ring-app-accent/70'
+                        : 'ring-1 ring-inset ring-app-border/40'
                     }`}
                     style={{
                       flexGrow: idx === 0 ? splitRatio : 1 - splitRatio,
@@ -265,14 +265,22 @@ export default function App() {
                       overflow: 'hidden',
                     }}
                   >
-                    <ScreenViewer screen={screen} onMissing={setMissingPdf} />
+                    <ScreenViewer
+                      screen={screen}
+                      active={screen.id === activeScreenId}
+                      onMissing={setMissingPdf}
+                    />
                   </div>
                 </Fragment>
               ))}
             </div>
           ) : (
             <div className="relative flex min-h-0 flex-1">
-              <ScreenViewer screen={activeScreen} onMissing={setMissingPdf} />
+              <ScreenViewer
+                screen={activeScreen}
+                active
+                onMissing={setMissingPdf}
+              />
             </div>
           )
         ) : (

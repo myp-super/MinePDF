@@ -219,7 +219,8 @@ export const useApp = create<AppState>((set, get) => ({
       get().toast('error', err instanceof Error ? err.message : String(err));
     }
   },
-  /** 打开 PDF：已打开则激活所在屏与标签；否则在当前选中屏新建标签 */
+  /** 打开 PDF：始终在当前选中屏打开——屏内已打开则激活对应标签，否则新建标签；
+   *  不跳转到其它屏，保证每个屏都能独立打开任意 PDF。 */
   openPdf: (id) => {
     if (id == null) {
       set({ activePdfId: null, inspectorTab: 'meta' });
@@ -229,28 +230,11 @@ export const useApp = create<AppState>((set, get) => ({
     const pdf = s.pdfs.find((p) => p.id === id) ?? s.inboxPdfs.find((p) => p.id === id);
     if (!pdf) return;
     const kind: 'library' | 'inbox' = s.inboxPdfs.some((p) => p.id === id) ? 'inbox' : 'library';
-    // 已在任意屏打开 → 激活该屏与该标签
-    for (const screen of s.screens) {
-      const tab = screen.tabs.find((t) => t.pdfId === id);
-      if (tab) {
-        const screens = s.screens.map((sc) =>
-          sc.id === screen.id ? { ...sc, activeTabId: tab.id } : sc,
-        );
-        set({
-          screens,
-          activeScreenId: screen.id,
-          activePdfId: id,
-          lastSession: saveSession(kind, id, 1),
-          inspectorTab: tabInspectorTab(s, pdf),
-        });
-        return;
-      }
-    }
-    // 当前屏新建标签；无屏则创建首个屏
-    const tab = makeTab(s, id);
-    if (!tab) return;
+    // 当前选中屏新建标签；无屏则创建首个屏
     const screen = s.screens.find((sc) => sc.id === s.activeScreenId) ?? s.screens[0];
     if (!screen) {
+      const tab = makeTab(s, id);
+      if (!tab) return;
       const newScreen: ReaderScreen = { id: nextScreenId(), tabs: [tab], activeTabId: tab.id };
       set({
         screens: [newScreen],
@@ -263,6 +247,8 @@ export const useApp = create<AppState>((set, get) => ({
       });
       return;
     }
+    const tab = makeTab(s, id);
+    if (!tab) return;
     const screens = s.screens.map((sc) => (sc.id === screen.id ? openTabInScreen(sc, tab) : sc));
     set({
       screens,
@@ -343,7 +329,8 @@ export const useApp = create<AppState>((set, get) => ({
     set({
       activeScreenId: screenId,
       activePdfId: pdfId,
-      lastSession: saveSession(tab?.kind ?? 'library', pdfId, 1),
+      // 记录当前阅读页码，关闭后重启可恢复到该页
+      lastSession: saveSession(tab?.kind ?? 'library', pdfId, s.currentPage),
     });
   },
   activateTab: (screenId, tabId) => {

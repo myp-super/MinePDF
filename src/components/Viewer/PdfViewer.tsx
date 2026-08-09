@@ -362,45 +362,32 @@ export function PdfViewer({ pdf, onMissing, paneActive = true }: PdfViewerProps)
     };
   }, [doc, mode, pageCount, scale]);
 
-  // ---------- Ctrl + wheel zoom (window-level, anchored at cursor) ----------
+  // ---------- Ctrl + wheel zoom（只作用于本屏自己的滚动容器，锚定光标） ----------
+  // 监听挂在每个屏独立的滚动容器上：分屏时各屏独立缩放，
+  // 鼠标在侧边栏/信息面板上滚动也不会误触发 PDF 缩放。
   useEffect(() => {
-    let raf = 0;
-    let pendingFactor = 1;
-    let lastX = 0;
-    let lastY = 0;
+    const el = scrollRef.current;
+    if (!el) return;
     const handler = (e: WheelEvent) => {
       if (!e.ctrlKey) return;
       e.preventDefault();
-      e.stopPropagation();
-      pendingFactor *= e.deltaY < 0 ? 1.1 : 1 / 1.1;
-      lastX = e.clientX;
-      lastY = e.clientY;
-      if (raf) return;
-      raf = requestAnimationFrame(() => {
-        raf = 0;
-        const oldScale = scaleRef.current;
-        const newScale = Math.min(4, Math.max(0.3, oldScale * pendingFactor));
-        pendingFactor = 1;
-        const el = scrollRef.current;
-        const rect = el?.getBoundingClientRect();
-        const anchorX = rect && el ? lastX - rect.left + el.scrollLeft : 0;
-        const anchorY = rect && el ? lastY - rect.top + el.scrollTop : 0;
-        scaleRef.current = newScale;
-        setScale(newScale);
-        if (el && rect) {
-          requestAnimationFrame(() => {
-            el.scrollLeft = (anchorX * newScale) / oldScale - (lastX - rect.left);
-            el.scrollTop = (anchorY * newScale) / oldScale - (lastY - rect.top);
-          });
-        }
-      });
+      const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
+      const oldScale = scaleRef.current;
+      const newScale = Math.min(4, Math.max(0.3, oldScale * factor));
+      const rect = el.getBoundingClientRect();
+      const anchorX = e.clientX - rect.left + el.scrollLeft;
+      const anchorY = e.clientY - rect.top + el.scrollTop;
+      scaleRef.current = newScale;
+      setScale(newScale);
+      // 锚定光标：以缩放前后比例保持光标处的文档点不动
+      el.scrollLeft = (anchorX * newScale) / oldScale - (e.clientX - rect.left);
+      el.scrollTop = (anchorY * newScale) / oldScale - (e.clientY - rect.top);
     };
-    window.addEventListener('wheel', handler, { passive: false });
+    el.addEventListener('wheel', handler, { passive: false });
     return () => {
-      window.removeEventListener('wheel', handler);
-      if (raf) cancelAnimationFrame(raf);
+      el.removeEventListener('wheel', handler);
     };
-  }, []);
+  }, [doc, pdf.id]);
 
   // ---------- shortcuts ----------
   const scrollToPage = useCallback((n: number) => {
