@@ -403,7 +403,9 @@ export function Sidebar() {
       <div className="flex items-center justify-between gap-1 px-3 pt-3 pb-2">
         <div className="flex min-w-0 items-center gap-1.5 text-xs font-semibold">
           <BookMarked size={14} className="shrink-0 text-app-accent" />
-          <span className="truncate">{t('sidebar.library')}</span>
+          <span className="cq-lib-title truncate whitespace-nowrap">
+            {t('sidebar.library')}
+          </span>
         </div>
         <div className="flex shrink-0 items-center gap-1">
           <IconButton title={t('sidebar.collapse')} onClick={toggleSidebarCollapsed}>
@@ -412,7 +414,7 @@ export function Sidebar() {
           <div className="relative">
             <Button size="sm" variant="outline" onClick={() => setImportMenu((v) => !v)}>
               <Import size={12} />
-              {t('sidebar.import')}
+              <span className="cq-import-label whitespace-nowrap">{t('sidebar.import')}</span>
             </Button>
             {importMenu && (
               <div
@@ -508,7 +510,9 @@ export function Sidebar() {
                 {rootExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
               </button>
               <BookMarked size={14} className="text-app-accent" />
-              {t('sidebar.myLibrary')}
+              <span className="cq-mylib-label whitespace-nowrap">
+                {t('sidebar.myLibrary')}
+              </span>
               <span className="ml-auto pr-1 text-[10px] font-normal text-app-muted">
                 {t('sidebar.filesCount', { n: pdfs.length })}
               </span>

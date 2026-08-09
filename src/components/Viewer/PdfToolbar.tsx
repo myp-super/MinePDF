@@ -73,7 +73,7 @@ export function PdfToolbar({
   const t = useT();
 
   return (
-    <div className="flex h-10 shrink-0 items-center gap-0.5 border-b border-app-border bg-app-panel px-2">
+    <div className="flex h-10 shrink-0 items-center gap-0.5 overflow-x-auto border-b border-app-border bg-app-panel px-2">
       <IconButton disabled={!ready || currentPage <= 1} onClick={onPrev} title={t('toolbar.prev')}>
         <ChevronLeft size={15} />
       </IconButton>
@@ -91,16 +91,16 @@ export function PdfToolbar({
           }}
           aria-label={t('toolbar.page')}
         />
-        <span className="text-app-muted">/ {pageCount || '—'}</span>
+        <span className="whitespace-nowrap text-app-muted">/ {pageCount || '—'}</span>
       </div>
 
-      <div className="mx-2 h-4 w-px bg-app-border" />
+      <div className="mx-2 h-4 w-px shrink-0 bg-app-border" />
 
       <IconButton disabled={!ready} onClick={onZoomOut} title={t('toolbar.zoomOut')}>
         <ZoomOut size={14} />
       </IconButton>
       <button
-        className="w-12 text-center text-[11px] tabular-nums text-app-muted transition-colors hover:text-app-text"
+        className="w-12 shrink-0 text-center text-[11px] tabular-nums text-app-muted transition-colors hover:text-app-text"
         onClick={onFitPage}
         title={t('toolbar.fitPage')}
       >
@@ -113,16 +113,16 @@ export function PdfToolbar({
         disabled={!ready}
         onClick={onFitWidth}
         title={t('toolbar.fitWidth')}
-        className="rounded-md px-2 py-1 text-[11px] text-app-muted transition-colors hover:bg-app-panel2 hover:text-app-text disabled:opacity-40"
+        className="shrink-0 whitespace-nowrap rounded-md px-2 py-1 text-[11px] text-app-muted transition-colors hover:bg-app-panel2 hover:text-app-text disabled:opacity-40"
       >
         {t('toolbar.fitWidth')}
       </button>
 
-      <div className="mx-2 h-4 w-px bg-app-border" />
+      <div className="mx-2 h-4 w-px shrink-0 bg-app-border" />
 
       <div className="flex overflow-hidden rounded-md border border-app-border">
         <button
-          className={`flex h-6 items-center gap-1 px-2 text-[11px] transition-colors ${
+          className={`flex h-6 shrink-0 items-center gap-1 whitespace-nowrap px-2 text-[11px] transition-colors ${
             mode === 'single'
               ? 'bg-app-panel2 text-app-text'
               : 'bg-transparent text-app-muted hover:text-app-text'
@@ -133,7 +133,7 @@ export function PdfToolbar({
           <PanelTop size={12} /> {t('toolbar.single')}
         </button>
         <button
-          className={`flex h-6 items-center gap-1 border-l border-app-border px-2 text-[11px] transition-colors ${
+          className={`flex h-6 shrink-0 items-center gap-1 whitespace-nowrap border-l border-app-border px-2 text-[11px] transition-colors ${
             mode === 'double'
               ? 'bg-app-panel2 text-app-text'
               : 'bg-transparent text-app-muted hover:text-app-text'
@@ -167,7 +167,7 @@ export function PdfToolbar({
         <Highlighter size={14} />
       </IconButton>
       {highlightMode && (
-        <div className="ml-0.5 flex items-center gap-1 rounded-md border border-app-border px-1.5 py-1">
+        <div className="ml-0.5 flex shrink-0 items-center gap-1 rounded-md border border-app-border px-1.5 py-1">
           {HIGHLIGHT_COLORS.map((c) => (
             <button
               key={c}

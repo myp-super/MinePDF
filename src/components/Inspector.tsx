@@ -135,7 +135,7 @@ export function Inspector() {
       <div className="flex items-center justify-between border-b border-app-border px-3 py-2">
         <div className="flex items-center gap-1.5 text-xs font-semibold">
           <PenLine size={13} className="text-app-accent" />
-          {t('inspector.panel')}
+          <span className="cq-panel-title whitespace-nowrap">{t('inspector.panel')}</span>
         </div>
         <button
           className="flex h-6 w-6 items-center justify-center rounded-md text-app-muted transition-colors hover:bg-app-panel2 hover:text-app-text"
@@ -147,7 +147,7 @@ export function Inspector() {
         </button>
       </div>
       <div className="border-b border-app-border px-2.5">
-        <div className="flex gap-0.5">
+        <div className="flex gap-0.5 overflow-x-auto">
           {(
             [
               ['meta', t('inspector.info')],
@@ -158,7 +158,7 @@ export function Inspector() {
           ).map(([key, label]) => (
             <button
               key={key}
-              className={`flex items-center gap-1.5 rounded-t-md border border-b-0 px-3 py-1.5 text-[11.5px] transition-colors ${
+              className={`flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-t-md border border-b-0 px-3 py-1.5 text-[11.5px] transition-colors ${
                 tab === key
                   ? 'border-app-border bg-app-base text-app-text'
                   : 'border-transparent text-app-muted hover:text-app-text'
@@ -166,7 +166,7 @@ export function Inspector() {
               onClick={() => setTab(key)}
             >
               {tabs.find((tabItem) => tabItem.key === key)?.icon}
-              {label}
+              <span className="cq-tab-label">{label}</span>
             </button>
           ))}
         </div>
@@ -539,7 +539,7 @@ function NotesPanel({ pdf }: { pdf: PdfRecord }) {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex items-center justify-between border-b border-app-border px-3 py-1.5">
+        <div className="flex flex-wrap items-center justify-between gap-y-1 border-b border-app-border px-3 py-1.5">
         <div className="flex items-center gap-1">
           <button
             className={`rounded-md px-2 py-1 text-[11px] ${mode === 'edit' ? 'bg-app-panel2 text-app-text' : 'text-app-muted hover:text-app-text'}`}
@@ -554,17 +554,20 @@ function NotesPanel({ pdf }: { pdf: PdfRecord }) {
             {t('inspector.preview')}
           </button>
         </div>
-        <div className="flex items-center gap-1.5 text-[10.5px] text-app-muted">
+        <div className="flex flex-wrap items-center gap-1.5 text-[10.5px] text-app-muted">
           <Button
             size="sm"
             variant="outline"
             title={t('note.screenshotHint')}
             onClick={() => useApp.getState().setScreenshotMode(true)}
           >
-            <Camera size={11} /> {t('note.screenshot')}
+            <Camera size={11} /> <span className="whitespace-nowrap">{t('note.screenshot')}</span>
           </Button>
           <Button size="sm" variant="outline" disabled={exporting || !md.trim()} onClick={() => void exportPdf()}>
-            <FileDown size={11} /> {exporting ? t('common.saving') : t('note.exportPdf')}
+            <FileDown size={11} />{' '}
+            <span className="whitespace-nowrap">
+              {exporting ? t('common.saving') : t('note.exportPdf')}
+            </span>
           </Button>
           <Button
             size="sm"
@@ -573,20 +576,20 @@ function NotesPanel({ pdf }: { pdf: PdfRecord }) {
             title={t('note.saveHint')}
             onClick={() => void save(md)}
           >
-            <Save size={11} /> {t('note.save')}
+            <Save size={11} /> <span className="whitespace-nowrap">{t('note.save')}</span>
           </Button>
           {saving ? (
-            <span className="flex items-center gap-1">
+            <span className="flex items-center gap-1 whitespace-nowrap">
               <Loader2 size={10} className="animate-spin" /> {t('common.saving')}
             </span>
           ) : dirty ? (
-            <span>{t('inspector.unsaved')}</span>
+            <span className="whitespace-nowrap">{t('inspector.unsaved')}</span>
           ) : savedAt ? (
-            <span className="flex items-center gap-1 text-emerald-400">
+            <span className="flex items-center gap-1 whitespace-nowrap text-emerald-400">
               <Check size={10} /> {savedAt.toLocaleTimeString('zh-CN', { hour12: false })}
             </span>
           ) : (
-            <span className="flex items-center gap-1">
+            <span className="flex items-center gap-1 whitespace-nowrap">
               <StickyNote size={10} /> {autoSave ? t('inspector.autoSave') : t('inspector.ctrlSave')}
             </span>
           )}

@@ -42,7 +42,7 @@ export function IconButton({
   return (
     <button
       className={clsx(
-        'inline-flex h-7 w-7 select-none items-center justify-center rounded-md text-app-muted',
+        'inline-flex h-7 w-7 shrink-0 select-none items-center justify-center rounded-md text-app-muted',
         'transition-colors hover:bg-app-panel2 hover:text-app-text',
         'disabled:opacity-40 disabled:cursor-not-allowed',
         'focus-visible:ring-2 focus-visible:ring-app-accent/60',

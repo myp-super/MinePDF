@@ -395,3 +395,35 @@ body {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* ---------- 窄宽度自适应（方案 B）：边栏/信息面板拖窄时，文字自动退化为图标 ---------- */
+[data-panel='sidebar'],
+[data-panel='inspector'] {
+  container-type: inline-size;
+}
+
+@container (max-width: 300px) {
+  .cq-tab-label {
+    display: none;
+  }
+}
+@container (max-width: 180px) {
+  .cq-panel-title {
+    display: none;
+  }
+}
+@container (max-width: 200px) {
+  .cq-lib-title {
+    display: none;
+  }
+}
+@container (max-width: 240px) {
+  .cq-import-label {
+    display: none;
+  }
+}
+@container (max-width: 220px) {
+  .cq-mylib-label {
+    display: none;
+  }
+}

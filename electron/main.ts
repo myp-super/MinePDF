@@ -393,6 +393,37 @@ async function createMainWindow(): Promise<BrowserWindow> {
                   })()
                 `);
                 console.log('[capture] geomDiag', JSON.stringify(geomDiag));
+                // 方案 B 验证：把边栏/信息面板拖窄后，标签文字应自动隐藏（只剩图标）
+                const narrowDiag = await win.webContents.executeJavaScript(`
+                  (async () => {
+                    const inspector = document.querySelector('[data-panel="inspector"]');
+                    const sidebar = document.querySelector('[data-panel="sidebar"]');
+                    if (!inspector || !sidebar) return { inspector: !!inspector, sidebar: !!sidebar };
+                    const labels = ['信息', '书签', '笔记', '标注'];
+                    inspector.style.width = '180px';
+                    sidebar.style.width = '170px';
+                    await new Promise((r) => setTimeout(r, 150));
+                    const labelSpans = [...inspector.querySelectorAll('span')].filter(
+                      (s) => labels.includes((s.textContent || '').trim()) && s.children.length === 0,
+                    );
+                    const libTitle = [...sidebar.querySelectorAll('span')].find(
+                      (s) => (s.textContent || '').trim() === '我的知识库' || (s.textContent || '').trim() === 'Library',
+                    );
+                    const importText = [...sidebar.querySelectorAll('span')].find(
+                      (s) => (s.textContent || '').trim() === '导入' || (s.textContent || '').trim() === 'Import',
+                    );
+                    const result = {
+                      labelCount: labelSpans.length,
+                      labelsHidden: labelSpans.map((s) => getComputedStyle(s).display),
+                      libTitleHidden: libTitle ? getComputedStyle(libTitle).display : null,
+                      importHidden: importText ? getComputedStyle(importText).display : null,
+                    };
+                    inspector.style.width = '';
+                    sidebar.style.width = '';
+                    return result;
+                  })()
+                `);
+                console.log('[capture] narrowDiag', JSON.stringify(narrowDiag));
                 // 应用内性能诊断：PDFium IPC 渲染真实 PDF 的每页耗时
                 const perfDiag = await win.webContents.executeJavaScript(`
                   (async () => {
