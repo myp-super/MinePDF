@@ -1,8 +1,8 @@
 {
-  "url": "https://github.com/myp-super/MinePDF/releases/download/v2.0.6/MinePDF.Setup.2.0.6.exe",
-  "publishDate": "2026-08-09",
   "notes": [
-    "v2.0.6 - 修复邮箱/电话链接跳转，页内交叉引用与网址链接验证通过"
+    "v2.0.7 - 窗口/边栏变化自动适配宽度，工具栏可折叠，沉浸式悬停下拉"
   ],
-  "version": "2.0.6"
+  "version": "2.0.7",
+  "url": "https://github.com/myp-super/MinePDF/releases/download/v2.0.7/MinePDF.Setup.2.0.7.exe",
+  "publishDate": "2026-08-09"
 }
