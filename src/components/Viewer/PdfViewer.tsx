@@ -103,6 +103,8 @@ export function PdfViewer({ pdf, onMissing }: PdfViewerProps) {
     inspector: boolean;
     maximized: boolean;
   } | null>(null);
+  /** 已自动适配宽度的文档 id（每次打开只适配一次，避免覆盖用户手动缩放） */
+  const autoFitRef = useRef<number | null>(null);
 
   useEffect(() => {
     scaleRef.current = scale;
@@ -291,6 +293,16 @@ export function PdfViewer({ pdf, onMissing }: PdfViewerProps) {
   };
 
   const pageCount = doc?.numPages ?? 0;
+
+  // 打开 PDF 后自动适配宽度：页面以“合适尺寸”显示（居中 + 不留大空白）
+  useEffect(() => {
+    if (!doc || !baseW || autoFitRef.current === pdf.id) return;
+    autoFitRef.current = pdf.id;
+    requestAnimationFrame(() => {
+      const w = scrollRef.current?.clientWidth ?? 800;
+      setScale(Math.max(0.3, (w - 48) / baseW));
+    });
+  }, [doc, baseW, pdf.id]);
 
   // ---------- page tracking ----------
   useEffect(() => {
@@ -761,11 +773,14 @@ export function PdfViewer({ pdf, onMissing }: PdfViewerProps) {
             onMouseUp={handleMouseUp}
           >
             {/* m-auto：内容小于视口时居中；超出视口时自动贴左贴顶，保证四边都能滚动到 */}
-            <div ref={contentRef} className="m-auto flex flex-col items-center gap-4 px-6 py-5">
+            <div
+              ref={contentRef}
+              className="m-auto flex w-max max-w-full flex-col gap-2 px-4 py-3"
+            >
               {mode === 'single'
-                ? pages.map(renderPage)
+                ? pages.map((n) => <div key={n} className="mx-auto">{renderPage(n)}</div>)
                 : pageRows.map((row, i) => (
-                    <div key={i} className="flex items-start justify-center gap-3">
+                    <div key={i} className="mx-auto flex items-start justify-center gap-1.5">
                       {row.map(renderPage)}
                     </div>
                   ))}
