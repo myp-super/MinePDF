@@ -1,8 +1,8 @@
 {
-  "publishDate": "2026-08-09",
   "notes": [
-    "v2.0.10 - 修复渲染加载动画 logo 图片无法加载（file:// 下改用相对路径）"
+    "v2.1.0 - 新增阅读会话记忆：重启自动恢复上次阅读的 PDF 与页码"
   ],
-  "version": "2.0.10",
-  "url": "https://github.com/myp-super/MinePDF/releases/download/v2.0.10/MinePDF.Setup.2.0.10.exe"
+  "publishDate": "2026-08-09",
+  "version": "2.1.0",
+  "url": "https://github.com/myp-super/MinePDF/releases/download/v2.1.0/MinePDF.Setup.2.1.0.exe"
 }
