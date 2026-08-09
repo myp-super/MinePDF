@@ -69,6 +69,7 @@ export function PdfViewer({ pdf, onMissing, paneActive = true }: PdfViewerProps)
   const inspectorWidth = useApp((s) => s.inspectorWidth);
   const sidebarCollapsed = useApp((s) => s.sidebarCollapsed);
   const inspectorCollapsed = useApp((s) => s.inspectorCollapsed);
+  const splitRatio = useApp((s) => s.splitRatio);
 
   const [doc, setDoc] = useState<PDFDocumentProxy | null>(null);
   const [pdfiumInfo, setPdfiumInfo] = useState<PdfiumOpenResult | null>(null);
@@ -336,7 +337,7 @@ export function PdfViewer({ pdf, onMissing, paneActive = true }: PdfViewerProps)
       window.removeEventListener('resize', schedule);
       if (timer) clearTimeout(timer);
     };
-  }, [doc, baseW, sidebarWidth, inspectorWidth, sidebarCollapsed, inspectorCollapsed]);
+  }, [doc, baseW, sidebarWidth, inspectorWidth, sidebarCollapsed, inspectorCollapsed, splitRatio]);
 
   // ---------- page tracking ----------
   useEffect(() => {

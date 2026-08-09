@@ -1,40 +1,34 @@
 import { FileText, Inbox, X } from 'lucide-react';
 import React, { useState } from 'react';
 import { useT } from '../../i18n';
+import type { ReaderScreen } from '../../store';
 import { useApp } from '../../store';
 import { ContextMenu } from '../ui';
 
 /**
- * 网页式文档页签条（3.0.0）
- * - 点击切换、× 关闭、中键关闭
- * - 当前标签高亮（顶部蓝条 + 加深背景）
+ * 单个阅读屏的标签栏（3.1.0）
+ * - 一行横向标签：点击切换、× 关闭、中键关闭，当前标签高亮
  * - 右键菜单：关闭 / 关闭其他 / 关闭全部 ｜ 上下分屏 / 左右分屏 / 取消分屏
  */
-export function TabBar() {
+export function TabBar({ screen }: { screen: ReaderScreen }) {
   const t = useT();
-  const tabs = useApp((s) => s.tabs);
-  const activeTabId = useApp((s) => s.activeTabId);
-  const splits = useApp((s) => s.splits);
+  const splitLayout = useApp((s) => s.splitLayout);
+  const screenCount = useApp((s) => s.screens.length);
   const activateTab = useApp((s) => s.activateTab);
   const closeTab = useApp((s) => s.closeTab);
   const closeAllTabs = useApp((s) => s.closeAllTabs);
   const closeOtherTabs = useApp((s) => s.closeOtherTabs);
-  const splitTab = useApp((s) => s.splitTab);
-  const unsplitTab = useApp((s) => s.unsplitTab);
+  const splitScreen = useApp((s) => s.splitScreen);
+  const unsplitScreen = useApp((s) => s.unsplitScreen);
   const [menu, setMenu] = useState<{ tabId: string; x: number; y: number } | null>(null);
 
-  if (!tabs.length) return null;
-
-  const menuTab = menu ? tabs.find((tab) => tab.id === menu.tabId) : null;
-  const menuSplit = menu ? splits[menu.tabId] : null;
-  const menuIsSplit = !!menuSplit && menuSplit.layout !== 'single';
+  if (!screen.tabs.length) return null;
+  const isSplit = splitLayout !== 'single' && screenCount > 1;
 
   return (
     <div className="flex h-8 shrink-0 items-stretch overflow-x-auto border-b border-app-border bg-app-panel">
-      {tabs.map((tab) => {
-        const active = tab.id === activeTabId;
-        const split = splits[tab.id];
-        const isSplit = !!split && split.layout !== 'single';
+      {screen.tabs.map((tab) => {
+        const active = tab.id === screen.activeTabId;
         return (
           <div
             key={tab.id}
@@ -44,9 +38,9 @@ export function TabBar() {
           >
             <button
               className="flex min-w-0 flex-1 items-center gap-1.5 px-2.5 py-1 text-[11.5px]"
-              onClick={() => activateTab(tab.id)}
+              onClick={() => activateTab(screen.id, tab.id)}
               onAuxClick={(e) => {
-                if (e.button === 1) closeTab(tab.id);
+                if (e.button === 1) closeTab(screen.id, tab.id);
               }}
               onContextMenu={(e) => {
                 e.preventDefault();
@@ -62,15 +56,10 @@ export function TabBar() {
               <span className={`min-w-0 flex-1 truncate ${active ? 'text-app-text' : 'text-app-muted'}`}>
                 {tab.title}
               </span>
-              {isSplit && (
-                <span className="shrink-0 rounded bg-app-accent/15 px-1 text-[9px] leading-4 text-app-accent">
-                  {t('tab.splitShort')}
-                </span>
-              )}
             </button>
             <button
               className="flex h-full w-6 shrink-0 items-center justify-center text-app-muted opacity-0 transition-opacity hover:bg-app-panel2 hover:text-app-text group-hover:opacity-100"
-              onClick={() => closeTab(tab.id)}
+              onClick={() => closeTab(screen.id, tab.id)}
               title={t('tab.close')}
               aria-label={t('tab.close')}
             >
@@ -81,23 +70,19 @@ export function TabBar() {
         );
       })}
 
-      {menu && menuTab && (
+      {menu && (
         <ContextMenu
           x={menu.x}
           y={menu.y}
           onClose={() => setMenu(null)}
           items={[
-            { label: t('tab.close'), onClick: () => closeTab(menu.tabId) },
-            { label: t('tab.closeOthers'), onClick: () => closeOtherTabs(menu.tabId) },
-            { label: t('tab.closeAll'), onClick: () => closeAllTabs() },
+            { label: t('tab.close'), onClick: () => closeTab(screen.id, menu.tabId) },
+            { label: t('tab.closeOthers'), onClick: () => closeOtherTabs(screen.id, menu.tabId) },
+            { label: t('tab.closeAll'), onClick: () => closeAllTabs(screen.id) },
             { label: '', divider: true, onClick: () => undefined },
-            { label: t('tab.splitVertical'), onClick: () => splitTab(menu.tabId, 'split-v') },
-            { label: t('tab.splitHorizontal'), onClick: () => splitTab(menu.tabId, 'split-h') },
-            {
-              label: t('tab.unsplit'),
-              onClick: () => unsplitTab(menu.tabId),
-              disabled: !menuIsSplit,
-            },
+            { label: t('tab.splitVertical'), onClick: () => splitScreen('split-v') },
+            { label: t('tab.splitHorizontal'), onClick: () => splitScreen('split-h') },
+            { label: t('tab.unsplit'), onClick: () => unsplitScreen(), disabled: !isSplit },
           ]}
         />
       )}

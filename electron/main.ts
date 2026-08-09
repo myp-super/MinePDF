@@ -394,7 +394,7 @@ async function createMainWindow(): Promise<BrowserWindow> {
                 }
                 const linkClickDiag = await win.webContents.executeJavaScript(`
                   (async () => {
-                    if (window.__pkmAct) window.__pkmAct('closeAllTabs');
+                    if (window.__pkmAct) window.__pkmAct('clearScreens');
                     await new Promise((r) => setTimeout(r, 200));
                     const p = ${JSON.stringify(linkTestPath)};
                     await window.pkm.importPdfs([p], null);
@@ -879,7 +879,7 @@ async function createMainWindow(): Promise<BrowserWindow> {
                 // 会话记忆验证：翻页记录页码；模拟重启后自动恢复并跳转
                 const sessionDiag = await win.webContents.executeJavaScript(`
                   (async () => {
-                    if (window.__pkmAct) window.__pkmAct('closeAllTabs');
+                    if (window.__pkmAct) window.__pkmAct('clearScreens');
                     await new Promise((r) => setTimeout(r, 200));
                     const snap = await window.pkm.getSnapshot();
                     const pid = snap.pdfs.find((p) => p.filename === 'PID-Tuning-Methods.pdf');
@@ -938,34 +938,38 @@ async function createMainWindow(): Promise<BrowserWindow> {
                     const b = snap.pdfs.find((p) => p.filename === 'smoke-autoscan.pdf');
                     const pid = snap.pdfs.find((p) => p.filename === 'PID-Tuning-Methods.pdf');
                     if (!a || !b || !pid) return { files: !!a && !!b && !!pid };
+                    if (window.__pkmAct) window.__pkmAct('clearScreens');
                     window.__pkmOpenPdf(a.id);
                     await new Promise((r) => setTimeout(r, 500));
                     window.__pkmOpenPdf(b.id);
                     await new Promise((r) => setTimeout(r, 500));
-                    const t2 = window.__pkmStore().tabs.length;
+                    const t2 = window.__pkmStore().screens[0] ? window.__pkmStore().screens[0].tabs.length : 0;
                     window.__pkmOpenPdf(a.id);
                     await new Promise((r) => setTimeout(r, 300));
-                    const t3 = window.__pkmStore().tabs.length;
+                    const t3 = window.__pkmStore().screens[0] ? window.__pkmStore().screens[0].tabs.length : 0;
                     const activeAfterA = window.__pkmStore().activePdfId === a.id;
                     window.__pkmAct('openPdfInNewTab', a.id);
                     await new Promise((r) => setTimeout(r, 300));
-                    const t4 = window.__pkmStore().tabs.length;
-                    const tabId = window.__pkmStore().activeTabId;
-                    window.__pkmAct('splitTab', tabId, 'split-h');
+                    const t4 = window.__pkmStore().screens[0].tabs.length;
+                    window.__pkmAct('splitScreen', 'split-h');
                     await new Promise((r) => setTimeout(r, 600));
-                    const s1 = window.__pkmStore().splits[tabId];
-                    const splitPanes2 = s1 && s1.panes.length === 2;
+                    const screens2 = window.__pkmStore().screens.length === 2;
                     window.__pkmAct('openInSplit', pid.id);
                     await new Promise((r) => setTimeout(r, 600));
-                    const s2 = window.__pkmStore().splits[tabId];
-                    const replacedWithPid = !!s2 && s2.panes.some((p) => p.pdfId === pid.id);
+                    const openedInOther = window.__pkmStore().screens.some((sc) =>
+                      sc.tabs.some((t) => t.pdfId === pid.id),
+                    );
                     const activePid = window.__pkmStore().activePdfId === pid.id;
-                    const viewerCount = document.querySelectorAll('.pdf-page-sheet').length;
-                    // 切换到单屏标签验证恢复
-                    window.__pkmAct('activateTab', window.__pkmStore().tabs[0].id);
+                    // 关闭第二屏全部标签 → 屏自动消失，回到单屏
+                    const other = window.__pkmStore().screens.find((sc) =>
+                      sc.tabs.some((t) => t.pdfId === pid.id),
+                    );
+                    if (other) window.__pkmAct('closeAllTabs', other.id);
                     await new Promise((r) => setTimeout(r, 400));
-                    const singleViewer = document.querySelectorAll('.pdf-page-sheet').length <= 2;
-                    return { t2, t3, t4, activeAfterA, splitPanes2, replacedWithPid, activePid, viewerCount, singleViewer };
+                    const singleAgain =
+                      window.__pkmStore().screens.length === 1 &&
+                      window.__pkmStore().splitLayout === 'single';
+                    return { t2, t3, t4, activeAfterA, screens2, openedInOther, activePid, singleAgain };
                   })()
                 `);
                 console.log('[capture] tabsDiag', JSON.stringify(tabsDiag));
@@ -1007,23 +1011,48 @@ async function createMainWindow(): Promise<BrowserWindow> {
                     const a = snap.pdfs.find((p) => p.filename === 'smoke-test.pdf');
                     const pid = snap.pdfs.find((p) => p.filename === 'PID-Tuning-Methods.pdf');
                     if (!a || !pid) return { files: !!a && !!pid };
-                    window.__pkmAct('closeAllTabs');
+                    window.__pkmAct('clearScreens');
                     window.__pkmOpenPdf(a.id);
                     await new Promise((r) => setTimeout(r, 500));
-                    const tabId = window.__pkmStore().activeTabId;
-                    window.__pkmAct('splitTab', tabId, 'split-h');
+                    window.__pkmAct('splitScreen', 'split-h');
                     await new Promise((r) => setTimeout(r, 600));
-                    const s1 = window.__pkmStore().splits[tabId];
-                    const paneB = s1.panes[1];
-                    window.__pkmAct('setActivePane', tabId, paneB.id);
+                    const screen2 = window.__pkmStore().screens[1];
+                    window.__pkmAct('activateScreen', screen2.id);
                     await new Promise((r) => setTimeout(r, 300));
-                    const activeSwitched = window.__pkmStore().activePdfId === paneB.pdfId;
+                    const activeSwitched = window.__pkmStore().activeScreenId === screen2.id;
                     const ringCount = document.querySelectorAll('[class*="ring-app-accent"]').length;
+                    // 分割线拖拽调整比例（用专属标识定位分屏分割线，避免误选侧边栏/信息面板的 resize 手柄）
+                    const ratio0 = window.__pkmStore().splitRatio;
+                    const divider = document.querySelector('[data-split-divider]');
+                    let dragRatio = null;
+                    if (divider) {
+                      const rect = divider.getBoundingClientRect();
+                      divider.dispatchEvent(
+                        new MouseEvent('mousedown', { clientX: rect.left + 2, clientY: rect.top + 2, bubbles: true, cancelable: true }),
+                      );
+                      await new Promise((r) => setTimeout(r, 60));
+                      window.dispatchEvent(
+                        new MouseEvent('mousemove', { clientX: rect.left + 120, clientY: rect.top + 2, bubbles: true }),
+                      );
+                      // 位移经 rAF 节流异步应用，等一帧再松手
+                      await new Promise((r) => setTimeout(r, 150));
+                      window.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+                      await new Promise((r) => setTimeout(r, 250));
+                      dragRatio = window.__pkmStore().splitRatio;
+                    }
                     window.__pkmAct('openInSplit', pid.id);
                     await new Promise((r) => setTimeout(r, 500));
-                    const s2 = window.__pkmStore().splits[tabId];
-                    const pids = s2.panes.map((p) => p.pdfId);
-                    return { activeSwitched, ringCount, hasBoth: pids.includes(a.id) && pids.includes(pid.id) };
+                    const hasPid = window.__pkmStore().screens.some((sc) =>
+                      sc.tabs.some((t) => t.pdfId === pid.id),
+                    );
+                    return {
+                      activeSwitched,
+                      ringCount,
+                      ratio0,
+                      dragRatio,
+                      dividerFound: !!divider,
+                      hasPid,
+                    };
                   })()
                 `);
                 console.log('[capture] paneDiag', JSON.stringify(paneDiag));
@@ -1038,7 +1067,8 @@ async function createMainWindow(): Promise<BrowserWindow> {
                         const cls = x.className || '';
                         return cls.includes('rounded-t-md') && cls.includes('bg-app-base');
                       });
-                      return btn ? (btn.textContent || '').trim() : null;
+                      // 3.0.0 起信息面板标签为图标 + title/aria-label，不再显示文字
+                      return btn ? (btn.getAttribute('title') || btn.getAttribute('aria-label') || '').trim() : null;
                     };
                     window.__pkmOpenPdf(b.id);
                     await new Promise((r) => setTimeout(r, 1500));
@@ -1111,11 +1141,17 @@ async function createMainWindow(): Promise<BrowserWindow> {
                     if (!a) return { pdf: false };
                     window.__pkmOpenPdf(a.id);
                     await new Promise((r) => setTimeout(r, 2000));
-                    const notesTab = [...document.querySelectorAll('button')].find((b) => (b.textContent || '').trim() === '笔记');
+                    const notesTab = [...document.querySelectorAll('button')].find(
+                      (b) =>
+                        (b.getAttribute('title') || b.getAttribute('aria-label') || '').trim() === '笔记' ||
+                        (b.textContent || '').trim() === '笔记',
+                    );
                     if (notesTab) notesTab.click();
                     await new Promise((r) => setTimeout(r, 250));
                     const saveBtnShown = [...document.querySelectorAll('button')].some(
-                      (b) => (b.textContent || '').trim() === '保存',
+                      (b) =>
+                        (b.getAttribute('title') || '').includes('保存') ||
+                        (b.textContent || '').trim() === '保存',
                     );
                     const shotBtn = [...document.querySelectorAll('button')].find((b) => (b.getAttribute('title') || '').includes('拖拽框选') || (b.textContent || '').trim() === '截图');
                     if (!shotBtn) return { btn: false };

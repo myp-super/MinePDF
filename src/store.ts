@@ -19,7 +19,7 @@ export interface LastSession {
   ts: number;
 }
 
-/** 文档页签：知识库 / 临时区中的一份 PDF */
+/** 文档标签：知识库 / 临时区中的一份 PDF */
 export interface DocTab {
   id: string;
   kind: 'library' | 'inbox';
@@ -27,26 +27,31 @@ export interface DocTab {
   title: string;
 }
 
-/** 分屏布局：single=单屏，split-h=左右，split-v=上下 */
+/** 一个阅读屏（编辑器分组）：有自己的标签栏，可独立打开/切换/关闭标签 */
+export interface ReaderScreen {
+  id: string;
+  tabs: DocTab[];
+  activeTabId: string | null;
+}
+
+/** 中间栏分屏布局：single=单屏，split-h=左右，split-v=上下 */
 export type SplitLayout = 'single' | 'split-h' | 'split-v';
 
-/** 一个阅读窗格（pane）：显示某份 PDF */
-export interface Pane {
-  id: string;
-  kind: 'library' | 'inbox';
-  pdfId: number;
-}
+const DEFAULT_SETTINGS: AppSettings = {
+  theme: 'dark',
+  language: 'zh-CN',
+  autoSave: true,
+  defaultImportDir: '',
+  updateUrl: 'https://myp-super.github.io/MinePDF/update.json',
+  updateAutoCheck: true,
+  pdfDefaultApp: false,
+  libraryPath: '',
+  libraryPdfDir: '',
+};
 
-/** 每个标签的分屏状态 */
-export interface TabSplit {
-  layout: SplitLayout;
-  panes: Pane[];
-  activePaneId: string;
-}
-
-let tabSeq = 0;
-const nextTabId = (): string => `tab_${Date.now()}_${++tabSeq}`;
-const nextPaneId = (tabId: string): string => `pane_${tabId}_${++tabSeq}`;
+let idSeq = 0;
+const nextTabId = (): string => `tab_${Date.now()}_${++idSeq}`;
+const nextScreenId = (): string => `scr_${Date.now()}_${++idSeq}`;
 
 /** 根据书签缓存决定打开 PDF 时信息面板默认页 */
 function tabInspectorTab(s: AppState, pdf: PdfRecord | undefined): InspectorTab {
@@ -65,30 +70,28 @@ function saveSession(kind: 'library' | 'inbox', pdfId: number, page: number): La
   return sess;
 }
 
-/** 为某 PDF 创建一个新标签与单屏分页结构 */
-function makeTab(s: AppState, id: number): { tab: DocTab; split: TabSplit } | null {
+/** 为某 PDF 创建一个标签（不含屏） */
+function makeTab(s: AppState, id: number): DocTab | null {
   const pdf = s.pdfs.find((p) => p.id === id) ?? s.inboxPdfs.find((p) => p.id === id);
   if (!pdf) return null;
   const kind: 'library' | 'inbox' = s.inboxPdfs.some((p) => p.id === id) ? 'inbox' : 'library';
-  const tab: DocTab = { id: nextTabId(), kind, pdfId: id, title: pdf.title || pdf.filename };
-  const paneId = nextPaneId(tab.id);
-  return {
-    tab,
-    split: { layout: 'single', panes: [{ id: paneId, kind, pdfId: id }], activePaneId: paneId },
-  };
+  return { id: nextTabId(), kind, pdfId: id, title: pdf.title || pdf.filename };
 }
 
-const DEFAULT_SETTINGS: AppSettings = {
-  theme: 'dark',
-  language: 'zh-CN',
-  autoSave: true,
-  defaultImportDir: '',
-  updateUrl: 'https://myp-super.github.io/MinePDF/update.json',
-  updateAutoCheck: true,
-  pdfDefaultApp: false,
-  libraryPath: '',
-  libraryPdfDir: '',
-};
+/** 由屏状态推导当前激活 PDF id */
+function derivePdfId(screens: ReaderScreen[], activeScreenId: string | null): number | null {
+  const screen = screens.find((sc) => sc.id === activeScreenId) ?? screens[0] ?? null;
+  if (!screen) return null;
+  const tab = screen.tabs.find((t) => t.id === screen.activeTabId) ?? screen.tabs[0] ?? null;
+  return tab?.pdfId ?? null;
+}
+
+/** 在指定屏打开标签（若已有同 pdf 则激活），返回更新后的屏 */
+function openTabInScreen(screen: ReaderScreen, tab: DocTab): ReaderScreen {
+  const existing = screen.tabs.find((t) => t.pdfId === tab.pdfId);
+  if (existing) return { ...screen, activeTabId: existing.id };
+  return { ...screen, tabs: [...screen.tabs, tab], activeTabId: tab.id };
+}
 
 interface AppState {
   ready: boolean;
@@ -98,31 +101,25 @@ interface AppState {
   tags: Tag[];
   settings: AppSettings;
   activePdfId: number | null;
-  /** 文档页签列表（3.0.0） */
-  tabs: DocTab[];
-  activeTabId: string | null;
-  /** 每个标签的分屏状态（key = tab.id） */
-  splits: Record<string, TabSplit>;
+  /** 阅读屏列表（每个屏有独立标签栏） */
+  screens: ReaderScreen[];
+  activeScreenId: string | null;
+  splitLayout: SplitLayout;
+  /** 分屏时主屏占比（0.2~0.8），分隔线拖拽调整 */
+  splitRatio: number;
   lastSession: LastSession | null;
   selectedFolderId: number | null;
-  /** 侧边栏多选（Ctrl+点击）的 PDF 集合 */
   selectedPdfIds: number[];
   tagFilterId: number | null;
   view: ViewMode;
   inspectorTab: InspectorTab;
   inspectorCollapsed: boolean;
   searchOpen: boolean;
-  /** 截图模式（由笔记工具栏触发，阅读器显示选区工具） */
   screenshotMode: boolean;
-  /** 笔记内容版本号：截图等外部写入后 +1，笔记面板据此刷新 */
   noteRevision: number;
-  /** 当前 PDF 的内置书签（目录），供信息面板显示 */
   outline: OutlineNode[];
-  /** 每个 PDF 已解析过的书签缓存（pdfId -> 目录树），用于打开时直接决定默认面板 */
   outlines: Record<number, OutlineNode[]>;
-  /** 信息面板请求跳转的页码（由阅读器消费） */
   jumpPage: number | null;
-  /** 当前阅读器所在页码（用于书签高亮） */
   currentPage: number;
   sidebarWidth: number;
   inspectorWidth: number;
@@ -133,14 +130,16 @@ interface AppState {
   refresh: () => Promise<void>;
   openPdf: (id: number | null) => void;
   openPdfInNewTab: (id: number) => void;
-  activateTab: (tabId: string) => void;
-  closeTab: (tabId: string) => void;
-  closeAllTabs: () => void;
-  closeOtherTabs: (tabId: string) => void;
-  splitTab: (tabId: string, layout: 'split-h' | 'split-v') => void;
   openInSplit: (pdfId: number) => void;
-  setActivePane: (tabId: string, paneId: string) => void;
-  unsplitTab: (tabId: string) => void;
+  activateScreen: (screenId: string) => void;
+  activateTab: (screenId: string, tabId: string) => void;
+  closeTab: (screenId: string, tabId: string) => void;
+  closeAllTabs: (screenId: string) => void;
+  closeOtherTabs: (screenId: string, tabId: string) => void;
+  clearScreens: () => void;
+  splitScreen: (layout: 'split-h' | 'split-v') => void;
+  unsplitScreen: () => void;
+  setSplitRatio: (r: number) => void;
   restoreLastSession: () => void;
   setSelectedFolder: (id: number | null) => void;
   setInboxPdfs: (items: PdfRecord[]) => void;
@@ -178,9 +177,10 @@ export const useApp = create<AppState>((set, get) => ({
   tags: [],
   settings: DEFAULT_SETTINGS,
   activePdfId: null,
-  tabs: [],
-  activeTabId: null,
-  splits: {},
+  screens: [],
+  activeScreenId: null,
+  splitLayout: 'single',
+  splitRatio: 0.5,
   lastSession: null,
   selectedFolderId: null,
   selectedPdfIds: [],
@@ -219,159 +219,238 @@ export const useApp = create<AppState>((set, get) => ({
       get().toast('error', err instanceof Error ? err.message : String(err));
     }
   },
+  /** 打开 PDF：已打开则激活所在屏与标签；否则在当前选中屏新建标签 */
   openPdf: (id) => {
     if (id == null) {
-      set({ activePdfId: null, activeTabId: null, inspectorTab: 'meta' });
+      set({ activePdfId: null, inspectorTab: 'meta' });
       return;
     }
     const s = get();
     const pdf = s.pdfs.find((p) => p.id === id) ?? s.inboxPdfs.find((p) => p.id === id);
     if (!pdf) return;
     const kind: 'library' | 'inbox' = s.inboxPdfs.some((p) => p.id === id) ? 'inbox' : 'library';
-    // 重要逻辑 1：同一文件已打开则直接激活对应标签，不新开
-    const existing = s.tabs.find((t) => t.pdfId === id);
-    if (existing) {
+    // 已在任意屏打开 → 激活该屏与该标签
+    for (const screen of s.screens) {
+      const tab = screen.tabs.find((t) => t.pdfId === id);
+      if (tab) {
+        const screens = s.screens.map((sc) =>
+          sc.id === screen.id ? { ...sc, activeTabId: tab.id } : sc,
+        );
+        set({
+          screens,
+          activeScreenId: screen.id,
+          activePdfId: id,
+          lastSession: saveSession(kind, id, 1),
+          inspectorTab: tabInspectorTab(s, pdf),
+        });
+        return;
+      }
+    }
+    // 当前屏新建标签；无屏则创建首个屏
+    const tab = makeTab(s, id);
+    if (!tab) return;
+    const screen = s.screens.find((sc) => sc.id === s.activeScreenId) ?? s.screens[0];
+    if (!screen) {
+      const newScreen: ReaderScreen = { id: nextScreenId(), tabs: [tab], activeTabId: tab.id };
       set({
-        activeTabId: existing.id,
+        screens: [newScreen],
+        activeScreenId: newScreen.id,
         activePdfId: id,
+        splitLayout: 'single',
+        splitRatio: 0.5,
         lastSession: saveSession(kind, id, 1),
         inspectorTab: tabInspectorTab(s, pdf),
       });
       return;
     }
-    const made = makeTab(s, id);
-    if (!made) return;
+    const screens = s.screens.map((sc) => (sc.id === screen.id ? openTabInScreen(sc, tab) : sc));
     set({
-      tabs: [...s.tabs, made.tab],
-      activeTabId: made.tab.id,
+      screens,
+      activeScreenId: screen.id,
       activePdfId: id,
-      splits: { ...s.splits, [made.tab.id]: made.split },
       lastSession: saveSession(kind, id, 1),
       inspectorTab: tabInspectorTab(s, pdf),
     });
   },
-  /** 重要逻辑 2：总是新开一个标签并激活 */
+  /** 右键“在新标签页中打开”：在当前选中屏总是新建标签 */
   openPdfInNewTab: (id) => {
     const s = get();
-    const made = makeTab(s, id);
-    if (!made) return;
+    const tab = makeTab(s, id);
+    if (!tab) return;
+    const screen = s.screens.find((sc) => sc.id === s.activeScreenId) ?? s.screens[0];
+    if (!screen) {
+      const newScreen: ReaderScreen = { id: nextScreenId(), tabs: [tab], activeTabId: tab.id };
+      set({
+        screens: [newScreen],
+        activeScreenId: newScreen.id,
+        activePdfId: id,
+        splitLayout: 'single',
+        splitRatio: 0.5,
+        lastSession: saveSession(tab.kind, id, 1),
+      });
+      return;
+    }
+    const screens = s.screens.map((sc) =>
+      sc.id === screen.id ? { ...sc, tabs: [...sc.tabs, tab], activeTabId: tab.id } : sc,
+    );
     set({
-      tabs: [...s.tabs, made.tab],
-      activeTabId: made.tab.id,
+      screens,
+      activeScreenId: screen.id,
       activePdfId: id,
-      splits: { ...s.splits, [made.tab.id]: made.split },
-      lastSession: saveSession(made.tab.kind, id, 1),
+      lastSession: saveSession(tab.kind, id, 1),
       inspectorTab: tabInspectorTab(s, s.pdfs.find((p) => p.id === id) ?? s.inboxPdfs.find((p) => p.id === id)),
     });
   },
-  activateTab: (tabId) => {
-    const s = get();
-    const tab = s.tabs.find((t) => t.id === tabId);
-    if (!tab) return;
-    const split = s.splits[tabId];
-    const activePane =
-      split?.panes.find((p) => p.id === split.activePaneId) ?? split?.panes[0] ?? null;
-    set({
-      activeTabId: tabId,
-      activePdfId: activePane?.pdfId ?? tab.pdfId,
-      lastSession: saveSession(tab.kind, activePane?.pdfId ?? tab.pdfId, 1),
-    });
-  },
-  closeTab: (tabId) => {
-    const s = get();
-    const idx = s.tabs.findIndex((t) => t.id === tabId);
-    if (idx < 0) return;
-    const tabs = s.tabs.filter((t) => t.id !== tabId);
-    const splits = { ...s.splits };
-    delete splits[tabId];
-    let activeTabId = s.activeTabId;
-    let activePdfId = s.activePdfId;
-    if (s.activeTabId === tabId) {
-      const next = tabs[Math.min(idx, tabs.length - 1)] ?? null;
-      activeTabId = next?.id ?? null;
-      if (next) {
-        const split = splits[next.id];
-        const pane = split?.panes.find((p) => p.id === split.activePaneId) ?? split?.panes[0];
-        activePdfId = pane?.pdfId ?? next.pdfId;
-      } else {
-        activePdfId = null;
-      }
-    }
-    set({ tabs, splits, activeTabId, activePdfId });
-  },
-  closeAllTabs: () => {
-    set({ tabs: [], splits: {}, activeTabId: null, activePdfId: null, inspectorTab: 'meta' });
-  },
-  closeOtherTabs: (tabId) => {
-    const s = get();
-    const keep = s.tabs.filter((t) => t.id === tabId);
-    const splits: Record<string, TabSplit> = {};
-    if (keep[0]) splits[tabId] = s.splits[tabId];
-    set({ tabs: keep, splits, activeTabId: tabId });
-  },
-  /** 上下 / 左右分屏：保留现有窗格，不足两个时复制当前窗格（同一 PDF 双屏） */
-  splitTab: (tabId, layout) => {
-    const s = get();
-    const split = s.splits[tabId];
-    if (!split) return;
-    let panes = split.panes;
-    if (panes.length < 2) {
-      panes = [panes[0], { ...panes[0], id: nextPaneId(tabId) }];
-    }
-    set({ splits: { ...s.splits, [tabId]: { layout, panes, activePaneId: split.activePaneId } } });
-  },
-  /** 重要逻辑（新分屏打开）：在当前标签开左右分屏，新窗格显示指定 PDF */
+  /** 右键“在新的分屏打开”：未分屏则开左右分屏并显示该文件；已分屏则在另一屏打开 */
   openInSplit: (pdfId) => {
     const s = get();
-    const tabId = s.activeTabId;
-    const tab = s.tabs.find((t) => t.id === tabId);
-    if (!tab || tabId == null) return;
-    const split = s.splits[tabId];
-    const kind: 'library' | 'inbox' = s.inboxPdfs.some((p) => p.id === pdfId) ? 'inbox' : 'library';
-    const newPane: Pane = { id: nextPaneId(tabId), kind, pdfId };
-    let panes: Pane[];
-    let layout: SplitLayout;
-    if (split.layout === 'single' || split.panes.length < 2) {
-      // 未分屏：左右分屏，原窗格保留当前内容，新窗格显示新文件
-      const cur = split.panes.find((p) => p.id === split.activePaneId) ?? split.panes[0];
-      panes = [cur, newPane];
-      layout = 'split-h';
-    } else {
-      // 已分屏：用新文件替换非激活窗格
-      panes = split.panes.map((p) => (p.id === split.activePaneId ? p : newPane));
-      layout = split.layout;
+    const tab = makeTab(s, pdfId);
+    if (!tab) return;
+    if (s.splitLayout === 'single' || s.screens.length < 2) {
+      const primary = s.screens.find((sc) => sc.id === s.activeScreenId) ?? s.screens[0];
+      if (!primary) {
+        openPdfInNewTabInner(set, get, tab);
+        return;
+      }
+      const newScreen: ReaderScreen = { id: nextScreenId(), tabs: [tab], activeTabId: tab.id };
+      set({
+        screens: [...s.screens, newScreen],
+        activeScreenId: newScreen.id,
+        activePdfId: pdfId,
+        splitLayout: 'split-h',
+        splitRatio: 0.5,
+        lastSession: saveSession(tab.kind, pdfId, 1),
+      });
+      return;
     }
+    // 已在分屏：在非选中屏打开（已有则激活）
+    const other = s.screens.find((sc) => sc.id !== s.activeScreenId) ?? s.screens[0];
+    const screens = s.screens.map((sc) => (sc.id === other.id ? openTabInScreen(sc, tab) : sc));
     set({
-      splits: { ...s.splits, [tabId]: { layout, panes, activePaneId: newPane.id } },
+      screens,
+      activeScreenId: other.id,
       activePdfId: pdfId,
-      lastSession: saveSession(kind, pdfId, 1),
+      lastSession: saveSession(tab.kind, pdfId, 1),
     });
   },
-  setActivePane: (tabId, paneId) => {
+  activateScreen: (screenId) => {
     const s = get();
-    const split = s.splits[tabId];
-    if (!split) return;
-    const pane = split.panes.find((p) => p.id === paneId);
-    if (!pane) return;
+    const screen = s.screens.find((sc) => sc.id === screenId);
+    if (!screen) return;
+    const pdfId = derivePdfId(s.screens, screenId);
+    if (pdfId == null) return;
+    const tab = screen.tabs.find((t) => t.id === screen.activeTabId) ?? screen.tabs[0];
     set({
-      splits: { ...s.splits, [tabId]: { ...split, activePaneId: paneId } },
-      activePdfId: pane.pdfId,
-      lastSession: saveSession(pane.kind, pane.pdfId, 1),
+      activeScreenId: screenId,
+      activePdfId: pdfId,
+      lastSession: saveSession(tab?.kind ?? 'library', pdfId, 1),
     });
   },
-  unsplitTab: (tabId) => {
+  activateTab: (screenId, tabId) => {
     const s = get();
-    const split = s.splits[tabId];
-    if (!split) return;
-    const active = split.panes.find((p) => p.id === split.activePaneId) ?? split.panes[0];
+    const screens = s.screens.map((sc) =>
+      sc.id === screenId ? { ...sc, activeTabId: tabId } : sc,
+    );
+    const tab = screens
+      .find((sc) => sc.id === screenId)
+      ?.tabs.find((t) => t.id === tabId);
     set({
-      splits: {
-        ...s.splits,
-        [tabId]: { layout: 'single', panes: [active], activePaneId: active.id },
-      },
-      activePdfId: active.pdfId,
+      screens,
+      activeScreenId: screenId,
+      activePdfId: tab?.pdfId ?? null,
+      lastSession: tab ? saveSession(tab.kind, tab.pdfId, 1) : undefined,
+      inspectorTab:
+        tab?.pdfId != null
+          ? tabInspectorTab(s, s.pdfs.find((p) => p.id === tab.pdfId) ?? s.inboxPdfs.find((p) => p.id === tab.pdfId))
+          : undefined,
     });
   },
+  /** 关闭屏内标签；该屏标签清空后屏自动消失（分屏只剩一个屏时回到单屏） */
+  closeTab: (screenId, tabId) => {
+    const s = get();
+    let screens = s.screens.map((sc) => {
+      if (sc.id !== screenId) return sc;
+      const idx = sc.tabs.findIndex((t) => t.id === tabId);
+      const tabs = sc.tabs.filter((t) => t.id !== tabId);
+      let activeTabId = sc.activeTabId;
+      if (sc.activeTabId === tabId) {
+        activeTabId = tabs[Math.min(idx, tabs.length - 1)]?.id ?? null;
+      }
+      return { ...sc, tabs, activeTabId };
+    });
+    screens = screens.filter((sc) => sc.tabs.length > 0);
+    let activeScreenId = screens.some((sc) => sc.id === s.activeScreenId)
+      ? s.activeScreenId
+      : (screens[0]?.id ?? null);
+    const splitLayout: SplitLayout = screens.length <= 1 ? 'single' : s.splitLayout;
+    const activePdfId = derivePdfId(screens, activeScreenId);
+    set({ screens, activeScreenId, splitLayout, activePdfId });
+  },
+  closeAllTabs: (screenId) => {
+    const s = get();
+    const screens = s.screens.filter((sc) => sc.id !== screenId);
+    let activeScreenId = screens.some((sc) => sc.id === s.activeScreenId)
+      ? s.activeScreenId
+      : (screens[0]?.id ?? null);
+    const splitLayout: SplitLayout = screens.length <= 1 ? 'single' : s.splitLayout;
+    const activePdfId = derivePdfId(screens, activeScreenId);
+    set({ screens, activeScreenId, splitLayout, activePdfId });
+  },
+  closeOtherTabs: (screenId, tabId) => {
+    const s = get();
+    const screens = s.screens.map((sc) =>
+      sc.id === screenId
+        ? { ...sc, tabs: sc.tabs.filter((t) => t.id === tabId), activeTabId: tabId }
+        : sc,
+    );
+    const activePdfId = derivePdfId(screens, s.activeScreenId);
+    set({ screens, activePdfId });
+  },
+  clearScreens: () => {
+    set({ screens: [], activeScreenId: null, splitLayout: 'single', splitRatio: 0.5, activePdfId: null });
+  },
+  /** 上下 / 左右分屏：未分屏时创建第二个屏并显示当前屏激活的 PDF */
+  splitScreen: (layout) => {
+    const s = get();
+    if (s.screens.length < 2) {
+      const primary = s.screens.find((sc) => sc.id === s.activeScreenId) ?? s.screens[0];
+      if (!primary) return;
+      const curTab = primary.tabs.find((t) => t.id === primary.activeTabId) ?? primary.tabs[0];
+      if (!curTab) return;
+      const tab: DocTab = { ...curTab, id: nextTabId() };
+      const newScreen: ReaderScreen = { id: nextScreenId(), tabs: [tab], activeTabId: tab.id };
+      set({
+        screens: [...s.screens, newScreen],
+        splitLayout: layout,
+        splitRatio: 0.5,
+      });
+      return;
+    }
+    set({ splitLayout: layout });
+  },
+  /** 取消分屏：两个屏的标签合并到当前屏 */
+  unsplitScreen: () => {
+    const s = get();
+    const primary = s.screens.find((sc) => sc.id === s.activeScreenId) ?? s.screens[0];
+    const other = s.screens.find((sc) => sc.id !== primary.id);
+    if (!other) {
+      set({ splitLayout: 'single' });
+      return;
+    }
+    const mergedTabs = other.tabs.filter((ot) => !primary.tabs.some((pt) => pt.pdfId === ot.pdfId));
+    const tabs = [...primary.tabs, ...mergedTabs];
+    let activeTabId = primary.activeTabId;
+    if (!tabs.some((t) => t.id === activeTabId)) activeTabId = tabs[0]?.id ?? null;
+    const activePdfId = tabs.find((t) => t.id === activeTabId)?.pdfId ?? null;
+    set({
+      screens: [{ ...primary, tabs, activeTabId }],
+      activeScreenId: primary.id,
+      splitLayout: 'single',
+      splitRatio: 0.5,
+      activePdfId,
+    });
+  },
+  setSplitRatio: (r) => set({ splitRatio: Math.min(0.8, Math.max(0.2, r)) }),
   /**
    * 启动恢复：读取上次会话，若对应 PDF 仍存在则自动打开并跳转到记录页码。
    * PDF 已被删除时清除记录。
@@ -412,7 +491,7 @@ export const useApp = create<AppState>((set, get) => ({
     set({ lastSession: restored });
     if (sess.page > 1) s.requestJump(sess.page);
   },
-  setSelectedFolder: (id) => set({ selectedFolderId: id, tagFilterId: null }),
+  setSelectedFolder: (id) => set({ selectedFolderId: id }),
   setInboxPdfs: (items) => set({ inboxPdfs: items }),
   setSelectedPdfIds: (ids) => set({ selectedPdfIds: ids }),
   toggleSelectedPdf: (id) =>
@@ -437,7 +516,6 @@ export const useApp = create<AppState>((set, get) => ({
   consumeJump: () => set({ jumpPage: null }),
   setCurrentPage: (page) => {
     const s = get();
-    // 同步更新上次会话页码（翻页/滚动到新页时记忆阅读位置）
     if (s.lastSession) {
       const sess = { ...s.lastSession, page, ts: Date.now() };
       try {
@@ -463,11 +541,26 @@ export const useApp = create<AppState>((set, get) => ({
   toggleSidebarCollapsed: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
   setSidebarCollapsed: (v) => set({ sidebarCollapsed: v }),
   toast: (kind, text) => {
-    // 成功/信息类操作提示不再弹出（直接操作即可）；仅保留错误提示
-    if (kind !== 'error') return;
     const id = toastSeq++;
     set((s) => ({ toasts: [...s.toasts, { id, kind, text }] }));
-    setTimeout(() => get().dismissToast(id), 4600);
+    setTimeout(() => get().dismissToast(id), 3200);
   },
   dismissToast: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
 }));
+
+/** 供 openInSplit 在无屏时兜底：直接创建首个屏 */
+function openPdfInNewTabInner(
+  set: (partial: Partial<AppState> | ((s: AppState) => Partial<AppState>)) => void,
+  get: () => AppState,
+  tab: DocTab,
+): void {
+  const screen: ReaderScreen = { id: nextScreenId(), tabs: [tab], activeTabId: tab.id };
+  set({
+    screens: [screen],
+    activeScreenId: screen.id,
+    activePdfId: tab.pdfId,
+    splitLayout: 'single',
+    splitRatio: 0.5,
+    lastSession: saveSession(tab.kind, tab.pdfId, 1),
+  });
+}

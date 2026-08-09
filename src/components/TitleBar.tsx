@@ -12,7 +12,6 @@ export function TitleBar() {
   const [appVersion, setAppVersion] = useState('1.0.0');
   const [updateOpen, setUpdateOpen] = useState(false);
   const [updatePending, setUpdatePending] = useState<UpdateResult | null>(null);
-  const activePdf = useApp((s) => s.pdfs.find((p) => p.id === s.activePdfId));
   const setSearchOpen = useApp((s) => s.setSearchOpen);
 
   useEffect(() => {
@@ -66,11 +65,7 @@ export function TitleBar() {
           v{appVersion}
         </span>
       </div>
-      <div className="min-w-0 flex-1 px-4 text-center">
-        {activePdf && (
-          <span className="truncate text-[11px] text-app-muted">{activePdf.title}</span>
-        )}
-      </div>
+      <div className="min-w-0 flex-1" />
       <div className="titlebar-no-drag flex items-center">
         <button
           className="mr-1.5 flex h-6 items-center gap-1.5 rounded-md border border-app-border px-2.5 text-[11px] text-app-muted transition-colors hover:bg-app-panel2 hover:text-app-text"

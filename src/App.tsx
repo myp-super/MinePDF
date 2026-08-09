@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { Fragment, useEffect, useState } from 'react';
 import { AlertTriangle, FolderSearch, Trash2 } from 'lucide-react';
 import { useT, useTError } from './i18n';
 import type { PdfRecord } from './shared/types';
@@ -10,8 +10,7 @@ import { SettingsPage } from './components/SettingsPage';
 import { Sidebar } from './components/Sidebar';
 import { TitleBar } from './components/TitleBar';
 import { Button, Modal, ResizeHandle } from './components/ui';
-import { PdfViewer } from './components/Viewer/PdfViewer';
-import { TabBar } from './components/Viewer/TabBar';
+import { ScreenViewer, SplitDivider } from './components/Viewer/ScreenViewer';
 
 export default function App() {
   const t = useT();
@@ -26,12 +25,12 @@ export default function App() {
   const activePdf = useApp(
     (s) => s.pdfs.find((p) => p.id === s.activePdfId) ?? s.inboxPdfs.find((p) => p.id === s.activePdfId),
   );
-  const activeTabId = useApp((s) => s.activeTabId);
-  const tabs = useApp((s) => s.tabs);
-  const splits = useApp((s) => s.splits);
-  const setActivePane = useApp((s) => s.setActivePane);
-  const activeTab = tabs.find((t) => t.id === activeTabId) ?? null;
-  const activeSplit = activeTab ? splits[activeTab.id] : null;
+  const screens = useApp((s) => s.screens);
+  const activeScreenId = useApp((s) => s.activeScreenId);
+  const splitLayout = useApp((s) => s.splitLayout);
+  const splitRatio = useApp((s) => s.splitRatio);
+  const setSplitRatio = useApp((s) => s.setSplitRatio);
+  const activeScreen = screens.find((sc) => sc.id === activeScreenId) ?? screens[0] ?? null;
   const selectedFolderId = useApp((s) => s.selectedFolderId);
   const sidebarWidth = useApp((s) => s.sidebarWidth);
   const setSidebarWidth = useApp((s) => s.setSidebarWidth);
@@ -86,31 +85,33 @@ export default function App() {
   w.__pkmStore = () => {
     const s = useApp.getState();
     return {
-      tabs: s.tabs.map((t) => ({ id: t.id, pdfId: t.pdfId, title: t.title, kind: t.kind })),
-      activeTabId: s.activeTabId,
+      screens: s.screens.map((sc) => ({
+        id: sc.id,
+        tabs: sc.tabs.map((t) => ({ id: t.id, pdfId: t.pdfId, title: t.title, kind: t.kind })),
+        activeTabId: sc.activeTabId,
+      })),
+      activeScreenId: s.activeScreenId,
       activePdfId: s.activePdfId,
       jumpPage: s.jumpPage,
       currentPage: s.currentPage,
-      splits: Object.fromEntries(
-        Object.entries(s.splits).map(([k, v]) => [
-          k,
-          { layout: v.layout, panes: v.panes.map((p) => ({ id: p.id, pdfId: p.pdfId })), activePaneId: v.activePaneId },
-        ]),
-      ),
+      splitLayout: s.splitLayout,
+      splitRatio: s.splitRatio,
     };
   };
   w.__pkmAct = (name, ...args) => {
     const s = useApp.getState();
     const actions: Record<string, (...a: never[]) => void> = {
       openPdfInNewTab: s.openPdfInNewTab,
-      splitTab: s.splitTab,
       openInSplit: s.openInSplit,
+      activateScreen: s.activateScreen,
+      activateTab: s.activateTab,
       closeTab: s.closeTab,
       closeAllTabs: s.closeAllTabs,
       closeOtherTabs: s.closeOtherTabs,
-      setActivePane: s.setActivePane,
-      unsplitTab: s.unsplitTab,
-      activateTab: s.activateTab,
+      clearScreens: s.clearScreens,
+      splitScreen: s.splitScreen,
+      unsplitScreen: s.unsplitScreen,
+      setSplitRatio: s.setSplitRatio,
     };
     (actions[name] as (...a: unknown[]) => void)?.(...args);
   };
@@ -236,59 +237,46 @@ export default function App() {
         )}
         {view === 'settings' ? (
           <SettingsPage />
-        ) : activeTab ? (
-          <div className="flex min-h-0 flex-1 flex-col">
-            <TabBar />
-            {activeSplit && activeSplit.layout !== 'single' ? (
-              <div
-                className={`flex min-h-0 flex-1 ${
-                  activeSplit.layout === 'split-h' ? 'flex-row' : 'flex-col'
-                }`}
-              >
-                {activeSplit.panes.map((pane, i) => {
-                  const p =
-                    pane.kind === 'inbox'
-                      ? useApp.getState().inboxPdfs.find((x) => x.id === pane.pdfId)
-                      : useApp.getState().pdfs.find((x) => x.id === pane.pdfId);
-                  const paneActive = activeSplit.activePaneId === pane.id;
-                  return (
-                    <div
-                      key={pane.id}
-                      className={`relative flex min-h-0 min-w-0 flex-1 ${
-                        i > 0
-                          ? activeSplit.layout === 'split-h'
-                            ? 'border-l border-app-border'
-                            : 'border-t border-app-border'
-                          : ''
-                      } ${paneActive ? 'ring-1 ring-inset ring-app-accent/50' : ''}`}
-                      onClick={() => setActivePane(activeTab.id, pane.id)}
-                    >
-                      {p ? (
-                        <PdfViewer pdf={p} onMissing={setMissingPdf} paneActive={paneActive} />
-                      ) : (
-                        <EmptyState />
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            ) : activePdf ? (
-              <div className="flex min-h-0 flex-1 flex-col">
-                <TabBar />
-                <PdfViewer pdf={activePdf} onMissing={setMissingPdf} paneActive />
-              </div>
-            ) : (
-              <div className="flex min-h-0 flex-1 flex-col">
-                <TabBar />
-                <EmptyState />
-              </div>
-            )}
-          </div>
+        ) : activeScreen ? (
+          splitLayout !== 'single' && screens.length > 1 ? (
+            <div
+              className={`animate-pop flex min-h-0 flex-1 ${
+                splitLayout === 'split-h' ? 'flex-row' : 'flex-col'
+              }`}
+            >
+              {screens.map((screen, idx) => (
+                <Fragment key={screen.id}>
+                  {idx > 0 && (
+                    <SplitDivider
+                      orientation={splitLayout === 'split-h' ? 'v' : 'h'}
+                      ratio={splitRatio}
+                      onRatio={setSplitRatio}
+                    />
+                  )}
+                  <div
+                    className={`relative flex min-h-0 min-w-0 ${
+                      screen.id === activeScreenId
+                        ? 'ring-1 ring-inset ring-app-accent/50'
+                        : ''
+                    }`}
+                    style={{
+                      flexGrow: idx === 0 ? splitRatio : 1 - splitRatio,
+                      flexBasis: 0,
+                      overflow: 'hidden',
+                    }}
+                  >
+                    <ScreenViewer screen={screen} onMissing={setMissingPdf} />
+                  </div>
+                </Fragment>
+              ))}
+            </div>
+          ) : (
+            <div className="relative flex min-h-0 flex-1">
+              <ScreenViewer screen={activeScreen} onMissing={setMissingPdf} />
+            </div>
+          )
         ) : (
-          <div className="flex min-h-0 flex-1 flex-col">
-            <TabBar />
-            <EmptyState />
-          </div>
+          <EmptyState />
         )}
         {!inspectorCollapsed && (
           <ResizeHandle
