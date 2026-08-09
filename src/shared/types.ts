@@ -92,6 +92,8 @@ export interface AppSettings {
   updateAutoCheck: boolean;
   /** 用户是否主动选择 MinePDF 作为默认 PDF 应用 */
   pdfDefaultApp: boolean;
+  /** 阅读 PDF 时自动折叠左侧知识库，鼠标移到左边缘临时展开 */
+  autoCollapseSidebar: boolean;
   /** 知识库根目录（Documents/PDFKnowledgeManager） */
   libraryPath: string;
   /** PDF 库文件夹：所有 PDF 的统一存放目录（Obsidian 式） */

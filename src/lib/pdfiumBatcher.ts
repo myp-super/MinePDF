@@ -4,9 +4,14 @@ import type { PdfiumRenderResult } from '../shared/types';
  * PDFium 渲染请求合并器（渲染进程）
  *
  * 视图滚动/缩放时，同一帧内多页会同时请求渲染。这里把 ~12ms 窗口内的
- * 请求按 (pdfId, 缩放桶) 合并为一次 IPC 批量渲染，显著降低往返开销。
+ * 请求按 (paneId, pdfId, 缩放桶) 合并为一次 IPC 批量渲染，显著降低往返开销。
+ *
+ * paneId 是阅读屏/阅读器实例的唯一标识：分屏时同一 PDF 可能在多个屏同时打开，
+ * 若只按 (pdfId, page) 去重，后到的请求会覆盖前一个屏的请求，导致该屏永远
+ * 等不到渲染结果（表现为“渲染失败/无法缩放”）。
  */
 interface Request {
+  paneId: string;
   pdfId: number;
   page: number;
   scale: number;
@@ -18,17 +23,19 @@ const pending = new Map<string, Request>();
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
 
 export function pdfiumRenderQueued(
+  paneId: string,
   pdfId: number,
   page: number,
   scale: number,
 ): Promise<PdfiumRenderResult> {
-  const key = `${pdfId}:${page}`;
+  const key = `${paneId}:${pdfId}:${page}`;
   return new Promise<PdfiumRenderResult>((resolve, reject) => {
     const prev = pending.get(key);
-    // 同页已有更早请求：让其随下一批一起返回（seq 会丢弃过期结果），
-    // 只保留最新请求，避免并发重复渲染同一页。
+    // 同一阅读屏同一页已有更早请求：旧请求已过期，显式拒绝使其回退渲染，
+    // 避免 Promise 永不落定导致页面一直停留在加载态。
     if (prev) pending.delete(key);
-    pending.set(key, { pdfId, page, scale, resolve, reject });
+    pending.set(key, { paneId, pdfId, page, scale, resolve, reject });
+    if (prev) prev.reject(new Error('ERR_PDF_RENDER_SUPERSEDED'));
     if (!flushTimer) flushTimer = setTimeout(() => void flush(), 12);
   });
 }
@@ -52,13 +59,24 @@ async function flush(): Promise<void> {
   // 串行渲染各组，避免多组大位图并发转换造成主线程峰值卡顿
   for (const list of groups.values()) {
     const scale = Math.max(...list.map((i) => i.scale));
-    const pages = list.map((i) => i.page);
+    // 不同屏可能同时请求同一页，按页去重后批量渲染一次即可
+    const byPage = new Map<number, Request[]>();
+    for (const it of list) {
+      const arr = byPage.get(it.page) ?? [];
+      arr.push(it);
+      byPage.set(it.page, arr);
+    }
+    const pages = [...byPage.keys()];
     try {
       const results = await window.pkm.pdfiumRenderBatch(list[0].pdfId, pages, scale);
-      list.forEach((req, idx) => {
+      pages.forEach((page, idx) => {
         const res = results[idx];
-        if (res) req.resolve({ ...res, ms: res.ms });
-        else req.reject(new Error('ERR_PDF_RENDER_FAILED:批量渲染结果缺失'));
+        const reqs = byPage.get(page) ?? [];
+        if (!res) {
+          for (const req of reqs) req.reject(new Error('ERR_PDF_RENDER_FAILED:批量渲染结果缺失'));
+          return;
+        }
+        for (const req of reqs) req.resolve({ ...res, ms: res.ms });
       });
     } catch (err) {
       for (const req of list) req.reject(err);

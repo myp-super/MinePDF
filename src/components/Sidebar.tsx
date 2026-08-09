@@ -19,7 +19,7 @@ import {
   Settings,
   Trash2,
 } from 'lucide-react';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useT, useTError } from '../i18n';
 import type { Folder as FolderType, PdfRecord } from '../shared/types';
 import { useApp } from '../store';
@@ -79,6 +79,7 @@ export function Sidebar() {
   const sidebarWidth = useApp((s) => s.sidebarWidth);
   const sidebarCollapsed = useApp((s) => s.sidebarCollapsed);
   const toggleSidebarCollapsed = useApp((s) => s.toggleSidebarCollapsed);
+  const setSidebarCollapsed = useApp((s) => s.setSidebarCollapsed);
   const selectedPdfIds = useApp((s) => s.selectedPdfIds);
   const setSelectedPdfIds = useApp((s) => s.setSelectedPdfIds);
   const clearSelectedPdfs = useApp((s) => s.clearSelectedPdfs);
@@ -98,6 +99,30 @@ export function Sidebar() {
     () => Number(localStorage.getItem('pkm.inboxHeight')) || 160,
   );
   const [appVersion, setAppVersion] = useState('1.0.0');
+  /** 知识库自动折叠：阅读 PDF 时悬停左边缘临时展开，移出后自动收起 */
+  const autoHide = settings.autoCollapseSidebar && activePdfId != null;
+  const autoHideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (autoHideTimer.current) clearTimeout(autoHideTimer.current);
+    };
+  }, []);
+
+  const scheduleAutoHide = () => {
+    if (!autoHide) return;
+    if (autoHideTimer.current) clearTimeout(autoHideTimer.current);
+    autoHideTimer.current = setTimeout(() => {
+      autoHideTimer.current = null;
+      setSidebarCollapsed(true);
+    }, 250);
+  };
+  const cancelAutoHide = () => {
+    if (autoHideTimer.current) {
+      clearTimeout(autoHideTimer.current);
+      autoHideTimer.current = null;
+    }
+  };
 
   useEffect(() => {
     void window.pkm
@@ -396,7 +421,16 @@ export function Sidebar() {
 
   if (sidebarCollapsed) {
     return (
-      <aside className="flex w-11 shrink-0 flex-col items-center border-r border-app-border bg-app-panel py-2">
+      <aside
+        className="flex w-11 shrink-0 flex-col items-center border-r border-app-border bg-app-panel py-2"
+        onMouseEnter={() => {
+          // 自动折叠开启且正在阅读：悬停即临时展开知识库
+          if (autoHide) {
+            cancelAutoHide();
+            setSidebarCollapsed(false);
+          }
+        }}
+      >
         <IconButton title={t('sidebar.expand')} onClick={toggleSidebarCollapsed}>
           <PanelLeftOpen size={14} />
         </IconButton>
@@ -413,6 +447,8 @@ export function Sidebar() {
       className="flex shrink-0 flex-col border-r border-app-border bg-app-panel"
       style={{ width: sidebarWidth }}
       data-panel="sidebar"
+      onMouseEnter={cancelAutoHide}
+      onMouseLeave={scheduleAutoHide}
     >
       <div className="flex items-center justify-between gap-1 px-3 pt-3 pb-2">
         <div className="flex min-w-0 items-center gap-1.5 text-xs font-semibold">

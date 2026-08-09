@@ -92,6 +92,7 @@ export default function App() {
       })),
       activeScreenId: s.activeScreenId,
       activePdfId: s.activePdfId,
+      sidebarCollapsed: s.sidebarCollapsed,
       jumpPage: s.jumpPage,
       currentPage: s.currentPage,
       splitLayout: s.splitLayout,
@@ -112,6 +113,7 @@ export default function App() {
       splitScreen: s.splitScreen,
       unsplitScreen: s.unsplitScreen,
       setSplitRatio: s.setSplitRatio,
+      setSidebarCollapsed: s.setSidebarCollapsed,
     };
     (actions[name] as (...a: unknown[]) => void)?.(...args);
   };
@@ -275,7 +277,7 @@ export default function App() {
               ))}
             </div>
           ) : (
-            <div className="relative flex min-h-0 flex-1">
+            <div className="relative flex min-h-0 min-w-0 flex-1">
               <ScreenViewer
                 screen={activeScreen}
                 active

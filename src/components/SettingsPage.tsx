@@ -145,6 +145,17 @@ export function SettingsPage() {
               <option value="en-US">English</option>
             </select>
           </div>
+          <div className="mt-3 flex items-center gap-3">
+            <Library size={13} className="shrink-0 text-app-accent" />
+            <div className="min-w-0 flex-1">
+              <div className="text-[11.5px] text-app-text/90">{t('settings.autoCollapseSidebar')}</div>
+              <div className="text-[10.5px] text-app-muted">{t('settings.autoCollapseSidebarHint')}</div>
+            </div>
+            <Toggle
+              checked={settings.autoCollapseSidebar}
+              onChange={(v) => void update({ autoCollapseSidebar: v })}
+            />
+          </div>
         </section>
 
         <section className="mb-4 rounded-xl border border-app-border bg-app-panel p-4">

@@ -13,6 +13,8 @@ const DEFAULTS: AppSettings = {
   updateAutoCheck: true,
   /** 用户是否主动选择 MinePDF 作为默认 PDF 应用（用于启动时清理旧版本强写的关联） */
   pdfDefaultApp: false,
+  /** 阅读 PDF 时自动折叠左侧知识库（鼠标移到左边缘临时展开） */
+  autoCollapseSidebar: false,
   libraryPath: '',
   libraryPdfDir: '',
 };

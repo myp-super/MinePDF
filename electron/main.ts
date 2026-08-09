@@ -1102,6 +1102,80 @@ async function createMainWindow(): Promise<BrowserWindow> {
                   })()
                 `);
                 console.log('[capture] paneDiag', JSON.stringify(paneDiag));
+                // 单屏放大：验证 PDF 放大不会挤压信息面板，且信息面板上 Ctrl+滚轮不触发缩放
+                const zoomDiag = await win.webContents.executeJavaScript(`
+                  (async () => {
+                    const snap = await window.pkm.getSnapshot();
+                    const a = snap.pdfs.find((p) => p.filename === 'smoke-test.pdf');
+                    if (!a) return { pdf: false };
+                    window.__pkmAct('clearScreens');
+                    window.__pkmOpenPdf(a.id);
+                    await new Promise((r) => setTimeout(r, 2000));
+                    const insp = () => document.querySelector('[data-panel="inspector"]');
+                    const sc = () => document.querySelector('[data-pan-scroll]');
+                    const sheet = () => document.querySelector('.pdf-page-sheet');
+                    const rect = (el) => (el ? el.getBoundingClientRect() : null);
+                    const before = {
+                      winW: window.innerWidth,
+                      inspW: rect(insp()) ? rect(insp()).width : 0,
+                      inspRight: rect(insp()) ? rect(insp()).right : 0,
+                      scW: rect(sc()) ? rect(sc()).width : 0,
+                      sheetW: rect(sheet()) ? rect(sheet()).width : 0,
+                    };
+                    const el = sc();
+                    if (el) {
+                      const r = rect(el);
+                      for (let i = 0; i < 8; i++) {
+                        el.dispatchEvent(
+                          new WheelEvent('wheel', {
+                            ctrlKey: true,
+                            deltaY: -120,
+                            clientX: r.left + r.width / 2,
+                            clientY: r.top + 100,
+                            bubbles: true,
+                            cancelable: true,
+                          }),
+                        );
+                        await new Promise((res) => setTimeout(res, 40));
+                      }
+                    }
+                    await new Promise((res) => setTimeout(res, 600));
+                    const after = {
+                      winW: window.innerWidth,
+                      inspW: rect(insp()) ? rect(insp()).width : 0,
+                      inspRight: rect(insp()) ? rect(insp()).right : 0,
+                      scW: rect(sc()) ? rect(sc()).width : 0,
+                      sheetW: rect(sheet()) ? rect(sheet()).width : 0,
+                      sheetRight: rect(sheet()) ? rect(sheet()).right : 0,
+                      scScrollW: sc() ? sc().scrollWidth : 0,
+                      scClientW: sc() ? sc().clientWidth : 0,
+                    };
+                    const stable =
+                      Math.abs(after.inspW - before.inspW) < 1 &&
+                      Math.abs(after.inspRight - before.inspRight) < 1;
+                    const grew = after.sheetW > before.sheetW * 1.5;
+                    // 鼠标在信息面板上 Ctrl+滚轮：不应触发 PDF 缩放
+                    const w0 = rect(sheet()) ? rect(sheet()).width : 0;
+                    const ir = rect(insp());
+                    if (ir) {
+                      insp().dispatchEvent(
+                        new WheelEvent('wheel', {
+                          ctrlKey: true,
+                          deltaY: -120,
+                          clientX: ir.left + ir.width / 2,
+                          clientY: ir.top + 60,
+                          bubbles: true,
+                          cancelable: true,
+                        }),
+                      );
+                      await new Promise((res) => setTimeout(res, 250));
+                    }
+                    const w1 = rect(sheet()) ? rect(sheet()).width : 0;
+                    const inspWheelNoZoom = Math.abs(w1 - w0) < 1;
+                    return { before, after, stable, grew, inspWheelNoZoom };
+                  })()
+                `);
+                console.log('[capture] zoomDiag', JSON.stringify(zoomDiag));
                 const tabDiag = await win.webContents.executeJavaScript(`
                   (async () => {
                     const snap = await window.pkm.getSnapshot();
@@ -1270,6 +1344,49 @@ async function createMainWindow(): Promise<BrowserWindow> {
                   })()
                 `);
                 console.log('[capture] shotDiag', JSON.stringify(shotDiag));
+                // 知识库自动折叠开关：开启后打开 PDF 自动收起，悬停左边缘临时展开，移出自动收起
+                const autoHideDiag = await win.webContents.executeJavaScript(`
+                  (async () => {
+                    const snap = await window.pkm.getSnapshot();
+                    const a = snap.pdfs.find((p) => p.filename === 'smoke-test.pdf');
+                    if (!a) return { pdf: false };
+                    await window.pkm.updateSettings({ autoCollapseSidebar: true });
+                    if (typeof window.__pkmRefresh === 'function') await window.__pkmRefresh();
+                    await new Promise((r) => setTimeout(r, 400));
+                    window.__pkmAct('clearScreens');
+                    window.__pkmOpenPdf(a.id);
+                    await new Promise((r) => setTimeout(r, 900));
+                    const collapsedAfterOpen = window.__pkmStore().sidebarCollapsed;
+                    // 悬停左侧折叠栏 → 临时展开
+                    let hoverExpands = false;
+                    const rail = [...document.querySelectorAll('aside')].find(
+                      (as) => (as.className || '').includes('w-11') && (as.className || '').includes('shrink-0'),
+                    );
+                    if (rail) {
+                      rail.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, relatedTarget: null }));
+                      await new Promise((r) => setTimeout(r, 350));
+                      hoverExpands = window.__pkmStore().sidebarCollapsed === false;
+                    }
+                    // 移出侧栏 → 自动收起
+                    let leaveCollapses = false;
+                    const aside = document.querySelector('[data-panel="sidebar"]');
+                    if (aside) {
+                      aside.dispatchEvent(
+                        new MouseEvent('mouseout', { bubbles: true, relatedTarget: document.body }),
+                      );
+                      await new Promise((r) => setTimeout(r, 500));
+                      leaveCollapses = window.__pkmStore().sidebarCollapsed === true;
+                    }
+                    // 恢复现场：关闭设置、展开侧栏
+                    await window.pkm.updateSettings({ autoCollapseSidebar: false });
+                    if (typeof window.__pkmRefresh === 'function') await window.__pkmRefresh();
+                    window.__pkmAct('clearScreens');
+                    window.__pkmAct('setSidebarCollapsed', false);
+                    await new Promise((r) => setTimeout(r, 200));
+                    return { collapsedAfterOpen, railFound: !!rail, hoverExpands, asideFound: !!aside, leaveCollapses };
+                  })()
+                `);
+                console.log('[capture] autoHideDiag', JSON.stringify(autoHideDiag));
                 const hlMergeDiag = await win.webContents.executeJavaScript(`
                   (async () => {
                     const snap = await window.pkm.getSnapshot();

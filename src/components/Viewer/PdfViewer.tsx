@@ -20,6 +20,8 @@ import { PdfToolbar } from './PdfToolbar';
 
 interface PdfViewerProps {
   pdf: PdfRecord;
+  /** 阅读屏唯一标识：分屏时用于区分各屏的渲染请求，避免互相覆盖 */
+  paneId: string;
   onMissing: (pdf: PdfRecord) => void;
   /** 是否为当前激活窗格：只有激活窗格上报页码并响应页面跳转 */
   paneActive?: boolean;
@@ -52,7 +54,7 @@ function cacheDoc(id: number, doc: PDFDocumentProxy | null): void {
 }
 
 /** PDF viewer: load, zoom, single/double page, search and text highlights. */
-export function PdfViewer({ pdf, onMissing, paneActive = true }: PdfViewerProps) {
+export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfViewerProps) {
   const t = useT();
   const terr = useTError();
   const toast = useApp((s) => s.toast);
@@ -718,6 +720,7 @@ export function PdfViewer({ pdf, onMissing, paneActive = true }: PdfViewerProps)
       key={`${pdf.id}-${n}`}
       doc={doc!}
       pdfId={pdf.id}
+      paneId={paneId}
       pageNumber={n}
       scale={scale}
       renderer={pdfiumInfo ? 'pdfium' : 'pdfjs'}

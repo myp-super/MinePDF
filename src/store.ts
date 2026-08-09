@@ -45,6 +45,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   updateUrl: 'https://myp-super.github.io/MinePDF/update.json',
   updateAutoCheck: true,
   pdfDefaultApp: false,
+  autoCollapseSidebar: false,
   libraryPath: '',
   libraryPdfDir: '',
 };
@@ -91,6 +92,16 @@ function openTabInScreen(screen: ReaderScreen, tab: DocTab): ReaderScreen {
   const existing = screen.tabs.find((t) => t.pdfId === tab.pdfId);
   if (existing) return { ...screen, activeTabId: existing.id };
   return { ...screen, tabs: [...screen.tabs, tab], activeTabId: tab.id };
+}
+
+/** 「阅读时自动折叠知识库」：打开 PDF 时收起侧栏 */
+function sidebarPatchOnOpen(s: AppState): Partial<AppState> {
+  return s.settings.autoCollapseSidebar ? { sidebarCollapsed: true } : {};
+}
+
+/** 「阅读时自动折叠知识库」：关闭全部 PDF 后恢复侧栏 */
+function sidebarPatchOnClose(s: AppState): Partial<AppState> {
+  return s.settings.autoCollapseSidebar ? { sidebarCollapsed: false } : {};
 }
 
 interface AppState {
@@ -244,6 +255,7 @@ export const useApp = create<AppState>((set, get) => ({
         splitRatio: 0.5,
         lastSession: saveSession(kind, id, 1),
         inspectorTab: tabInspectorTab(s, pdf),
+        ...sidebarPatchOnOpen(s),
       });
       return;
     }
@@ -256,6 +268,7 @@ export const useApp = create<AppState>((set, get) => ({
       activePdfId: id,
       lastSession: saveSession(kind, id, 1),
       inspectorTab: tabInspectorTab(s, pdf),
+      ...sidebarPatchOnOpen(s),
     });
   },
   /** 右键“在新标签页中打开”：在当前选中屏总是新建标签 */
@@ -273,6 +286,7 @@ export const useApp = create<AppState>((set, get) => ({
         splitLayout: 'single',
         splitRatio: 0.5,
         lastSession: saveSession(tab.kind, id, 1),
+        ...sidebarPatchOnOpen(s),
       });
       return;
     }
@@ -285,6 +299,7 @@ export const useApp = create<AppState>((set, get) => ({
       activePdfId: id,
       lastSession: saveSession(tab.kind, id, 1),
       inspectorTab: tabInspectorTab(s, s.pdfs.find((p) => p.id === id) ?? s.inboxPdfs.find((p) => p.id === id)),
+      ...sidebarPatchOnOpen(s),
     });
   },
   /** 右键“在新的分屏打开”：未分屏则开左右分屏并显示该文件；已分屏则在另一屏打开 */
@@ -306,6 +321,7 @@ export const useApp = create<AppState>((set, get) => ({
         splitLayout: 'split-h',
         splitRatio: 0.5,
         lastSession: saveSession(tab.kind, pdfId, 1),
+        ...sidebarPatchOnOpen(s),
       });
       return;
     }
@@ -317,6 +333,7 @@ export const useApp = create<AppState>((set, get) => ({
       activeScreenId: other.id,
       activePdfId: pdfId,
       lastSession: saveSession(tab.kind, pdfId, 1),
+      ...sidebarPatchOnOpen(s),
     });
   },
   activateScreen: (screenId) => {
@@ -371,7 +388,13 @@ export const useApp = create<AppState>((set, get) => ({
       : (screens[0]?.id ?? null);
     const splitLayout: SplitLayout = screens.length <= 1 ? 'single' : s.splitLayout;
     const activePdfId = derivePdfId(screens, activeScreenId);
-    set({ screens, activeScreenId, splitLayout, activePdfId });
+    set({
+      screens,
+      activeScreenId,
+      splitLayout,
+      activePdfId,
+      ...(activePdfId == null ? sidebarPatchOnClose(s) : {}),
+    });
   },
   closeAllTabs: (screenId) => {
     const s = get();
@@ -381,7 +404,13 @@ export const useApp = create<AppState>((set, get) => ({
       : (screens[0]?.id ?? null);
     const splitLayout: SplitLayout = screens.length <= 1 ? 'single' : s.splitLayout;
     const activePdfId = derivePdfId(screens, activeScreenId);
-    set({ screens, activeScreenId, splitLayout, activePdfId });
+    set({
+      screens,
+      activeScreenId,
+      splitLayout,
+      activePdfId,
+      ...(activePdfId == null ? sidebarPatchOnClose(s) : {}),
+    });
   },
   closeOtherTabs: (screenId, tabId) => {
     const s = get();
@@ -394,7 +423,15 @@ export const useApp = create<AppState>((set, get) => ({
     set({ screens, activePdfId });
   },
   clearScreens: () => {
-    set({ screens: [], activeScreenId: null, splitLayout: 'single', splitRatio: 0.5, activePdfId: null });
+    const s = get();
+    set({
+      screens: [],
+      activeScreenId: null,
+      splitLayout: 'single',
+      splitRatio: 0.5,
+      activePdfId: null,
+      ...sidebarPatchOnClose(s),
+    });
   },
   /** 上下 / 左右分屏：未分屏时创建第二个屏并显示当前屏激活的 PDF */
   splitScreen: (layout) => {

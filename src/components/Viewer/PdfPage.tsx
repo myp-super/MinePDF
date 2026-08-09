@@ -24,6 +24,8 @@ export interface PdfLinkService {
 interface PdfPageProps {
   doc: PDFDocumentProxy;
   pdfId: number;
+  /** 阅读屏唯一标识（分屏渲染请求隔离） */
+  paneId: string;
   pageNumber: number;
   scale: number;
   /** 2.0.0：pdfium = PDFium 出像素 + PDF.js 文本层；pdfjs = 纯 PDF.js 回退 */
@@ -59,6 +61,7 @@ function parseQuads(position: string): Quad[] {
 export function PdfPage({
   doc,
   pdfId,
+  paneId,
   pageNumber,
   scale,
   renderer,
@@ -246,7 +249,7 @@ export function PdfPage({
       timerRef.current = null;
       const seq2 = renderSeqRef.current;
       try {
-        const res = await pdfiumRenderQueued(pdfId, pageNumber, deviceScale);
+        const res = await pdfiumRenderQueued(paneId, pdfId, pageNumber, deviceScale);
         if (seq2 !== renderSeqRef.current) return;
         const bmp = await toImageBitmap(res);
         putCachedPage(hiKey, bmp, res.w, res.h);
