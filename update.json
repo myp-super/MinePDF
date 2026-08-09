@@ -1,8 +1,8 @@
 {
-  "notes": [
-    "v2.1.0 - 新增阅读会话记忆：重启自动恢复上次阅读的 PDF 与页码"
-  ],
   "publishDate": "2026-08-09",
-  "version": "2.1.0",
-  "url": "https://github.com/myp-super/MinePDF/releases/download/v2.1.0/MinePDF.Setup.2.1.0.exe"
+  "version": "2.1.1",
+  "notes": [
+    "v2.1.1 - 更新安装改向导模式：品牌安装界面+进度条+安装完成自动启动"
+  ],
+  "url": "https://github.com/myp-super/MinePDF/releases/download/v2.1.1/MinePDF.Setup.2.1.1.exe"
 }
