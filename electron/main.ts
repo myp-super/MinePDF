@@ -393,6 +393,44 @@ async function createMainWindow(): Promise<BrowserWindow> {
                   })()
                 `);
                 console.log('[capture] geomDiag', JSON.stringify(geomDiag));
+                // 内容布局诊断：canvas 内部非白像素的包围盒（验证页面内容实际显示大小/位置）
+                const contentDiag = await win.webContents.executeJavaScript(`
+                  (() => {
+                    const canvas = document.querySelector('.pdf-page-sheet canvas');
+                    if (!canvas || !canvas.width) return { canvas: false };
+                    const ctx = canvas.getContext('2d');
+                    const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+                    let minX = Infinity, minY = Infinity, maxX = -1, maxY = -1, count = 0;
+                    let transparent = 0;
+                    for (let y = 0; y < canvas.height; y++) {
+                      for (let x = 0; x < canvas.width; x++) {
+                        const i = (y * canvas.width + x) * 4;
+                        const a = data[i + 3];
+                        if (a === 0) transparent++;
+                        if (a > 200 && (data[i] < 245 || data[i + 1] < 245 || data[i + 2] < 245)) {
+                          if (x < minX) minX = x;
+                          if (x > maxX) maxX = x;
+                          if (y < minY) minY = y;
+                          if (y > maxY) maxY = y;
+                          count++;
+                        }
+                      }
+                    }
+                    const cssW = parseFloat(canvas.style.width);
+                    const cssH = parseFloat(canvas.style.height);
+                    return {
+                      backing: canvas.width + 'x' + canvas.height,
+                      css: cssW + 'x' + cssH,
+                      contentBackingBox: 'x:[' + minX + ',' + maxX + '] y:[' + minY + ',' + maxY + ']',
+                      contentBackingSize: (maxX - minX + 1) + 'x' + (maxY - minY + 1),
+                      contentCssSize: Math.round((maxX - minX + 1) * cssW / canvas.width) + 'x' + Math.round((maxY - minY + 1) * cssH / canvas.height),
+                      ratio: +(canvas.width / cssW).toFixed(2),
+                      fillRatio: +((maxX - minX + 1) * (maxY - minY + 1) / (canvas.width * canvas.height)).toFixed(3),
+                      transparentPct: +(100 * transparent / (canvas.width * canvas.height)).toFixed(1),
+                    };
+                  })()
+                `);
+                console.log('[capture] contentDiag', JSON.stringify(contentDiag));
                 // 方案 B 验证：把边栏/信息面板拖窄后，标签文字应自动隐藏（只剩图标）
                 const narrowDiag = await win.webContents.executeJavaScript(`
                   (async () => {

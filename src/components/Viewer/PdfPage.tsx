@@ -172,7 +172,9 @@ export function PdfPage({
     canvas.style.height = `${cssH}px`;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-    ctx.drawImage(bitmap, 0, 0, bitmap.width, bitmap.height, 0, 0, cssW, cssH);
+    // 1:1 填满画布内部（内部尺寸 = 位图尺寸），CSS 缩放由浏览器处理。
+    // 之前误用 cssW/cssH 作为目标尺寸，导致内容被压缩到左上 2/3 区域。
+    ctx.drawImage(bitmap, 0, 0);
   }
 
   /** 文本层 + 链接层（PDF.js，两套渲染路径共用） */
