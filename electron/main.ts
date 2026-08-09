@@ -7,6 +7,7 @@ import { ensureNoForcedPdfAssociation, registerIpc, setMainWindow } from './ipc/
 import { startLibraryWatcher, stopLibraryWatcher } from './services/libraryWatcher';
 import { checkForUpdates } from './services/updater';
 import { getSettings } from './services/settings';
+import { pdfiumShutdown } from './services/pdfium';
 
 const devServerUrl = process.env.VITE_DEV_SERVER_URL ?? '';
 const isDev = Boolean(devServerUrl);
@@ -217,6 +218,23 @@ async function createMainWindow(): Promise<BrowserWindow> {
               return !!back && back.filepath.toLowerCase().indexOf('\u5192\u70df\u6d4b\u8bd5') > -1;
             });
             await step('read', async () => (await window.pkm.readPdf(pdf.id)).byteLength);
+            await step('pdfiumAvailable', async () => await window.pkm.pdfiumAvailable());
+            const pdfiumOpen = await step('pdfiumOpen', () => window.pkm.pdfiumOpen(pdf.id));
+            if (pdfiumOpen) {
+              await step('pdfiumOpenInfo', () => pdfiumOpen.pageCount >= 1 && pdfiumOpen.width > 0);
+              const pdfiumRender = await step('pdfiumRender', () =>
+                window.pkm.pdfiumRender(pdf.id, 1, 1.5),
+              );
+              if (pdfiumRender) {
+                await step(
+                  'pdfiumRenderBytes',
+                  () =>
+                    pdfiumRender.w > 0 &&
+                    pdfiumRender.h > 0 &&
+                    pdfiumRender.data.byteLength === pdfiumRender.w * pdfiumRender.h * 4,
+                );
+              }
+            }
             const inboxItem = await step('inboxAdd', () => window.pkm.inboxAdd(path));
             if (inboxItem) {
               await step('inboxList', async () =>
@@ -338,10 +356,65 @@ async function createMainWindow(): Promise<BrowserWindow> {
                     const canvas = document.querySelector('.pdf-page-sheet canvas');
                     if (!canvas) return { canvas: false };
                     const cssW = parseFloat(canvas.style.width) || canvas.getBoundingClientRect().width;
-                    return { backingWidth: canvas.width, cssWidth: Math.round(cssW), ratio: +(canvas.width / cssW).toFixed(2) };
+                    const sheet = document.querySelector('.pdf-page-sheet');
+                    return {
+                      backingWidth: canvas.width,
+                      cssWidth: Math.round(cssW),
+                      ratio: +(canvas.width / cssW).toFixed(2),
+                      renderer: sheet ? sheet.getAttribute('data-renderer') : null,
+                    };
                   })()
                 `);
                 console.log('[capture] renderDiag', JSON.stringify(renderDiag));
+                // 应用内性能诊断：PDFium IPC 渲染真实 PDF 的每页耗时
+                const perfDiag = await win.webContents.executeJavaScript(`
+                  (async () => {
+                    const path = 'C:\\\\Users\\\\Lenovo\\\\Documents\\\\MinePDF\\\\Library\\\\en\\\\PID-Tuning-Methods.pdf';
+                    const imp = await window.pkm.importPdfs([path], null);
+                    const snap = await window.pkm.getSnapshot();
+                    const pdf = snap.pdfs.find((p) => p.filename === 'PID-Tuning-Methods.pdf');
+                    if (!pdf) return { imported: imp.imported, pdf: false };
+                    const times = [];
+                    for (let p = 1; p <= pdf.pageCount; p++) {
+                      const t1 = performance.now();
+                      await window.pkm.pdfiumRender(pdf.id, p, 1.5);
+                      times.push(+(performance.now() - t1).toFixed(2));
+                    }
+                    // 基线 IPC 往返（小载荷）
+                    const tBase = performance.now();
+                    for (let i = 0; i < 20; i++) await window.pkm.pdfiumAvailable();
+                    const tinyIpcMs = +(performance.now() - tBase) / 20;
+                    // 渲染端大缓冲拷贝成本（Uint8ClampedArray 复制）
+                    const resCopy = await window.pkm.pdfiumRender(pdf.id, 1, 1.5);
+                    const tCopy = performance.now();
+                    const copy = new Uint8ClampedArray(resCopy.data);
+                    const copyMs = +(performance.now() - tCopy).toFixed(2);
+                    const tBatch = performance.now();
+                    await window.pkm.pdfiumRenderBatch(
+                      pdf.id,
+                      Array.from({ length: pdf.pageCount }, (_, i) => i + 1),
+                      1.5,
+                    );
+                    const batchMs = +(performance.now() - tBatch).toFixed(1);
+                    const tOpen = performance.now();
+                    window.__pkmOpenPdf(pdf.id);
+                    await new Promise((r) => setTimeout(r, 900));
+                    const c = document.querySelector('.pdf-page-sheet canvas');
+                    return {
+                      imported: imp.imported,
+                      pageCount: pdf.pageCount,
+                      perPageMs: times,
+                      avgMs: +(times.reduce((a, b) => a + b, 0) / times.length).toFixed(2),
+                      batchAllMs: batchMs,
+                      tinyIpcMs: +tinyIpcMs.toFixed(2),
+                      copyMs,
+                      copyLen: copy.length,
+                      canvasPainted: c ? c.width : 0,
+                      renderer: document.querySelector('.pdf-page-sheet')?.getAttribute('data-renderer'),
+                    };
+                  })()
+                `);
+                console.log('[capture] perfDiag', JSON.stringify(perfDiag));
                 const fontDiag = await win.webContents.executeJavaScript(`
                   (() => {
                     const body = getComputedStyle(document.body);
@@ -734,7 +807,19 @@ app.whenReady().then(async () => {
   if (smokeTest) {
     // 冒烟测试使用临时文档目录，避免污染用户真实知识库
     const smokeDocs = path.join(app.getPath('temp'), 'pkm-smoke-docs');
-    fs.rmSync(smokeDocs, { recursive: true, force: true });
+    // Windows 上被杀进程可能短暂持有文件句柄，带重试的清理更稳妥
+    for (let i = 0; i < 8; i++) {
+      try {
+        fs.rmSync(smokeDocs, { recursive: true, force: true });
+        break;
+      } catch (err) {
+        if (i === 7) throw err;
+        const deadline = Date.now() + 500;
+        while (Date.now() < deadline) {
+          /* 等待文件锁释放 */
+        }
+      }
+    }
     app.setPath('documents', smokeDocs);
   }
   registerIpc();
@@ -788,6 +873,7 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   stopLibraryWatcher();
+  pdfiumShutdown();
   closeDb();
 });
 

@@ -60,6 +60,14 @@ const api: PkmApi = {
     const bytes = await invoke<Uint8Array>('pdf:read', id);
     return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
   },
+  pdfiumAvailable: () => invoke('pdfium:available'),
+  pdfiumOpen: (id) => invoke('pdfium:open', id),
+  pdfiumRender: (id, page, scale) => invoke('pdfium:render', id, page, scale),
+  pdfiumRenderBatch: (id, pages, scale) => invoke('pdfium:render-batch', id, pages, scale),
+  // 端口在 preload 内创建并直接发给主进程；port1 经 contextBridge.postMessage
+  // 传回渲染主世界，避免 MessagePort 作为 exposed 函数参数跨桥传输
+  pdfiumClose: (id) => invoke('pdfium:close', id),
+  pdfiumShutdown: () => invoke('pdfium:shutdown'),
   openPdfExternal: (id) => invoke('pdf:open-external', id),
 
   addTag: (pdfId, name) => invoke('tag:add', pdfId, name),

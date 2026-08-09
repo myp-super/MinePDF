@@ -1,6 +1,14 @@
 import React, { useEffect, useRef, useState } from 'react';
 import type { PageViewport, PDFDocumentProxy } from 'pdfjs-dist';
 import type { AnnotationRecord, Quad } from '../../shared/types';
+import {
+  getCachedPage,
+  pageCacheKey,
+  putCachedPage,
+  scaleBucket,
+  toImageBitmap,
+} from '../../lib/pageImageCache';
+import { pdfiumRenderQueued } from '../../lib/pdfiumBatcher';
 import { hexToRgba, pdfjsLib, type SearchMatch, type ViewportLike } from '../../lib/pdf';
 import { useT } from '../../i18n';
 
@@ -15,8 +23,11 @@ export interface PdfLinkService {
 
 interface PdfPageProps {
   doc: PDFDocumentProxy;
+  pdfId: number;
   pageNumber: number;
   scale: number;
+  /** 2.0.0：pdfium = PDFium 出像素 + PDF.js 文本层；pdfjs = 纯 PDF.js 回退 */
+  renderer: 'pdfium' | 'pdfjs';
   annotations: AnnotationRecord[];
   searchMatches: SearchMatch[];
   selectedAnnotationId: number | null;
@@ -39,16 +50,18 @@ function parseQuads(position: string): Quad[] {
 /**
  * Single page render.
  *
- * Zoom is split into two phases for smoothness:
- * 1. layout (immediate): resize the sheet/canvas and let the browser stretch the
- *    existing pixels while the user keeps scrolling;
- * 2. high-res render (debounced ~220ms): re-render canvas + text layer +
- *    annotation layer (internal links / cross references) once zoom settles.
+ * 2.0.0 混合架构：
+ * - PDFium 路径：低清位图先行（立即出画面）→ 高清位图渐进替换（60ms 防抖），
+ *   位图缓存按 0.5 缩放桶复用；PDF.js 只负责文本层（选词/搜索/高亮定位）与
+ *   链接层（交叉引用跳转）。渲染失败自动回退 PDF.js。
+ * - PDF.js 路径：原有双阶段（布局 + 150ms 防抖高清渲染）。
  */
 export function PdfPage({
   doc,
+  pdfId,
   pageNumber,
   scale,
+  renderer,
   annotations,
   searchMatches,
   selectedAnnotationId,
@@ -71,6 +84,9 @@ export function PdfPage({
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const canvasTaskRef = useRef<{ cancel: () => void } | null>(null);
   const textTaskRef = useRef<{ cancel: () => void } | null>(null);
+  const rendererRef = useRef(renderer);
+  rendererRef.current = renderer;
+
   // Visible-area detection (small preload margin keeps switching fast)
   useEffect(() => {
     const el = wrapEl;
@@ -116,14 +132,19 @@ export function PdfPage({
       canvas.style.height = `${Math.floor(vp.height)}px`;
     }
     setRenderError(false);
-    if (timerRef.current) clearTimeout(timerRef.current);
-    timerRef.current = setTimeout(
-      () => {
-        timerRef.current = null;
-        void renderHighRes(vp);
-      },
-      hasRenderedRef.current ? 150 : 0,
-    );
+    if (renderer === 'pdfium') {
+      // PDFium 路径：立即启动低清先行渲染（内部再防抖高清）
+      void renderPdfium(vp);
+    } else {
+      if (timerRef.current) clearTimeout(timerRef.current);
+      timerRef.current = setTimeout(
+        () => {
+          timerRef.current = null;
+          void renderWithPdfjs(vp);
+        },
+        hasRenderedRef.current ? 150 : 0,
+      );
+    }
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current);
       renderSeqRef.current++;
@@ -139,19 +160,130 @@ export function PdfPage({
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [viewport]);
+  }, [viewport, renderer]);
 
-  async function renderHighRes(vp: PageViewport): Promise<void> {
+  /** 把位图按 CSS 尺寸绘制到页面 canvas */
+  function paintBitmap(bitmap: ImageBitmap, cssW: number, cssH: number): void {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    canvas.style.width = `${cssW}px`;
+    canvas.style.height = `${cssH}px`;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.drawImage(bitmap, 0, 0, bitmap.width, bitmap.height, 0, 0, cssW, cssH);
+  }
+
+  /** 文本层 + 链接层（PDF.js，两套渲染路径共用） */
+  async function renderTextAndAnnots(vp: PageViewport, seq: number): Promise<void> {
+    const page = await doc.getPage(pageNumber);
+    if (seq !== renderSeqRef.current) return;
+    const text = textRef.current;
+    const ann = annRef.current;
+    if (!text || !ann) return;
+
+    const tc = await page.getTextContent();
+    if (seq !== renderSeqRef.current) return;
+    text.textContent = '';
+    const layer = new pdfjsLib.TextLayer({
+      textContentSource: tc,
+      container: text,
+      viewport: vp,
+    });
+    textTaskRef.current = layer;
+    await layer.render();
+    if (seq !== renderSeqRef.current) return;
+
+    const annotationsList = await page.getAnnotations();
+    if (seq !== renderSeqRef.current) return;
+    ann.textContent = '';
+    const annLayer = new pdfjsLib.AnnotationLayer({
+      div: ann,
+      page,
+      viewport: vp,
+    } as never);
+    await annLayer.render({
+      div: ann,
+      annotations: annotationsList,
+      page,
+      viewport: vp,
+      linkService: linkService as never,
+      renderForms: false,
+    } as never);
+  }
+
+  /** PDFium 路径：低清先行 → 高清渐进（带缓存与取消） */
+  async function renderPdfium(vp: PageViewport): Promise<void> {
+    const seq = ++renderSeqRef.current;
+    const dpr = window.devicePixelRatio || 1;
+    const cssW = Math.floor(vp.width);
+    const cssH = Math.floor(vp.height);
+    const deviceScale = vp.scale * dpr;
+
+    // 1) 同质量（同缩放桶）缓存直接复用
+    const bucket = scaleBucket(deviceScale);
+    const hiKey = pageCacheKey(pdfId, pageNumber, bucket);
+    const hi = getCachedPage(hiKey);
+    if (hi) {
+      paintBitmap(hi, cssW, cssH);
+      hasRenderedRef.current = true;
+      // 位图命中缓存时仍需渲染文本层/链接层（选词、高亮、交叉引用）
+      await renderTextAndAnnots(vp, seq);
+      return;
+    }
+
+    // 2) 低清先行：约 40% 目标分辨率，立即出画面
+    const lowScale = Math.max(0.4, deviceScale * 0.4);
+    const lowKey = pageCacheKey(pdfId, pageNumber, scaleBucket(lowScale));
+    let low = getCachedPage(lowKey);
+    if (!low) {
+      try {
+        const res = await pdfiumRenderQueued(pdfId, pageNumber, lowScale);
+        if (seq !== renderSeqRef.current) return;
+        low = await toImageBitmap(res);
+        putCachedPage(lowKey, low, res.w, res.h);
+      } catch (err) {
+        if (seq === renderSeqRef.current) {
+          // PDFium 渲染失败 → 回退 PDF.js 渲染该页
+          await renderWithPdfjs(vp);
+        }
+        return;
+      }
+    }
+    if (seq !== renderSeqRef.current) return;
+    paintBitmap(low, cssW, cssH);
+
+    // 3) 高清渐进：60ms 防抖，避免缩放过程中重复渲染
+    if (timerRef.current) clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(async () => {
+      timerRef.current = null;
+      const seq2 = renderSeqRef.current;
+      try {
+        const res = await pdfiumRenderQueued(pdfId, pageNumber, deviceScale);
+        if (seq2 !== renderSeqRef.current) return;
+        const bmp = await toImageBitmap(res);
+        putCachedPage(hiKey, bmp, res.w, res.h);
+        if (seq2 !== renderSeqRef.current) return;
+        paintBitmap(bmp, cssW, cssH);
+        hasRenderedRef.current = true;
+        await renderTextAndAnnots(vp, seq2);
+      } catch {
+        if (seq2 === renderSeqRef.current) setRenderError(true);
+      }
+    }, 60);
+  }
+
+  /** PDF.js 回退路径：原有渲染逻辑 */
+  async function renderWithPdfjs(vp: PageViewport): Promise<void> {
     const seq = ++renderSeqRef.current;
     try {
       const page = await doc.getPage(pageNumber);
       if (seq !== renderSeqRef.current) return;
       const dpr = window.devicePixelRatio || 1;
-      // 超采样：dpr 较低时额外放大 1.5x 渲染，让文字更锐利
       const overscan = dpr >= 2 ? 1 : 1.5;
       const renderScale = vp.scale * dpr * overscan;
       const renderViewport = page.getViewport({ scale: renderScale });
-      // 先渲染到离屏画布，完成后再贴回，避免取消/失败时出现空白或模糊中间态
       const offscreen = document.createElement('canvas');
       offscreen.width = Math.floor(renderViewport.width);
       offscreen.height = Math.floor(renderViewport.height);
@@ -162,9 +294,7 @@ export function PdfPage({
       await task.promise;
       if (seq !== renderSeqRef.current) return;
       const canvas = canvasRef.current;
-      const text = textRef.current;
-      const ann = annRef.current;
-      if (!canvas || !text || !ann) return;
+      if (!canvas) return;
       canvas.width = offscreen.width;
       canvas.height = offscreen.height;
       canvas.style.width = `${Math.floor(vp.width)}px`;
@@ -173,39 +303,8 @@ export function PdfPage({
       if (!dctx) return;
       dctx.drawImage(offscreen, 0, 0);
       hasRenderedRef.current = true;
-
-      // Text layer (selection / search / highlight)
-      const tc = await page.getTextContent();
-      if (seq !== renderSeqRef.current) return;
-      text.textContent = '';
-      const layer = new pdfjsLib.TextLayer({
-        textContentSource: tc,
-        container: text,
-        viewport: vp,
-      });
-      textTaskRef.current = layer;
-      await layer.render();
-      if (seq !== renderSeqRef.current) return;
-
-      // Annotation layer (internal links / cross references)
-      const annotationsList = await page.getAnnotations();
-      if (seq !== renderSeqRef.current) return;
-      ann.textContent = '';
-      const annLayer = new pdfjsLib.AnnotationLayer({
-        div: ann,
-        page,
-        viewport: vp,
-      } as never);
-      await annLayer.render({
-        div: ann,
-        annotations: annotationsList,
-        page,
-        viewport: vp,
-        linkService: linkService as never,
-        renderForms: false,
-      } as never);
+      await renderTextAndAnnots(vp, seq);
     } catch {
-      // 仅当未被新一轮渲染取代时才提示渲染失败（取消渲染不算失败）
       if (seq === renderSeqRef.current) setRenderError(true);
     }
   }
@@ -217,6 +316,7 @@ export function PdfPage({
         registerPage(pageNumber, el);
       }}
       data-page-number={pageNumber}
+      data-renderer={renderer}
       className="pdf-page-sheet relative shrink-0 overflow-hidden rounded-[2px]"
       style={{ width: viewport?.width ?? 0, height: viewport?.height ?? 0 }}
     >
@@ -248,7 +348,7 @@ export function PdfPage({
                   e.preventDefault();
                   onAnnotationContextMenu(a, e.clientX, e.clientY);
                 }}
-                title={a.content || `Page ${a.page} highlight`}
+                title={a.content || `Page ${pageNumber} highlight`}
               />
             );
           }),

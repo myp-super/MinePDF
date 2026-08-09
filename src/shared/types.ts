@@ -111,6 +111,22 @@ export interface ImportResult {
   errors: string[];
 }
 
+/** PDFium 打开文档后的基本信息（尺寸含页面旋转） */
+export interface PdfiumOpenResult {
+  pageCount: number;
+  width: number;
+  height: number;
+  version: string;
+}
+
+/** PDFium 单页渲染结果（RGBA） */
+export interface PdfiumRenderResult {
+  w: number;
+  h: number;
+  data: ArrayBuffer;
+  ms: number;
+}
+
 export interface SearchResult {
   pdfs: PdfRecord[];
   notes: Array<{ pdf: PdfRecord; snippet: string }>;
@@ -172,6 +188,12 @@ export interface PkmApi {
   updatePdfHasOutline(id: number, hasOutline: boolean): Promise<void>;
   relocatePdf(id: number): Promise<PdfRecord>;
   readPdf(id: number): Promise<ArrayBuffer>;
+  pdfiumAvailable(): Promise<boolean>;
+  pdfiumOpen(pdfId: number): Promise<PdfiumOpenResult | null>;
+  pdfiumRender(pdfId: number, page: number, scale: number): Promise<PdfiumRenderResult>;
+  pdfiumRenderBatch(pdfId: number, pages: number[], scale: number): Promise<PdfiumRenderResult[]>;
+  pdfiumClose(pdfId: number): Promise<void>;
+  pdfiumShutdown(): Promise<void>;
   openPdfExternal(id: number): Promise<void>;
   revealPdf(id: number): Promise<void>;
   /** 在系统资源管理器中定位到该文件夹对应的 Library 目录 */

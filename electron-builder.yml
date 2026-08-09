@@ -14,10 +14,13 @@ files:
 
 asarUnpack:
   - "**/node_modules/better-sqlite3/**"
+  - "**/node_modules/koffi/**"
 
 extraResources:
   - from: build/file-assoc.ico
     to: file-assoc.ico
+  - from: resources/pdfium
+    to: pdfium
 
 win:
   icon: build/icon.ico

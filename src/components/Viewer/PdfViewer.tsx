@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
-import type { AnnotationRecord, PdfRecord, Quad } from '../../shared/types';
+import type { AnnotationRecord, PdfiumOpenResult, PdfRecord, Quad } from '../../shared/types';
 import { useT, useTError } from '../../i18n';
 import {
   getOutlineTree,
@@ -63,6 +63,7 @@ export function PdfViewer({ pdf, onMissing }: PdfViewerProps) {
   const setScreenshotMode = useApp((s) => s.setScreenshotMode);
 
   const [doc, setDoc] = useState<PDFDocumentProxy | null>(null);
+  const [pdfiumInfo, setPdfiumInfo] = useState<PdfiumOpenResult | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [scale, setScale] = useState(1);
   const [mode, setMode] = useState<'single' | 'double'>('single');
@@ -177,6 +178,7 @@ export function PdfViewer({ pdf, onMissing }: PdfViewerProps) {
     };
     currentPdfIdRef.current = pdf.id;
     setDoc(null);
+    setPdfiumInfo(null);
     setLoadError(null);
     setAnnotations([]);
     setSelectedAnnotationId(null);
@@ -189,6 +191,12 @@ export function PdfViewer({ pdf, onMissing }: PdfViewerProps) {
     if (cached && !DESTROYED.has(pdf.id)) {
       DESTROYED.delete(pdf.id);
       setDoc(cached);
+      void window.pkm
+        .pdfiumOpen(pdf.id)
+        .then((info) => {
+          if (currentPdfIdRef.current === pdf.id && info) setPdfiumInfo(info);
+        })
+        .catch(() => undefined);
       void setAnnotationsFromCache(cached, pdf);
       void getOutlineTree(cached).then((tree) => {
         if (currentPdfIdRef.current !== pdf.id) return;
@@ -199,8 +207,18 @@ export function PdfViewer({ pdf, onMissing }: PdfViewerProps) {
 
     void (async () => {
       try {
+        // PDFium 与 PDF.js 并行打开：PDFium 打开 ~1ms，可提前拿到页数/尺寸
+        const pdfiumPromise = window.pkm.pdfiumOpen(pdf.id).catch(() => null);
         const buf = await window.pkm.readPdf(pdf.id);
         if (cancelled) return;
+        const pdfiumInfoRes = await pdfiumPromise;
+        if (cancelled) return;
+        if (pdfiumInfoRes) {
+          setPdfiumInfo(pdfiumInfoRes);
+          setBaseW(pdfiumInfoRes.width);
+          setBaseH(pdfiumInfoRes.height);
+          void window.pkm.updatePdfPageCount(pdf.id, pdfiumInfoRes.pageCount).catch(() => undefined);
+        }
         loadingTask = pdfjsLib.getDocument({
           data: new Uint8Array(buf),
           cMapUrl: './cmaps/',
@@ -638,8 +656,10 @@ export function PdfViewer({ pdf, onMissing }: PdfViewerProps) {
     <PdfPage
       key={`${pdf.id}-${n}`}
       doc={doc!}
+      pdfId={pdf.id}
       pageNumber={n}
       scale={scale}
+      renderer={pdfiumInfo ? 'pdfium' : 'pdfjs'}
       annotations={annotationsByPage.get(n) ?? []}
       searchMatches={searchByPage.get(n) ?? []}
       selectedAnnotationId={selectedAnnotationId}

@@ -9,6 +9,8 @@ import type {
   ImportResult,
   NewAnnotation,
   PdfRecord,
+  PdfiumOpenResult,
+  PdfiumRenderResult,
   SearchResult,
 } from '../../src/shared/types';
 import { getDataDir, getLibraryPdfDir, getLibraryRoot } from '../db/database';
@@ -18,6 +20,14 @@ import { importPdfs } from '../services/import';
 import { scanLibrary } from '../services/libraryWatcher';
 import { getSettings, updateSettings } from '../services/settings';
 import { checkForUpdates, downloadUpdate } from '../services/updater';
+import {
+  isPdfiumAvailable,
+  pdfiumClose,
+  pdfiumOpen,
+  pdfiumRender,
+  pdfiumRenderBatch,
+  pdfiumShutdown,
+} from '../services/pdfium';
 
 interface InvokeResult<T> {
   ok: boolean;
@@ -264,6 +274,29 @@ export function registerIpc(): void {
     }
     if (pdf.status === 'missing') repository.setPdfStatus(id, 'ok');
     return readPdfCached(pdf.filepath) as unknown as ArrayBuffer;
+  });
+
+  // ---------- PDFium 原生渲染（2.0.0 混合架构） ----------
+  handle<boolean>('pdfium:available', () => isPdfiumAvailable());
+  handle<PdfiumOpenResult | null>('pdfium:open', (id: number) => pdfiumOpen(id));
+  handle<PdfiumRenderResult>('pdfium:render', (id: number, page: number, scale: number) =>
+    pdfiumRender(id, page, scale),
+  );
+  handle<PdfiumRenderResult[]>('pdfium:render-batch', (id: number, pages: number[], scale: number) => {
+    if (process.env.PKM_SMOKE_TEST === '1') {
+      console.log(`[batch] start id=${id} pages=${pages.length}`);
+    }
+    const res = pdfiumRenderBatch(id, pages, scale);
+    if (process.env.PKM_SMOKE_TEST === '1') {
+      console.log(`[batch] done id=${id} pages=${res.length}`);
+    }
+    return res;
+  });
+  handle('pdfium:close', (id: number) => {
+    pdfiumClose(id);
+  });
+  handle('pdfium:shutdown', () => {
+    pdfiumShutdown();
   });
 
   handle('pdf:open-external', (id: number) => {

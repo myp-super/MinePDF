@@ -1,4 +1,6 @@
 node_modules/
+benchmark/out/
+resources/pdfium/
 dist/
 dist-electron/
 release/
