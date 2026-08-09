@@ -233,28 +233,8 @@ export function PdfPage({
       return;
     }
 
-    // 2) 低清先行：约 40% 目标分辨率，立即出画面
-    const lowScale = Math.max(0.4, deviceScale * 0.4);
-    const lowKey = pageCacheKey(pdfId, pageNumber, scaleBucket(lowScale));
-    let low = getCachedPage(lowKey);
-    if (!low) {
-      try {
-        const res = await pdfiumRenderQueued(pdfId, pageNumber, lowScale);
-        if (seq !== renderSeqRef.current) return;
-        low = await toImageBitmap(res);
-        putCachedPage(lowKey, low, res.w, res.h);
-      } catch (err) {
-        if (seq === renderSeqRef.current) {
-          // PDFium 渲染失败 → 回退 PDF.js 渲染该页
-          await renderWithPdfjs(vp);
-        }
-        return;
-      }
-    }
-    if (seq !== renderSeqRef.current) return;
-    paintBitmap(low, cssW, cssH);
-
-    // 3) 高清渐进：60ms 防抖，避免缩放过程中重复渲染
+    // 2) 高清直接渲染（PDFium 单页 ~10ms）：首次立即，缩放时 60ms 防抖，
+    //    过渡期由浏览器把旧位图拉伸到新尺寸（自然、不跳变）
     if (timerRef.current) clearTimeout(timerRef.current);
     timerRef.current = setTimeout(async () => {
       timerRef.current = null;
@@ -269,9 +249,12 @@ export function PdfPage({
         hasRenderedRef.current = true;
         await renderTextAndAnnots(vp, seq2);
       } catch {
-        if (seq2 === renderSeqRef.current) setRenderError(true);
+        if (seq2 === renderSeqRef.current) {
+          // PDFium 渲染失败 → 回退 PDF.js 渲染该页
+          await renderWithPdfjs(vp);
+        }
       }
-    }, 60);
+    }, hasRenderedRef.current ? 60 : 0);
   }
 
   /** PDF.js 回退路径：原有渲染逻辑 */
@@ -318,7 +301,10 @@ export function PdfPage({
       data-page-number={pageNumber}
       data-renderer={renderer}
       className="pdf-page-sheet relative shrink-0 overflow-hidden rounded-[2px]"
-      style={{ width: viewport?.width ?? 0, height: viewport?.height ?? 0 }}
+      style={{
+        width: viewport ? Math.floor(viewport.width) : 0,
+        height: viewport ? Math.floor(viewport.height) : 0,
+      }}
     >
       <canvas ref={canvasRef} className="block" />
       <div ref={textRef} className="textLayer" />

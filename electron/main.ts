@@ -372,6 +372,27 @@ async function createMainWindow(): Promise<BrowserWindow> {
                   })()
                 `);
                 console.log('[capture] renderDiag', JSON.stringify(renderDiag));
+                const geomDiag = await win.webContents.executeJavaScript(`
+                  (() => {
+                    const sc = document.querySelector('[data-pan-scroll]');
+                    const sheet = document.querySelector('.pdf-page-sheet');
+                    if (!sc || !sheet) return { sc: !!sc, sheet: !!sheet };
+                    const sr = sc.getBoundingClientRect();
+                    const r = sheet.getBoundingClientRect();
+                    const canvas = sheet.querySelector('canvas');
+                    const text = sheet.querySelector('.textLayer');
+                    const cr = canvas ? canvas.getBoundingClientRect() : null;
+                    const tr = text ? text.getBoundingClientRect() : null;
+                    return {
+                      scroll: { left: sr.left, top: sr.top, w: sr.width, h: sr.height, sl: sc.scrollLeft, st: sc.scrollTop },
+                      sheet: { left: +r.left.toFixed(1), top: +r.top.toFixed(1), w: +r.width.toFixed(1), h: +r.height.toFixed(1) },
+                      canvas: cr ? { left: +cr.left.toFixed(1), top: +cr.top.toFixed(1), w: +cr.width.toFixed(1), h: +cr.height.toFixed(1), backing: canvas.width + 'x' + canvas.height } : null,
+                      text: tr ? { left: +tr.left.toFixed(1), top: +tr.top.toFixed(1), w: +tr.width.toFixed(1), h: +tr.height.toFixed(1), spans: text.querySelectorAll('span').length } : null,
+                      centeredInScroll: Math.abs(r.left + r.width / 2 - (sr.left + sr.width / 2)) < 2,
+                    };
+                  })()
+                `);
+                console.log('[capture] geomDiag', JSON.stringify(geomDiag));
                 // 应用内性能诊断：PDFium IPC 渲染真实 PDF 的每页耗时
                 const perfDiag = await win.webContents.executeJavaScript(`
                   (async () => {
