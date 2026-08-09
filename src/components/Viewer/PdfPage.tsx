@@ -327,7 +327,8 @@ export function PdfPage({
       {pending && !renderError && (
         <div className="pdf-loading-overlay" data-testid="pdf-loading">
           <div className="pdf-loading">
-            <img src="/logo.svg" alt="" className="pdf-loading-logo" draggable={false} />
+            {/* 相对路径：file:// 协议下绝对路径会解析到磁盘根目录导致加载失败 */}
+            <img src="./logo.svg" alt="" className="pdf-loading-logo" draggable={false} />
             <span className="pdf-loading-ring" />
           </div>
         </div>

@@ -842,16 +842,22 @@ async function createMainWindow(): Promise<BrowserWindow> {
                 const loadingDiag = await win.webContents.executeJavaScript(`
                   (async () => {
                     const snap = await window.pkm.getSnapshot();
-                    const pdf = snap.pdfs.find((p) => p.filename === 'smoke-test.pdf');
+                    // 用较大的 PDF 使渲染期间能捕捉到加载动画
+                    const pdf = snap.pdfs.find((p) => p.filename === 'PID-Tuning-Methods.pdf') ||
+                      snap.pdfs.find((p) => p.filename === 'smoke-test.pdf');
                     if (!pdf) return { pdf: false };
                     window.__pkmOpenPdf(pdf.id);
                     const t0 = Date.now();
                     await new Promise((r) => setTimeout(r, 60));
-                    const during = !!document.querySelector('[data-testid="pdf-loading"]');
+                    const overlay = document.querySelector('[data-testid="pdf-loading"]');
+                    const logo = overlay ? overlay.querySelector('img.pdf-loading-logo') : null;
+                    const during = !!overlay;
+                    const logoLoaded = logo ? logo.naturalWidth > 0 : null;
+                    const logoSrc = logo ? logo.getAttribute('src') : null;
                     await new Promise((r) => setTimeout(r, 1400));
                     const after = !!document.querySelector('[data-testid="pdf-loading"]');
                     const c = document.querySelector('.pdf-page-sheet canvas');
-                    return { during, after, canvasPainted: c ? c.width > 0 : false, waitMs: Date.now() - t0 };
+                    return { during, after, canvasPainted: c ? c.width > 0 : false, waitMs: Date.now() - t0, logoLoaded, logoSrc };
                   })()
                 `);
                 console.log('[capture] loadingDiag', JSON.stringify(loadingDiag));
