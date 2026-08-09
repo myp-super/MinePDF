@@ -171,11 +171,7 @@ export function UpdateModal({
             </Button>
             {downloaded ? (
               <>
-                <Button variant="outline" onClick={() => void install(false)}>
-                  <Settings2 size={13} />
-                  {t('update.openWizard')}
-                </Button>
-                <Button variant="primary" onClick={() => void install(true)}>
+                <Button variant="primary" onClick={() => void install(false)}>
                   <PackageOpen size={13} />
                   {t('update.installNow')}
                 </Button>

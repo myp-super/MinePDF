@@ -40,6 +40,11 @@ nsis:
   createStartMenuShortcut: true
   shortcutName: MinePDF
   deleteAppDataOnUninstall: false
+  # 更新体验：安装完成后自动启动新版本，避免“装完没反应”
+  runAfterFinish: true
+  installerIcon: build/icon.ico
+  installerHeaderIcon: build/installerHeaderIcon.bmp
+  installerSidebar: build/installerSidebar.bmp
 
 portable:
   artifactName: ${productName} ${version} Portable.${ext}
