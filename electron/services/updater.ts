@@ -80,8 +80,15 @@ export async function checkForUpdates(): Promise<UpdateResult> {
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36';
 
-/** 国内可用的 GitHub Release 加速镜像前缀（直链前面直接拼接即可） */
-const MIRROR_PREFIXES = ['https://ghproxy.net/', 'https://ghfast.top/', 'https://gh-proxy.com/'];
+/**
+ * 国内可用的 GitHub Release 加速镜像前缀（直链前面直接拼接即可）。
+ * 公共镜像经常失效/限速，按实测可用性与速度挑选，并定期复核。
+ */
+const MIRROR_PREFIXES = [
+  'https://gh-proxy.com/',
+  'https://ghfast.top/',
+  'https://gh.ddlc.top/',
+];
 
 /** 直连 + 各镜像的候选下载地址 */
 function mirrorCandidates(url: string): string[] {
@@ -92,43 +99,57 @@ function mirrorCandidates(url: string): string[] {
   return [...new Set(list)];
 }
 
-/** 探测一个候选源的响应耗时（只取 1 字节），失败返回 null */
-async function probeUrl(url: string, timeoutMs = 5000): Promise<number | null> {
+/** 探测一个候选源的真实下载速度（下载前 512KB，返回 bytes/s），失败返回 null */
+async function probeSpeed(url: string, timeoutMs = 8000): Promise<number | null> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   const t0 = Date.now();
+  let received = 0;
   try {
     const res = await net.fetch(url, {
       method: 'GET',
-      headers: { 'User-Agent': UA, Range: 'bytes=0-0' },
+      headers: { 'User-Agent': UA, Range: 'bytes=0-524287' },
       signal: ctrl.signal,
     });
-    if (res.ok) {
-      await res.body?.cancel();
-      return Date.now() - t0;
+    if (!res.ok) return null;
+    const reader = res.body?.getReader();
+    if (!reader) return null;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value) {
+        received += value.length;
+        if (received >= 524288) break;
+      }
     }
-    return null;
+    const dt = (Date.now() - t0) / 1000;
+    return dt > 0 ? received / dt : null;
   } catch {
     return null;
   } finally {
     clearTimeout(timer);
+    try {
+      ctrl.abort();
+    } catch {
+      /* ignore */
+    }
   }
 }
 
-/** 并行探测直连和镜像，选响应最快的源；全部失败则回退直连 */
+/** 并行测速直连和镜像，选下载速度最快的源；全部失败则回退直连 */
 async function pickFastestSource(url: string): Promise<string> {
   const candidates = mirrorCandidates(url);
-  const results = await Promise.all(candidates.map((u) => probeUrl(u)));
-  let best: string | null = null;
-  let bestMs = Infinity;
+  const speeds = await Promise.all(candidates.map((u) => probeSpeed(u)));
+  let best = url;
+  let bestSpeed = 0;
   for (let i = 0; i < candidates.length; i++) {
-    const ms = results[i];
-    if (ms != null && ms < bestMs) {
-      bestMs = ms;
+    const s = speeds[i];
+    if (s != null && s > bestSpeed) {
+      bestSpeed = s;
       best = candidates[i];
     }
   }
-  return best ?? url;
+  return best;
 }
 
 export async function downloadUpdate(
