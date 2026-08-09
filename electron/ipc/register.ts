@@ -426,7 +426,12 @@ export function registerIpc(): void {
   });
   handle('update:install-wizard', (filePath: string) => shell.openPath(filePath));
   handle('app:open-url', (url: string) => {
-    if (!/^https?:\/\//i.test(url)) throw new Error('仅支持 http/https 链接');
+    // 允许 http/https/mailto/tel：PDF 内的网址、邮箱、电话链接均可跳转
+    if (!/^(https?:|mailto:|tel:)/i.test(url)) throw new Error('仅支持 http/https/mailto/tel 链接');
+    if (process.env.PKM_SMOKE_TEST === '1') {
+      console.log(`[open-url] ${url}`);
+      return;
+    }
     return shell.openExternal(url);
   });
 

@@ -94,6 +94,49 @@ function buildTestPdf(noOutline = false): string {
   return pdf;
 }
 
+/** 两页链接测试 PDF：页内交叉引用 + 外部网址 + 邮箱 */
+function buildLinkTestPdf(): string {
+  const objects: Record<number, string> = {};
+  // 命名目标（named destination）：论文交叉引用常见形式，走 pdf.js getDestination
+  objects[1] =
+    '1 0 obj\n<< /Type /Catalog /Pages 2 0 R /Names << /Dests << /Names [(Page2Dest) [4 0 R /Fit]] >> >> >>\nendobj\n';
+  objects[2] = '2 0 obj\n<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>\nendobj\n';
+  const c1 = 'BT /F1 18 Tf 72 720 Td (Page 1 - internal link below) Tj ET\n';
+  const c2 = 'BT /F1 18 Tf 72 720 Td (Page 2 - back link below) Tj ET\n';
+  objects[5] = `5 0 obj\n<< /Length ${Buffer.byteLength(c1, 'latin1')} >>\nstream\n${c1}endstream\nendobj\n`;
+  objects[6] = `6 0 obj\n<< /Length ${Buffer.byteLength(c2, 'latin1')} >>\nstream\n${c2}endstream\nendobj\n`;
+  objects[7] = '7 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n';
+  objects[8] =
+    '8 0 obj\n[ << /Type /Annot /Subtype /Link /Rect [72 680 340 710] /Border [0 0 0] /Dest (Page2Dest) >>\n' +
+    '  << /Type /Annot /Subtype /Link /Rect [72 630 340 660] /Border [0 0 0] /Dest [4 0 R /Fit] >>\n' +
+    '  << /Type /Annot /Subtype /Link /Rect [72 580 340 610] /Border [0 0 0] /A << /S /URI /URI (https://example.com) >> >>\n' +
+    '  << /Type /Annot /Subtype /Link /Rect [72 530 340 560] /Border [0 0 0] /A << /S /URI /URI (mailto:test@example.com) >> >> ]\nendobj\n';
+  objects[9] =
+    '9 0 obj\n[ << /Type /Annot /Subtype /Link /Rect [72 680 340 710] /Border [0 0 0] /Dest [3 0 R /Fit] >> ]\nendobj\n';
+  objects[3] =
+    '3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 5 0 R /Resources << /Font << /F1 7 0 R >> >> /Annots 8 0 R >>\nendobj\n';
+  objects[4] =
+    '4 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 6 0 R /Resources << /Font << /F1 7 0 R >> >> /Annots 9 0 R >>\nendobj\n';
+
+  let pdf = '%PDF-1.4\n';
+  const offsets: number[] = [];
+  const ids = Object.keys(objects)
+    .map(Number)
+    .sort((a, b) => a - b);
+  for (const i of ids) {
+    offsets[i] = Buffer.byteLength(pdf, 'latin1');
+    pdf += objects[i];
+  }
+  const maxId = Math.max(...ids);
+  const xrefStart = Buffer.byteLength(pdf, 'latin1');
+  pdf += `xref\n0 ${maxId + 1}\n0000000000 65535 f \n`;
+  for (let i = 1; i <= maxId; i++) {
+    pdf += offsets[i] != null ? `${String(offsets[i]).padStart(10, '0')} 00000 n \n` : '0000000000 65535 f \n';
+  }
+  pdf += `trailer\n<< /Size ${maxId + 1} /Root 1 0 R >>\nstartxref\n${xrefStart}\n%%EOF\n`;
+  return pdf;
+}
+
 function createSplash(): BrowserWindow {
   const win = new BrowserWindow({
     width: 460,
@@ -342,6 +385,51 @@ async function createMainWindow(): Promise<BrowserWindow> {
                   })()
                 `);
                 console.log('[capture] linkDiag', JSON.stringify(linkDiag));
+                // 链接点击实测：页内跳转 + 外部网址 + 邮箱
+                const linkTestPath = path.join(app.getPath('temp'), 'pkm-smoke-docs', 'link-test.pdf');
+                try {
+                  fs.writeFileSync(linkTestPath, buildLinkTestPdf(), 'latin1');
+                } catch {
+                  /* ignore */
+                }
+                const linkClickDiag = await win.webContents.executeJavaScript(`
+                  (async () => {
+                    const p = ${JSON.stringify(linkTestPath)};
+                    await window.pkm.importPdfs([p], null);
+                    const snap = await window.pkm.getSnapshot();
+                    const pdf = snap.pdfs.find((x) => x.filename === 'link-test.pdf');
+                    if (!pdf) return { pdf: false };
+                    window.__openCalls = [];
+                    const orig = window.pkm.openExternalUrl;
+                    window.pkm.openExternalUrl = async (url) => {
+                      window.__openCalls.push(String(url));
+                    };
+                    window.__pkmOpenPdf(pdf.id);
+                    await new Promise((r) => setTimeout(r, 2200));
+                    const links = [...document.querySelectorAll('.annotationLayer a')];
+                    const info = links.map((a) => ({
+                      href: a.getAttribute('href'),
+                      internal: a.getAttribute('data-internal-link'),
+                      hasOnclick: !!a.onclick,
+                    }));
+                    const sc = document.querySelector('[data-pan-scroll]');
+                    const before = sc ? sc.scrollTop : -1;
+                    if (links[0]) links[0].click();
+                    await new Promise((r) => setTimeout(r, 700));
+                    const after = sc ? sc.scrollTop : -1;
+                    for (const a of links.slice(1)) if (a) a.click();
+                    await new Promise((r) => setTimeout(r, 300));
+                    window.pkm.openExternalUrl = orig;
+                    return {
+                      links: info,
+                      internalJumped: after > before,
+                      before,
+                      after,
+                      openCalls: window.__openCalls,
+                    };
+                  })()
+                `);
+                console.log('[capture] linkClickDiag', JSON.stringify(linkClickDiag));
                 await win.webContents.executeJavaScript(`
                   (() => {
                     const btn = [...document.querySelectorAll('button')].find(b => (b.textContent || '').trim() === '书签');
