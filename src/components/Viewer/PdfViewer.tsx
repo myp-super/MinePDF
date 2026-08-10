@@ -940,6 +940,7 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
       linkService={linkService}
       onAnnotationClick={handleAnnotationClick}
       onAnnotationContextMenu={(a, x, y) => setAnnMenu({ a, x, y })}
+      onJumpToPage={gotoPage}
       registerPage={registerPage}
       registerViewport={registerViewport}
     />

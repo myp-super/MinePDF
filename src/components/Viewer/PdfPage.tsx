@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import type { PageViewport, PDFDocumentProxy } from 'pdfjs-dist';
-import type { AnnotationRecord, Quad } from '../../shared/types';
+import type { AnnotationRecord, PdfiumLink, Quad } from '../../shared/types';
 import {
   getCachedPage,
   pageCacheKey,
@@ -40,6 +40,8 @@ interface PdfPageProps {
   fallbackH: number | null;
   onAnnotationClick: (a: AnnotationRecord) => void;
   onAnnotationContextMenu: (a: AnnotationRecord, x: number, y: number) => void;
+  /** 点击页内链接时跳转到目标页（1 起） */
+  onJumpToPage?: (n: number) => void;
   registerPage: (n: number, el: HTMLDivElement | null) => void;
   registerViewport: (n: number, vp: ViewportLike | null) => void;
 }
@@ -77,6 +79,7 @@ export function PdfPage({
   fallbackH,
   onAnnotationClick,
   onAnnotationContextMenu,
+  onJumpToPage,
   registerPage,
   registerViewport,
 }: PdfPageProps) {
@@ -86,6 +89,8 @@ export function PdfPage({
   const [wrapEl, setWrapEl] = useState<HTMLDivElement | null>(null);
   const [renderError, setRenderError] = useState(false);
   const [pending, setPending] = useState(false);
+  /** PDFium 原生提取的链接矩形：首帧位图渲染时即可点击，不依赖 pdf.js 解析 */
+  const [links, setLinks] = useState<PdfiumLink[]>([]);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const textRef = useRef<HTMLDivElement>(null);
   const annRef = useRef<HTMLDivElement>(null);
@@ -96,6 +101,21 @@ export function PdfPage({
   const textTaskRef = useRef<{ cancel: () => void } | null>(null);
   const rendererRef = useRef(renderer);
   rendererRef.current = renderer;
+
+  // 原生链接层：PDFium 打开即提取（结果在主进程缓存，滚动回来零成本）
+  useEffect(() => {
+    let cancelled = false;
+    setLinks([]);
+    window.pkm
+      .pdfiumLinks(pdfId, pageNumber)
+      .then((ls) => {
+        if (!cancelled) setLinks(ls);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [pdfId, pageNumber]);
 
   // Visible-area detection (small preload margin keeps switching fast)
   useEffect(() => {
@@ -123,10 +143,15 @@ export function PdfPage({
           vp = page.getViewport({ scale });
         } else if (fallbackW != null && fallbackH != null) {
           // PDFium 已给出页面尺寸：先用它布局占位，等 pdf.js 就绪后换真实 viewport
+          // （尺寸已含旋转，无旋转时 convertToViewportPoint 即按比例缩放）
           vp = {
             width: fallbackW * scale,
             height: fallbackH * scale,
             scale,
+            convertToViewportPoint: (x: number, y: number) => [
+              x * scale,
+              (fallbackH - y) * scale,
+            ],
           } as PageViewport;
         }
         if (!vp) return;
@@ -218,7 +243,10 @@ export function PdfPage({
     await layer.render();
     if (seq !== renderSeqRef.current) return;
 
-    const annotationsList = await page.getAnnotations();
+    // PDFium 路径下链接由原生层渲染（首帧即用），跳过 pdf.js 的 Link 注解避免重复
+    const annotationsList = (await page.getAnnotations()).filter(
+      (a) => renderer !== 'pdfium' || a.subtype !== 'Link',
+    );
     if (seq !== renderSeqRef.current) return;
     ann.textContent = '';
     const annLayer = new pdfjsLib.AnnotationLayer({
@@ -343,6 +371,32 @@ export function PdfPage({
       <canvas ref={canvasRef} className="block" />
       <div ref={textRef} className="textLayer" />
       <div ref={annRef} className="annotationLayer" />
+
+      {/* PDFium 原生链接层：首帧位图渲染即出现，点击跳转/打开外链，不依赖 pdf.js */}
+      {viewport &&
+        links.map((l, i) => {
+          const [lx, ly] = viewport.convertToViewportPoint(l.x, l.y + l.h);
+          const [rx, ry] = viewport.convertToViewportPoint(l.x + l.w, l.y);
+          return (
+            <div
+              key={`pl-${i}`}
+              className="pdf-link-overlay"
+              data-url={l.url}
+              data-dest-page={l.destPage}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (l.url) void window.pkm.openExternalUrl(l.url).catch(() => undefined);
+                else if (l.destPage) onJumpToPage?.(l.destPage);
+              }}
+              style={{
+                left: lx,
+                top: ly,
+                width: Math.max(1, rx - lx),
+                height: Math.max(1, ry - ly),
+              }}
+            />
+          );
+        })}
 
       {/* 渲染中的动态加载动画（避免大文件黑屏） */}
       {pending && !renderError && (

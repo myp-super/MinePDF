@@ -216,6 +216,18 @@ body {
   background-color: rgb(255 255 0 / 0.2);
 }
 
+/* ---------- PDFium 原生链接层：手型光标 + 悬停高亮 ---------- */
+.pdf-link-overlay {
+  position: absolute;
+  cursor: pointer;
+  z-index: 5;
+  border-radius: 1px;
+}
+.pdf-link-overlay:hover {
+  background: rgba(255, 255, 0, 0.16);
+  outline: 1px solid rgba(255, 255, 0, 0.4);
+}
+
 /* ---------- highlight / search overlays ---------- */
 .annotation-hl {
   position: absolute;

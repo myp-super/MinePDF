@@ -16,6 +16,7 @@ import fs from 'fs';
 import path from 'path';
 import koffi from 'koffi';
 import { repository } from '../db/repository';
+import type { PdfiumLink } from '../../src/shared/types';
 
 export interface PdfiumOpenResult {
   /** PDF 页数（1 起） */
@@ -59,6 +60,16 @@ interface PdfiumApi {
     rotate: number,
     flags: number,
   ) => void;
+  annotCount: (page: unknown) => number;
+  getAnnot: (page: unknown, index: number) => unknown;
+  annotSubtype: (annot: unknown) => number;
+  annotLink: (annot: unknown) => unknown;
+  linkRect: (link: unknown, rect: unknown) => number;
+  linkDest: (doc: unknown, link: unknown) => unknown;
+  destPageIndex: (doc: unknown, dest: unknown) => number;
+  linkAction: (link: unknown) => unknown;
+  actionType: (action: unknown) => number;
+  actionURI: (doc: unknown, action: unknown, buffer: unknown, buflen: number) => number;
 }
 
 // ---------- PDFium 位图格式 / 渲染标志（fpdfview.h） ----------
@@ -75,6 +86,12 @@ const MAX_PAGE_DIM = 6000;
 const MAX_SCALE = 4;
 
 const FS_SIZEF = koffi.struct('FS_SIZEF', { width: 'float', height: 'float' });
+const FS_RECTF = koffi.struct('FS_RECTF', {
+  left: 'float',
+  top: 'float',
+  right: 'float',
+  bottom: 'float',
+});
 
 let lib: PdfiumApi | null = null;
 let libTried = false;
@@ -138,6 +155,16 @@ function ensureLib(): PdfiumApi | null {
       render: k.func(
         'void FPDF_RenderPageBitmap(void *bmp, void *page, int x, int y, int sx, int sy, int rotate, int flags)',
       ),
+      annotCount: k.func('int FPDFPage_GetAnnotCount(void *page)'),
+      getAnnot: k.func('void *FPDFPage_GetAnnot(void *page, int index)'),
+      annotSubtype: k.func('int FPDFAnnot_GetSubtype(void *annot)'),
+      annotLink: k.func('void *FPDFAnnot_GetLink(void *annot)'),
+      linkRect: k.func('int FPDFLink_GetAnnotRect(void *link, FS_RECTF *rect)'),
+      linkDest: k.func('void *FPDFLink_GetDest(void *doc, void *link)'),
+      destPageIndex: k.func('int FPDFDest_GetDestPageIndex(void *doc, void *dest)'),
+      linkAction: k.func('void *FPDFLink_GetAction(void *link)'),
+      actionType: k.func('int FPDFAction_GetType(void *action)'),
+      actionURI: k.func('int FPDFAction_GetURIPath(void *doc, void *action, char *buffer, int buflen)'),
     };
     lib.init();
     dllVersion = readVersion();
@@ -228,6 +255,91 @@ export async function pdfiumPageSizes(pdfId: number): Promise<{ w: number; h: nu
       /* ignore */
     }
   }
+}
+
+// ---------- 原生链接提取（首帧即用，不依赖 pdf.js 解析） ----------
+const FPDF_ANNOT_LINK = 2;
+const FPDF_ACTION_URI = 3;
+const LINKS_CACHE_MAX = 400;
+const linksCache = new Map<string, PdfiumLink[]>();
+
+/**
+ * 提取指定页的所有 Link 注解为可点击矩形（PDF 用户空间，y 轴向上）。
+ * 结果缓存，重复请求（滚动回来/缩放重渲染）不重复解析。
+ */
+export function pdfiumLinks(pdfId: number, pageNumber: number): PdfiumLink[] {
+  const key = `${pdfId}:${pageNumber}`;
+  const hit = linksCache.get(key);
+  if (hit) return hit;
+  const api = ensureLib();
+  if (!api) throw new Error('PDFIUM_UNAVAILABLE');
+  const filepath = getPdfPath(pdfId);
+  const doc = api.loadDoc(filepath, null);
+  if (!doc) throw new Error('ERR_PDF_OPEN_FAILED:PDFium cannot open the file');
+  const out: PdfiumLink[] = [];
+  try {
+    const pageIndex = Math.max(0, pageNumber - 1);
+    const page = api.loadPage(doc, pageIndex);
+    if (!page) return out;
+    try {
+      const count = api.annotCount(page);
+      const rectPtr = koffi.alloc(FS_RECTF, 1);
+      try {
+        for (let i = 0; i < count; i++) {
+          const annot = api.getAnnot(page, i);
+          if (!annot || api.annotSubtype(annot) !== FPDF_ANNOT_LINK) continue;
+          const link = api.annotLink(annot);
+          if (!link || !api.linkRect(link, rectPtr)) continue;
+          const r = koffi.decode(rectPtr, 'FS_RECTF') as {
+            left: number;
+            top: number;
+            right: number;
+            bottom: number;
+          };
+          const w = Math.max(0, r.right - r.left);
+          const h = Math.max(0, r.top - r.bottom);
+          if (w < 1 || h < 1) continue;
+          const item: PdfiumLink = { x: r.left, y: r.bottom, w, h };
+          const dest = api.linkDest(doc, link);
+          if (dest) {
+            const pageIdx = api.destPageIndex(doc, dest);
+            if (pageIdx >= 0) item.destPage = pageIdx + 1;
+          }
+          const action = api.linkAction(link);
+          if (action && api.actionType(action) === FPDF_ACTION_URI) {
+            const len = api.actionURI(doc, action, null, 0);
+            if (len > 0) {
+              const buf = koffi.alloc('char', len + 1);
+              try {
+                api.actionURI(doc, action, buf, len + 1);
+                item.url = koffi.decode(buf, 'char', len).replace(/\0+$/, '');
+              } finally {
+                koffi.free(buf);
+              }
+            }
+          }
+          out.push(item);
+        }
+      } finally {
+        koffi.free(rectPtr);
+      }
+    } finally {
+      api.closePage(page);
+    }
+  } finally {
+    try {
+      api.closeDoc(doc);
+    } catch {
+      /* ignore */
+    }
+  }
+  linksCache.set(key, out);
+  while (linksCache.size > LINKS_CACHE_MAX) {
+    const oldestKey = linksCache.keys().next().value as string | undefined;
+    if (oldestKey == null) break;
+    linksCache.delete(oldestKey);
+  }
+  return out;
 }
 
 /**

@@ -143,6 +143,18 @@ export interface PdfiumRenderResult {
   ms: number;
 }
 
+/** PDFium 原生提取的页内链接（坐标使用 PDF 用户空间，y 轴向上，与高亮四元组一致） */
+export interface PdfiumLink {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  /** 外部链接 URL（http/https/mailto/tel） */
+  url?: string;
+  /** 页内跳转目标（1 起） */
+  destPage?: number;
+}
+
 export interface SearchResult {
   pdfs: PdfRecord[];
   notes: Array<{ pdf: PdfRecord; snippet: string }>;
@@ -217,6 +229,8 @@ export interface PkmApi {
   pdfiumOpen(pdfId: number): Promise<PdfiumOpenResult | null>;
   /** 一次性返回所有页面的物理尺寸（pt，已含旋转），供虚拟滚动精确布局 */
   pdfiumPageSizes(pdfId: number): Promise<{ w: number; h: number }[]>;
+  /** 原生提取指定页的链接矩形（首帧即可用，不依赖 pdf.js 解析） */
+  pdfiumLinks(pdfId: number, page: number): Promise<PdfiumLink[]>;
   pdfiumRender(pdfId: number, page: number, scale: number): Promise<PdfiumRenderResult>;
   pdfiumRenderBatch(pdfId: number, pages: number[], scale: number): Promise<PdfiumRenderResult[]>;
   pdfiumClose(pdfId: number): Promise<void>;

@@ -531,11 +531,13 @@ async function createMainWindow(): Promise<BrowserWindow> {
                 await new Promise((r) => setTimeout(r, 3600));
                 const linkDiag = await win.webContents.executeJavaScript(`
                   (() => {
-                    const ann = document.querySelector('.annotationLayer');
-                    if (!ann) return { layer: false };
-                    const links = ann.querySelectorAll('a');
-                    const clickable = [...links].filter((a) => a.onclick || a.getAttribute('data-internal-link') !== null || (a.getAttribute('href') || '').length > 0);
-                    return { layer: true, sections: ann.querySelectorAll('section').length, links: links.length, clickable: clickable.length };
+                    const links = [...document.querySelectorAll('.pdf-link-overlay')];
+                    return {
+                      layer: links.length > 0,
+                      links: links.length,
+                      urlLinks: links.filter((a) => a.getAttribute('data-url')).length,
+                      destLinks: links.filter((a) => a.getAttribute('data-dest-page')).length,
+                    };
                   })()
                 `);
                 console.log('[capture] linkDiag', JSON.stringify(linkDiag));
@@ -562,11 +564,10 @@ async function createMainWindow(): Promise<BrowserWindow> {
                     };
                     window.__pkmOpenPdf(pdf.id);
                     await new Promise((r) => setTimeout(r, 2200));
-                    const links = [...document.querySelectorAll('.annotationLayer a')];
+                    const links = [...document.querySelectorAll('.pdf-link-overlay')];
                     const info = links.map((a) => ({
-                      href: a.getAttribute('href'),
-                      internal: a.getAttribute('data-internal-link'),
-                      hasOnclick: !!a.onclick,
+                      url: (a.getAttribute('data-url') || '').slice(0, 60),
+                      destPage: a.getAttribute('data-dest-page'),
                     }));
                     const sc = document.querySelector('[data-pan-scroll]');
                     const before = sc ? sc.scrollTop : -1;
@@ -575,14 +576,16 @@ async function createMainWindow(): Promise<BrowserWindow> {
                     await new Promise((r) => setTimeout(r, 150));
                     const manualScroll = sc ? sc.scrollTop : -1;
                     if (sc) sc.scrollTop = 0;
-                    if (links[0]) links[0].click();
+                    const destLink = links.find((a) => a.getAttribute('data-dest-page'));
+                    if (destLink) destLink.click();
                     await new Promise((r) => setTimeout(r, 700));
                     const after = sc ? sc.scrollTop : -1;
                     const sheets = document.querySelectorAll('.pdf-page-sheet').length;
                     const page2 = [...document.querySelectorAll('.pdf-page-sheet')].some(
                       (el) => el.getAttribute('data-page-number') === '2',
                     );
-                    for (const a of links.slice(1)) if (a) a.click();
+                    const urlLink = links.find((a) => a.getAttribute('data-url'));
+                    if (urlLink) urlLink.click();
                     await new Promise((r) => setTimeout(r, 300));
                     window.pkm.openExternalUrl = orig;
                     return {
@@ -599,6 +602,54 @@ async function createMainWindow(): Promise<BrowserWindow> {
                   })()
                 `);
                 console.log('[capture] linkClickDiag', JSON.stringify(linkClickDiag));
+                // 临时诊断：真实 PDF 外链/内链点击（仅 PKM_TEST_PDF 设置时运行）
+                if (process.env.PKM_TEST_PDF) {
+                  const realLinkDiag = await win.webContents.executeJavaScript(`
+                    (async () => {
+                      const p = ${JSON.stringify(process.env.PKM_TEST_PDF)};
+                      if (window.__pkmAct) window.__pkmAct('clearScreens');
+                      await new Promise((r) => setTimeout(r, 200));
+                      await window.pkm.importPdfs([p], null);
+                      const snap = await window.pkm.getSnapshot();
+                      const pdf = snap.pdfs.find((x) => x.filepath.includes('Submission guidelines'));
+                      if (!pdf) return { pdf: false };
+                      window.__pkmOpenPdf(pdf.id);
+                      // 早期检查：pdf.js 很可能尚未解析完，原生链接层应已出现
+                      await new Promise((r) => setTimeout(r, 900));
+                      const early = document.querySelectorAll('.pdf-link-overlay').length;
+                      const earlyAnn = document.querySelector('.annotationLayer section');
+                      await new Promise((r) => setTimeout(r, 3100));
+                      const sheets = document.querySelectorAll('.pdf-page-sheet').length;
+                      const links = [...document.querySelectorAll('.pdf-link-overlay')];
+                      const linkInfo = links.slice(0, 8).map((a) => ({
+                        url: (a.getAttribute('data-url') || '').slice(0, 60),
+                        destPage: a.getAttribute('data-dest-page'),
+                      }));
+                      const sc = document.querySelector('[data-pan-scroll]');
+                      const before = sc ? sc.scrollTop : -1;
+                      const internalLink = links.find((a) => a.getAttribute('data-dest-page'));
+                      if (internalLink) internalLink.click();
+                      await new Promise((r) => setTimeout(r, 800));
+                      const after = sc ? sc.scrollTop : -1;
+                      const externalLink = links.find((a) => a.getAttribute('data-url'));
+                      if (externalLink) externalLink.click();
+                      await new Promise((r) => setTimeout(r, 500));
+                      return {
+                        pdf: true,
+                        earlyLinks: early,
+                        earlyPdfjsLayer: !!earlyAnn,
+                        sheets,
+                        links: links.length,
+                        linkInfo,
+                        internalJumped: after > before,
+                        before,
+                        after,
+                        clickedExternal: !!externalLink,
+                      };
+                    })()
+                  `);
+                  console.log('[capture] realLinkDiag', JSON.stringify(realLinkDiag));
+                }
                 await win.webContents.executeJavaScript(`
                   (() => {
                     const btn = [...document.querySelectorAll('button')].find(b => (b.textContent || '').trim() === '书签');
