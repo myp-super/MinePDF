@@ -436,8 +436,8 @@ export const repository = {
     }
   },
 
-  /** 同级拖拽排序：把文件夹排到 beforeId 之前（beforeId=null 表示排到末尾） */
-  reorderFolder(id: number, beforeId: number | null): void {
+  /** 同级拖拽排序：beforeId 表示排到其前；afterId 表示排到其后；都为空则排到末尾 */
+  reorderFolder(id: number, beforeId: number | null, afterId: number | null = null): void {
     const db = getDb();
     const f = this.getFolder(id);
     if (!f) throw new Error('文件夹不存在');
@@ -451,14 +451,17 @@ export const repository = {
     if (beforeId != null) {
       const idx = ids.indexOf(beforeId);
       if (idx !== -1) insertAt = idx;
+    } else if (afterId != null) {
+      const idx = ids.indexOf(afterId);
+      if (idx !== -1) insertAt = idx + 1;
     }
     ids.splice(insertAt, 0, id);
     const upd = db.prepare('UPDATE folders SET sort_order = ? WHERE id = ?');
     ids.forEach((fid, i) => upd.run(i, fid));
   },
 
-  /** 知识库拖拽排序：把知识库排到 beforeId 之前（beforeId=null 表示排到末尾） */
-  reorderLibrary(id: number, beforeId: number | null): void {
+  /** 知识库拖拽排序：beforeId 表示排到其前；afterId 表示排到其后；都为空则排到末尾 */
+  reorderLibrary(id: number, beforeId: number | null, afterId: number | null = null): void {
     const db = getDb();
     if (!this.getLibrary(id)) throw new Error('知识库不存在');
     const siblings = db
@@ -469,6 +472,9 @@ export const repository = {
     if (beforeId != null) {
       const idx = ids.indexOf(beforeId);
       if (idx !== -1) insertAt = idx;
+    } else if (afterId != null) {
+      const idx = ids.indexOf(afterId);
+      if (idx !== -1) insertAt = idx + 1;
     }
     ids.splice(insertAt, 0, id);
     const upd = db.prepare('UPDATE libraries SET sort_order = ? WHERE id = ?');

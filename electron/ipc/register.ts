@@ -351,8 +351,8 @@ export function registerIpc(): void {
   handle<LibraryRecord>('library:create', (name: string) => repository.createLibrary(name));
   handle('library:rename', (id: number, name: string) => repository.renameLibrary(id, name));
   handle('library:delete', (id: number) => repository.deleteLibrary(id));
-  handle('library:reorder', (id: number, beforeId: number | null) =>
-    repository.reorderLibrary(id, beforeId),
+  handle('library:reorder', (id: number, beforeId: number | null, afterId: number | null) =>
+    repository.reorderLibrary(id, beforeId, afterId),
   );
 
   // ---------- 文件夹 ----------
@@ -360,8 +360,8 @@ export function registerIpc(): void {
   handle('folder:rename', (id: number, name: string) => repository.renameFolder(id, name));
   handle('folder:delete', (id: number) => repository.deleteFolder(id));
   handle('folder:move', (id: number, parentId: number | null) => repository.moveFolder(id, parentId));
-  handle('folder:reorder', (id: number, beforeId: number | null) =>
-    repository.reorderFolder(id, beforeId),
+  handle('folder:reorder', (id: number, beforeId: number | null, afterId: number | null) =>
+    repository.reorderFolder(id, beforeId, afterId),
   );
 
   // ---------- 临时阅读区（Inbox） ----------

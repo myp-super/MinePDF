@@ -64,15 +64,17 @@ function pathsFromDrag(e: React.DragEvent): string[] {
 async function reorderFolderInto(
   folders: FolderType[],
   draggedId: number,
-  beforeId: number | null,
+  targetId: number | null,
   targetParentId: number,
+  after = false,
 ): Promise<void> {
   const dragged = folders.find((x) => x.id === draggedId);
   if (!dragged) return;
   if (dragged.parentId !== targetParentId) {
     await window.pkm.moveFolder(draggedId, targetParentId);
   }
-  await window.pkm.reorderFolder(draggedId, beforeId);
+  if (after) await window.pkm.reorderFolder(draggedId, null, targetId);
+  else await window.pkm.reorderFolder(draggedId, targetId, null);
 }
 
 /** 行与行之间的插入指示条：拖到此处表示“排在该行之前” */
@@ -663,6 +665,14 @@ export function Sidebar() {
           // 点击树区空白处取消多选
           if (!(e.target as HTMLElement).closest('[role="treeitem"]')) clearSelectedPdfs();
         }}
+        onDragOver={(e) => {
+          // 拖拽时靠近上下边缘自动滚动，便于把项目拖到可视区外的位置
+          const el = e.currentTarget;
+          const r = el.getBoundingClientRect();
+          const threshold = 40;
+          if (e.clientY < r.top + threshold) el.scrollTop -= 14;
+          else if (e.clientY > r.bottom - threshold) el.scrollTop += 14;
+        }}
         onContextMenu={(e) => {
           // 知识库区空白处右键：新建知识库 / 新建子文件夹 / 导入 PDF
           if (!(e.target as HTMLElement).closest('[role="treeitem"]')) {
@@ -763,10 +773,10 @@ export function Sidebar() {
                   })()
                 }
                 sortMode={sortMode}
-                onReorderLibrary={(libId) =>
+                onReorderLibrary={(libId, after) =>
                   void (async () => {
                     try {
-                      await window.pkm.reorderLibrary(libId, lib.id);
+                      await window.pkm.reorderLibrary(libId, after ? null : lib.id, after ? lib.id : null);
                       await refresh();
                     } catch (err) {
                       toast('error', terr(err instanceof Error ? err.message : String(err)));
@@ -1015,7 +1025,7 @@ function LibraryNode({
   onDropFolder: (folderId: number) => void;
   onDropPdf: (pdfId: number) => void;
   sortMode: boolean;
-  onReorderLibrary: (libId: number) => void;
+  onReorderLibrary: (libId: number, after: boolean) => void;
 }) {
   const t = useT();
   const terr = useTError();
@@ -1065,7 +1075,8 @@ function LibraryNode({
     const l = e.dataTransfer.getData(LIBRARY_MIME);
     try {
       if (sortMode && l) {
-        onReorderLibrary(Number(l));
+        const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+        onReorderLibrary(Number(l), e.clientY > rect.top + rect.height / 2);
         toggleExpanded(lib.rootFolderId);
       } else if (sortMode) {
         // 排序模式下拖文件夹到知识库行不执行“移入”，避免误操作
@@ -1476,7 +1487,9 @@ function FolderNode({
       if (sortMode && f) {
         const dragged = folders.find((x) => x.id === Number(f));
         if (!dragged || dragged.parentId !== folder.parentId) return;
-        await reorderFolderInto(folders, Number(f), folder.id, folder.parentId!);
+        const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+        const after = e.clientY > rect.top + rect.height / 2;
+        await reorderFolderInto(folders, Number(f), folder.id, folder.parentId!, after);
         await refresh();
       } else if (sortMode) {
         return;

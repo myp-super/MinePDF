@@ -450,12 +450,17 @@ async function createMainWindow(): Promise<BrowserWindow> {
               const root0 = snap0.libraries[0].rootFolderId;
               const a = await window.pkm.createFolder('排序A', root0);
               const b = await window.pkm.createFolder('排序B', root0);
-              await window.pkm.reorderFolder(b.id, a.id);
+              const c = await window.pkm.createFolder('排序C', root0);
+              // 向下移动：A 排到 C 之后 → [B, C, A]
+              await window.pkm.reorderFolder(a.id, null, c.id);
               const snap = await window.pkm.getSnapshot();
               const kids = snap.folders.filter((x) => x.parentId === root0);
-              const ok = kids.findIndex((x) => x.id === b.id) < kids.findIndex((x) => x.id === a.id);
+              const ok =
+                kids.findIndex((x) => x.id === b.id) < kids.findIndex((x) => x.id === c.id) &&
+                kids.findIndex((x) => x.id === c.id) < kids.findIndex((x) => x.id === a.id);
               await window.pkm.deleteFolder(a.id);
               await window.pkm.deleteFolder(b.id);
+              await window.pkm.deleteFolder(c.id);
               return ok;
             });
             void reorderFolders;
@@ -463,11 +468,16 @@ async function createMainWindow(): Promise<BrowserWindow> {
               const lib2 = await window.pkm.createLibrary('排序知识库');
               const libs = await window.pkm.libraryList();
               const first = libs[0];
-              await window.pkm.reorderLibrary(lib2.id, first.id);
+              // 向上移动：lib2 排到 first 之前
+              await window.pkm.reorderLibrary(lib2.id, first.id, null);
+              const libsUp = await window.pkm.libraryList();
+              const upOk = libsUp[0] && libsUp[0].id === lib2.id;
+              // 向下移动：lib2 排到 first 之后
+              await window.pkm.reorderLibrary(lib2.id, null, first.id);
               const libs2 = await window.pkm.libraryList();
-              const ok = libs2[0] && libs2[0].id === lib2.id;
+              const downOk = libs2[0] && libs2[0].id === first.id && libs2[1] && libs2[1].id === lib2.id;
               if (lib2) await window.pkm.deleteLibrary(lib2.id);
-              return !!ok;
+              return upOk && downOk;
             });
             void reorderLibs;
           }
