@@ -1,8 +1,8 @@
 {
-  "version": "3.4.1",
   "publishDate": "2026-08-10",
+  "url": "https://github.com/myp-super/MinePDF/releases/download/v3.4.2/MinePDF.Setup.3.4.2.exe",
+  "version": "3.4.2",
   "notes": [
-    "v3.4.1 - 移除PDF界面悬停时'按住右键拖动平移'的提示文字"
-  ],
-  "url": "https://github.com/myp-super/MinePDF/releases/download/v3.4.1/MinePDF.Setup.3.4.1.exe"
+    "v3.4.2 - Edge式高亮选词：基于pdf.js文本项连续选词（空格/标点/混排不再断开），按行合并成整块色块，拖拽实时荧光笔预览，松手入库"
+  ]
 }
