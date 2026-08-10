@@ -1,8 +1,8 @@
 {
-  "publishDate": "2026-08-10",
-  "version": "3.3.5",
   "notes": [
-    "v3.3.5 - 修复双击PDF首次进入临时区不渲染（启动就绪后再派发外部文件+兜底重试），支持拖拽PDF到临时区"
+    "v3.3.6 - 知识库文件总数包含子文件夹，移除操作成功/提示类角标通知"
   ],
-  "url": "https://github.com/myp-super/MinePDF/releases/download/v3.3.5/MinePDF.Setup.3.3.5.exe"
+  "version": "3.3.6",
+  "publishDate": "2026-08-10",
+  "url": "https://github.com/myp-super/MinePDF/releases/download/v3.3.6/MinePDF.Setup.3.3.6.exe"
 }
