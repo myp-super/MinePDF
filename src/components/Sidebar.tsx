@@ -20,7 +20,7 @@ import {
   Settings,
   Trash2,
 } from 'lucide-react';
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { useT, useTError } from '../i18n';
 import type { Folder as FolderType, LibraryRecord, PdfRecord } from '../shared/types';
 import { useApp } from '../store';
@@ -28,6 +28,7 @@ import { Button, ConfirmDialog, ContextMenu, type ContextMenuItem, IconButton, M
 
 const FOLDER_MIME = 'application/x-pkm-folder';
 const PDF_MIME = 'application/x-pkm-pdf';
+const LIBRARY_MIME = 'application/x-pkm-library';
 
 interface ConfirmState {
   title: string;
@@ -57,6 +58,60 @@ function pathsFromDrag(e: React.DragEvent): string[] {
     }
   }
   return paths;
+}
+
+/** 同级拖拽排序：先归入目标父级（如需），再排到 beforeId 之前 */
+async function reorderFolderInto(
+  folders: FolderType[],
+  draggedId: number,
+  beforeId: number | null,
+  targetParentId: number,
+): Promise<void> {
+  const dragged = folders.find((x) => x.id === draggedId);
+  if (!dragged) return;
+  if (dragged.parentId !== targetParentId) {
+    await window.pkm.moveFolder(draggedId, targetParentId);
+  }
+  await window.pkm.reorderFolder(draggedId, beforeId);
+}
+
+/** 行与行之间的插入指示条：拖到此处表示“排在该行之前” */
+function InsertZone({
+  onDrop,
+}: {
+  onDrop: (draggedId: number, kind: 'folder' | 'library') => void;
+}) {
+  const [over, setOver] = useState(false);
+  const depth = useRef(0);
+  return (
+    <div
+      className={over ? 'mx-0.5 h-1 rounded-full bg-app-accent/80' : 'h-1'}
+      onDragOver={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+      }}
+      onDragEnter={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        depth.current += 1;
+        setOver(true);
+      }}
+      onDragLeave={() => {
+        depth.current = Math.max(0, depth.current - 1);
+        if (depth.current === 0) setOver(false);
+      }}
+      onDrop={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        depth.current = 0;
+        setOver(false);
+        const f = e.dataTransfer.getData(FOLDER_MIME);
+        const l = e.dataTransfer.getData(LIBRARY_MIME);
+        if (f) onDrop(Number(f), 'folder');
+        else if (l) onDrop(Number(l), 'library');
+      }}
+    />
+  );
 }
 
 export function Sidebar() {
@@ -137,12 +192,16 @@ export function Sidebar() {
 
   const defaultLibrary = useMemo(() => libraries[0] ?? null, [libraries]);
 
-  // 知识库默认展开（Obsidian 式），用户手动折叠过的保持折叠
+  const seenLibIds = useRef<Set<number>>(new Set());
+  // 知识库默认展开（Obsidian 式）：只对首次出现的新知识库自动展开，
+  // 用户手动折叠/展开的状态在刷新后保持，不会被自动还原
   useEffect(() => {
     setExpanded((s) => {
       const next = new Set(s);
       let changed = false;
       for (const l of libraries) {
+        if (seenLibIds.current.has(l.id)) continue;
+        seenLibIds.current.add(l.id);
         if (!next.has(l.rootFolderId)) {
           next.add(l.rootFolderId);
           changed = true;
@@ -610,9 +669,22 @@ export function Sidebar() {
         ) : (
           <div className="mt-0.5">
             {libraries.map((lib) => (
-              <LibraryNode
-                key={lib.id}
-                lib={lib}
+              <Fragment key={lib.id}>
+                <InsertZone
+                  onDrop={(id, kind) => {
+                    if (kind !== 'library') return;
+                    void (async () => {
+                      try {
+                        await window.pkm.reorderLibrary(id, lib.id);
+                        await refresh();
+                      } catch (err) {
+                        toast('error', terr(err instanceof Error ? err.message : String(err)));
+                      }
+                    })();
+                  }}
+                />
+                <LibraryNode
+                  lib={lib}
                 defaultLibrary={defaultLibrary}
                 expanded={expanded}
                 toggleExpanded={toggleExpanded}
@@ -665,8 +737,22 @@ export function Sidebar() {
                     }
                   })()
                 }
-              />
+                />
+              </Fragment>
             ))}
+            <InsertZone
+              onDrop={(id, kind) => {
+                if (kind !== 'library') return;
+                void (async () => {
+                  try {
+                    await window.pkm.reorderLibrary(id, null);
+                    await refresh();
+                  } catch (err) {
+                    toast('error', terr(err instanceof Error ? err.message : String(err)));
+                  }
+                })();
+              }}
+            />
             {libraries.length === 0 && (
               <div
                 className="cursor-pointer rounded-md border border-dashed border-app-border px-2 py-3 text-center text-[11px] text-app-muted transition-colors hover:border-app-accent/50 hover:bg-app-panel2"
@@ -1012,6 +1098,11 @@ function LibraryNode({
             : 'text-app-text/90'
         } focus-visible:ring-2 focus-visible:ring-app-accent/60`}
         style={{ paddingLeft: 6 }}
+        draggable
+        onDragStart={(e) => {
+          e.dataTransfer.setData(LIBRARY_MIME, String(lib.id));
+          e.dataTransfer.effectAllowed = 'move';
+        }}
         onDragOver={noDrag}
         onDragEnter={(e) => {
           noDrag(e);
@@ -1070,26 +1161,53 @@ function LibraryNode({
       {isOpen && (
         <div>
           {children.map((f) => (
-            <FolderNode
-              key={f.id}
-              folder={f}
-              depth={0}
-              renamingId={renamingId}
-              expanded={expanded}
-              toggleExpanded={toggleExpanded}
-              refresh={refresh}
-              toast={toast}
-              openPdf={openPdf}
-              onMenu={onMenu}
-              onPdfMenu={onPdfMenu}
-              setConfirm={setConfirm}
-              createChild={createChild}
-              onMoveTo={onMoveTo}
-              onRenameDone={onRenameDone}
-              onRemovePdf={onRemovePdf}
-              onDropFiles={onDropFiles}
-            />
+            <Fragment key={f.id}>
+              <InsertZone
+                onDrop={(id, kind) => {
+                  if (kind !== 'folder') return;
+                  void (async () => {
+                    try {
+                      await reorderFolderInto(folders, id, f.id, lib.rootFolderId);
+                      await refresh();
+                    } catch (err) {
+                      toast('error', terr(err instanceof Error ? err.message : String(err)));
+                    }
+                  })();
+                }}
+              />
+              <FolderNode
+                folder={f}
+                depth={0}
+                renamingId={renamingId}
+                expanded={expanded}
+                toggleExpanded={toggleExpanded}
+                refresh={refresh}
+                toast={toast}
+                openPdf={openPdf}
+                onMenu={onMenu}
+                onPdfMenu={onPdfMenu}
+                setConfirm={setConfirm}
+                createChild={createChild}
+                onMoveTo={onMoveTo}
+                onRenameDone={onRenameDone}
+                onRemovePdf={onRemovePdf}
+                onDropFiles={onDropFiles}
+              />
+            </Fragment>
           ))}
+          <InsertZone
+            onDrop={(id, kind) => {
+              if (kind !== 'folder') return;
+              void (async () => {
+                try {
+                  await reorderFolderInto(folders, id, null, lib.rootFolderId);
+                  await refresh();
+                } catch (err) {
+                  toast('error', terr(err instanceof Error ? err.message : String(err)));
+                }
+              })();
+            }}
+          />
           {pdfsIn.map((p) => (
             <PdfRow
               key={p.id}
@@ -1125,9 +1243,21 @@ export function FolderTreePicker({
   const [expanded, setExpanded] = useState<Set<number>>(
     () => new Set(libraries.map((l) => l.rootFolderId)),
   );
+  const [selectedId, setSelectedId] = useState<number | null>(null);
   useEffect(() => {
-    if (open) setExpanded(new Set(libraries.map((l) => l.rootFolderId)));
+    if (open) {
+      setExpanded(new Set(libraries.map((l) => l.rootFolderId)));
+      setSelectedId(libraries[0]?.rootFolderId ?? null);
+    }
   }, [open, libraries]);
+
+  const toggle = (id: number) =>
+    setExpanded((s) => {
+      const next = new Set(s);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
 
   const renderFolder = (parentId: number, depth: number) => {
     const children = folders.filter((f) => f.parentId === parentId);
@@ -1136,20 +1266,21 @@ export function FolderTreePicker({
         {children.map((f) => (
           <div key={f.id}>
             <div
-              className="group flex w-full cursor-pointer items-center gap-1 rounded-md px-2 py-1.5 text-left text-xs hover:bg-app-panel2"
+              className={`flex w-full cursor-pointer items-center gap-1 rounded-md px-2 py-1.5 text-left text-xs hover:bg-app-panel2 ${
+                selectedId === f.id ? 'bg-app-accent/15 text-app-text' : ''
+              }`}
               style={{ paddingLeft: 10 + depth * 14 }}
-              onClick={() => onPick(f.id)}
+              onClick={() => {
+                setSelectedId(f.id);
+                toggle(f.id);
+              }}
             >
               <button
                 className="flex h-4 w-4 shrink-0 items-center justify-center text-app-muted"
                 onClick={(e) => {
                   e.stopPropagation();
-                  setExpanded((s) => {
-                    const next = new Set(s);
-                    if (next.has(f.id)) next.delete(f.id);
-                    else next.add(f.id);
-                    return next;
-                  });
+                  setSelectedId(f.id);
+                  toggle(f.id);
                 }}
                 aria-label={t('sidebar.expandCollapseFolder')}
               >
@@ -1176,19 +1307,20 @@ export function FolderTreePicker({
         {libraries.map((lib) => (
           <div key={lib.id}>
             <div
-              className="flex w-full cursor-pointer items-center gap-1 rounded-md px-2 py-1.5 text-left text-xs hover:bg-app-panel2"
-              onClick={() => onPick(lib.rootFolderId)}
+              className={`flex w-full cursor-pointer items-center gap-1 rounded-md px-2 py-1.5 text-left text-xs hover:bg-app-panel2 ${
+                selectedId === lib.rootFolderId ? 'bg-app-accent/15 text-app-text' : ''
+              }`}
+              onClick={() => {
+                setSelectedId(lib.rootFolderId);
+                toggle(lib.rootFolderId);
+              }}
             >
               <button
                 className="flex h-4 w-4 shrink-0 items-center justify-center text-app-muted"
                 onClick={(e) => {
                   e.stopPropagation();
-                  setExpanded((s) => {
-                    const next = new Set(s);
-                    if (next.has(lib.rootFolderId)) next.delete(lib.rootFolderId);
-                    else next.add(lib.rootFolderId);
-                    return next;
-                  });
+                  setSelectedId(lib.rootFolderId);
+                  toggle(lib.rootFolderId);
                 }}
                 aria-label={t('sidebar.expandCollapse')}
               >
@@ -1201,7 +1333,28 @@ export function FolderTreePicker({
           </div>
         ))}
       </div>
-      <div className="mt-2 text-[10.5px] text-app-muted">{t('sidebar.pickHint')}</div>
+      <div className="mt-2 flex items-center justify-between gap-2 border-t border-app-border pt-2">
+        <span className="min-w-0 flex-1 truncate text-[10.5px] text-app-muted">
+          {selectedId != null
+            ? t('sidebar.pickSelected', {
+                name:
+                  folders.find((f) => f.id === selectedId)?.name ??
+                  libraries.find((l) => l.rootFolderId === selectedId)?.name ??
+                  '',
+              })
+            : t('sidebar.pickHint')}
+        </span>
+        <Button
+          size="sm"
+          variant="primary"
+          disabled={selectedId == null}
+          onClick={() => {
+            if (selectedId != null) onPick(selectedId);
+          }}
+        >
+          {t('sidebar.pickConfirm')}
+        </Button>
+      </div>
     </Modal>
   );
 }
@@ -1450,26 +1603,53 @@ function FolderNode({
       {isOpen && (
         <div>
           {children.map((f) => (
-            <FolderNode
-              key={f.id}
-              folder={f}
-              depth={depth + 1}
-              expanded={expanded}
-              toggleExpanded={toggleExpanded}
-              refresh={refresh}
-              toast={toast}
-              openPdf={openPdf}
-              onMenu={onMenu}
-              onPdfMenu={onPdfMenu}
-              setConfirm={setConfirm}
-              renamingId={renamingId}
-              createChild={createChild}
-              onMoveTo={onMoveTo}
-              onRenameDone={onRenameDone}
-              onRemovePdf={onRemovePdf}
-              onDropFiles={onDropFiles}
-            />
+            <Fragment key={f.id}>
+              <InsertZone
+                onDrop={(id, kind) => {
+                  if (kind !== 'folder') return;
+                  void (async () => {
+                    try {
+                      await reorderFolderInto(folders, id, f.id, folder.id);
+                      await refresh();
+                    } catch (err) {
+                      toast('error', terr(err instanceof Error ? err.message : String(err)));
+                    }
+                  })();
+                }}
+              />
+              <FolderNode
+                folder={f}
+                depth={depth + 1}
+                expanded={expanded}
+                toggleExpanded={toggleExpanded}
+                refresh={refresh}
+                toast={toast}
+                openPdf={openPdf}
+                onMenu={onMenu}
+                onPdfMenu={onPdfMenu}
+                setConfirm={setConfirm}
+                renamingId={renamingId}
+                createChild={createChild}
+                onMoveTo={onMoveTo}
+                onRenameDone={onRenameDone}
+                onRemovePdf={onRemovePdf}
+                onDropFiles={onDropFiles}
+              />
+            </Fragment>
           ))}
+          <InsertZone
+            onDrop={(id, kind) => {
+              if (kind !== 'folder') return;
+              void (async () => {
+                try {
+                  await reorderFolderInto(folders, id, null, folder.id);
+                  await refresh();
+                } catch (err) {
+                  toast('error', terr(err instanceof Error ? err.message : String(err)));
+                }
+              })();
+            }}
+          />
           {pdfsIn.map((p) => (
             <PdfRow
               key={p.id}

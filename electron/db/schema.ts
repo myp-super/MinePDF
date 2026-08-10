@@ -6,6 +6,7 @@ export const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS libraries (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL,
+  sort_order INTEGER NOT NULL DEFAULT 0,
   created_time TEXT NOT NULL
 );
 
@@ -15,6 +16,7 @@ CREATE TABLE IF NOT EXISTS folders (
   parent_id INTEGER REFERENCES folders(id) ON DELETE CASCADE,
   path TEXT NOT NULL DEFAULT '',
   library_id INTEGER REFERENCES libraries(id) ON DELETE CASCADE,
+  sort_order INTEGER NOT NULL DEFAULT 0,
   created_time TEXT NOT NULL
 );
 
@@ -74,5 +76,5 @@ CREATE INDEX IF NOT EXISTS idx_pdf_tags_pdf ON pdf_tags(pdf_id);
 CREATE INDEX IF NOT EXISTS idx_pdf_tags_tag ON pdf_tags(tag_id);
 CREATE INDEX IF NOT EXISTS idx_notes_pdf ON notes(pdf_id);
 CREATE INDEX IF NOT EXISTS idx_annotations_pdf ON annotations(pdf_id);
-PRAGMA user_version = 6;
+PRAGMA user_version = 7;
 `;

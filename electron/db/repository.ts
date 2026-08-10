@@ -115,6 +115,14 @@ function joinRel(parent: string, name: string): string {
   return parent ? `${parent}/${name}` : name;
 }
 
+/** 同级下一个排序号（新文件夹/知识库追加到末尾） */
+function nextSiblingOrder(db: ReturnType<typeof getDb>, parentId: number | null): number {
+  const r = db
+    .prepare('SELECT COALESCE(MAX(sort_order), -1) AS m FROM folders WHERE parent_id IS ?')
+    .get(parentId) as Row;
+  return Number(r.m) + 1;
+}
+
 /** Next free filename inside dir: name.pdf, name (1).pdf, ... */
 function uniqueFileInDir(dir: string, filename: string): string {
   const ext = path.extname(filename);
@@ -155,7 +163,7 @@ export const repository = {
         `SELECT l.id, l.name, l.created_time, f.id AS root_folder_id
          FROM libraries l
          LEFT JOIN folders f ON f.library_id = l.id AND f.parent_id IS NULL
-         ORDER BY l.name COLLATE NOCASE`,
+         ORDER BY l.sort_order, l.name COLLATE NOCASE`,
       )
       .all() as Row[];
     return rows.map(mapLibrary);
@@ -193,7 +201,10 @@ export const repository = {
     const dir = path.join(getLibraryPdfDir(), n);
     if (fs.existsSync(dir)) throw new Error('本地目录已存在同名文件夹');
     const t = now();
-    const libRes = db.prepare('INSERT INTO libraries (name, created_time) VALUES (?, ?)').run(n, t);
+    const maxOrder = db.prepare('SELECT COALESCE(MAX(sort_order), -1) AS m FROM libraries').get() as Row;
+    const libRes = db
+      .prepare('INSERT INTO libraries (name, sort_order, created_time) VALUES (?, ?, ?)')
+      .run(n, Number(maxOrder.m) + 1, t);
     const libId = Number(libRes.lastInsertRowid);
     fs.mkdirSync(dir, { recursive: true });
     const fRes = db
@@ -237,7 +248,7 @@ export const repository = {
     const db = getDb();
     return (
       db
-        .prepare('SELECT * FROM folders ORDER BY name COLLATE NOCASE')
+        .prepare('SELECT * FROM folders ORDER BY sort_order, name COLLATE NOCASE')
         .all() as Row[]
     ).map(mapFolder);
   },
@@ -301,22 +312,25 @@ export const repository = {
         } else {
           const t = now();
           fs.mkdirSync(path.join(getLibraryPdfDir(), part), { recursive: true });
-          const r = db.prepare('INSERT INTO libraries (name, created_time) VALUES (?, ?)').run(part, t);
+          const maxOrder = db.prepare('SELECT COALESCE(MAX(sort_order), -1) AS m FROM libraries').get() as Row;
+          const r = db
+            .prepare('INSERT INTO libraries (name, sort_order, created_time) VALUES (?, ?, ?)')
+            .run(part, Number(maxOrder.m) + 1, t);
           newLibId = Number(r.lastInsertRowid);
         }
         libId = newLibId;
         const res = db
           .prepare(
-            'INSERT INTO folders (name, parent_id, path, library_id, created_time) VALUES (?, NULL, ?, ?, ?)',
+            'INSERT INTO folders (name, parent_id, path, library_id, sort_order, created_time) VALUES (?, NULL, ?, ?, ?, ?)',
           )
-          .run(part, acc, newLibId, now());
+          .run(part, acc, newLibId, nextSiblingOrder(db, null), now());
         folder = mapFolder(db.prepare('SELECT * FROM folders WHERE id = ?').get(res.lastInsertRowid) as Row);
       } else {
         const res = db
           .prepare(
-            'INSERT INTO folders (name, parent_id, path, library_id, created_time) VALUES (?, ?, ?, ?, ?)',
+            'INSERT INTO folders (name, parent_id, path, library_id, sort_order, created_time) VALUES (?, ?, ?, ?, ?, ?)',
           )
-          .run(part, parentId, acc, libId, now());
+          .run(part, parentId, acc, libId, nextSiblingOrder(db, parentId), now());
         folder = mapFolder(db.prepare('SELECT * FROM folders WHERE id = ?').get(res.lastInsertRowid) as Row);
       }
       parentId = folder.id;
@@ -340,9 +354,9 @@ export const repository = {
     realDirForRel(rel); // create the real directory in Library
     const res = db
       .prepare(
-        'INSERT INTO folders (name, parent_id, path, library_id, created_time) VALUES (?, ?, ?, ?, ?)',
+        'INSERT INTO folders (name, parent_id, path, library_id, sort_order, created_time) VALUES (?, ?, ?, ?, ?, ?)',
       )
-      .run(n, parentId, rel, parent.libraryId, now());
+      .run(n, parentId, rel, parent.libraryId, nextSiblingOrder(db, parentId), now());
     const created = db.prepare('SELECT * FROM folders WHERE id = ?').get(res.lastInsertRowid) as Row;
     return mapFolder(row(created));
   },
@@ -407,6 +421,11 @@ export const repository = {
     }
     db.prepare('UPDATE folders SET parent_id = ? WHERE id = ?').run(parentId, id);
     this.applyFolderRename(id, f.name, newRel);
+    // 移动到新位置后追加到同级末尾（用户可再拖拽排序）
+    db.prepare('UPDATE folders SET sort_order = ? WHERE id = ?').run(
+      nextSiblingOrder(db, parentId),
+      id,
+    );
     // 跨知识库移动时，整个子树归属新的知识库
     if (parent.libraryId != null) {
       db.prepare(`UPDATE folders SET library_id = ? WHERE path = ? OR path LIKE ? || '/%'`).run(
@@ -415,6 +434,45 @@ export const repository = {
         newRel,
       );
     }
+  },
+
+  /** 同级拖拽排序：把文件夹排到 beforeId 之前（beforeId=null 表示排到末尾） */
+  reorderFolder(id: number, beforeId: number | null): void {
+    const db = getDb();
+    const f = this.getFolder(id);
+    if (!f) throw new Error('文件夹不存在');
+    const siblings = db
+      .prepare(
+        'SELECT id FROM folders WHERE parent_id IS ? AND id != ? ORDER BY sort_order, name COLLATE NOCASE',
+      )
+      .all(f.parentId, id) as Row[];
+    const ids = siblings.map((r) => Number(r.id));
+    let insertAt = ids.length;
+    if (beforeId != null) {
+      const idx = ids.indexOf(beforeId);
+      if (idx !== -1) insertAt = idx;
+    }
+    ids.splice(insertAt, 0, id);
+    const upd = db.prepare('UPDATE folders SET sort_order = ? WHERE id = ?');
+    ids.forEach((fid, i) => upd.run(i, fid));
+  },
+
+  /** 知识库拖拽排序：把知识库排到 beforeId 之前（beforeId=null 表示排到末尾） */
+  reorderLibrary(id: number, beforeId: number | null): void {
+    const db = getDb();
+    if (!this.getLibrary(id)) throw new Error('知识库不存在');
+    const siblings = db
+      .prepare('SELECT id FROM libraries WHERE id != ? ORDER BY sort_order, name COLLATE NOCASE')
+      .all(id) as Row[];
+    const ids = siblings.map((r) => Number(r.id));
+    let insertAt = ids.length;
+    if (beforeId != null) {
+      const idx = ids.indexOf(beforeId);
+      if (idx !== -1) insertAt = idx;
+    }
+    ids.splice(insertAt, 0, id);
+    const upd = db.prepare('UPDATE libraries SET sort_order = ? WHERE id = ?');
+    ids.forEach((fid, i) => upd.run(i, fid));
   },
 
   /** Update path of a folder and all descendants after rename/move. */

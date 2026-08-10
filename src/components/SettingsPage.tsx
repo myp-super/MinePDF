@@ -80,7 +80,8 @@ export function SettingsPage() {
     try {
       const res = await window.pkm.setPdfAssociation(true);
       setDefaultPdf(res);
-      toast('success', t('settings.defaultPdfApplied'));
+      if (res) toast('success', t('settings.defaultPdfApplied'));
+      else toast('info', t('settings.defaultPdfNeedsConfirm'));
     } catch (err) {
       toast('error', terr(err instanceof Error ? err.message : String(err)));
     } finally {

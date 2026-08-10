@@ -34,11 +34,13 @@ const api: PkmApi = {
   createLibrary: (name) => invoke('library:create', name),
   renameLibrary: (id, name) => invoke('library:rename', id, name),
   deleteLibrary: (id) => invoke('library:delete', id),
+  reorderLibrary: (id, beforeId) => invoke('library:reorder', id, beforeId),
 
   createFolder: (name, parentId) => invoke('folder:create', name, parentId),
   renameFolder: (id, name) => invoke('folder:rename', id, name),
   deleteFolder: (id) => invoke('folder:delete', id),
   moveFolder: (id, parentId) => invoke('folder:move', id, parentId),
+  reorderFolder: (id, beforeId) => invoke('folder:reorder', id, beforeId),
 
   inboxList: () => invoke('inbox:list'),
   inboxAdd: (filePath) => invoke('inbox:add', filePath),

@@ -106,6 +106,35 @@ function migrateSchema(db: Database.Database): void {
     db.exec(`ALTER TABLE notes ADD COLUMN note_dir TEXT`);
   }
   migrateLibraries(db);
+
+  // 手动拖拽排序支持：sort_order 列（仅首次添加时按同级名称回填，之后保留用户排序）
+  const libCols = db.prepare('PRAGMA table_info(libraries)').all() as Array<{ name: string }>;
+  if (!libCols.some((c) => c.name === 'sort_order')) {
+    db.exec(`ALTER TABLE libraries ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0`);
+    const libs = db
+      .prepare('SELECT id, name FROM libraries ORDER BY name COLLATE NOCASE')
+      .all() as Array<{ id: number }>;
+    const updLib = db.prepare('UPDATE libraries SET sort_order = ? WHERE id = ?');
+    libs.forEach((l, i) => updLib.run(i, Number(l.id)));
+  }
+  const folderCols = db.prepare('PRAGMA table_info(folders)').all() as Array<{ name: string }>;
+  if (!folderCols.some((c) => c.name === 'sort_order')) {
+    db.exec(`ALTER TABLE folders ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0`);
+    const rows = db
+      .prepare('SELECT id, parent_id, name FROM folders ORDER BY parent_id, name COLLATE NOCASE')
+      .all() as Array<{ id: number; parent_id: number | null }>;
+    const updFolder = db.prepare('UPDATE folders SET sort_order = ? WHERE id = ?');
+    const byParent = new Map<number | null, Array<{ id: number }>>();
+    for (const r of rows) {
+      const pid = r.parent_id == null ? null : Number(r.parent_id);
+      const arr = byParent.get(pid) ?? [];
+      arr.push(r);
+      byParent.set(pid, arr);
+    }
+    for (const list of byParent.values()) {
+      list.forEach((f, i) => updFolder.run(i, Number(f.id)));
+    }
+  }
 }
 
 /** Next free directory name inside Library root (used for the default library). */

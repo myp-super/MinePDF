@@ -217,7 +217,10 @@ async function setDefaultPdfAssociation(): Promise<boolean> {
   // 24H2+ 只能靠系统对话框写 UserChoice；HKCU\Software\Classes\.pdf 默认值已让双击立即生效
   await openChoosePdfApp();
   updateSettings({ pdfDefaultApp: true });
-  return true;
+  // 读回校验：UserChoice 或 .pdf 默认值指向 MinePDF 才算设置成功
+  const uc = await userChoiceProgId();
+  const def = await defaultPdfProgId();
+  return isMineProgId(uc) || isMineProgId(def);
 }
 
 /** 取消默认：删除 MinePDF 写入的关联与残留 ProgID */
@@ -273,7 +276,13 @@ async function openChoosePdfApp(): Promise<void> {
  */
 export async function ensureNoForcedPdfAssociation(): Promise<void> {
   try {
-    if (getSettings().pdfDefaultApp) return;
+    if (getSettings().pdfDefaultApp) {
+      // 用户已明确开启“默认 PDF 应用”：每次启动重新断言关联，
+      // 防止被其他软件/卸载残留清掉后双击失效
+      await ensurePdfProgId();
+      await tryWriteUserChoice();
+      return;
+    }
     const def = await defaultPdfProgId();
     const uc = await userChoiceProgId();
     // 只有“默认指向 MinePDF 但用户并未主动选择 MinePDF”时才清理
@@ -342,12 +351,18 @@ export function registerIpc(): void {
   handle<LibraryRecord>('library:create', (name: string) => repository.createLibrary(name));
   handle('library:rename', (id: number, name: string) => repository.renameLibrary(id, name));
   handle('library:delete', (id: number) => repository.deleteLibrary(id));
+  handle('library:reorder', (id: number, beforeId: number | null) =>
+    repository.reorderLibrary(id, beforeId),
+  );
 
   // ---------- 文件夹 ----------
   handle('folder:create', (name: string, parentId: number | null) => repository.createFolder(name, parentId));
   handle('folder:rename', (id: number, name: string) => repository.renameFolder(id, name));
   handle('folder:delete', (id: number) => repository.deleteFolder(id));
   handle('folder:move', (id: number, parentId: number | null) => repository.moveFolder(id, parentId));
+  handle('folder:reorder', (id: number, beforeId: number | null) =>
+    repository.reorderFolder(id, beforeId),
+  );
 
   // ---------- 临时阅读区（Inbox） ----------
   handle('inbox:list', () => repository.getInboxPdfs());

@@ -158,6 +158,43 @@ function buildLinkTestPdf(): string {
   return pdf;
 }
 
+/** 生成 N 页测试 PDF（性能与会话诊断用，自包含不依赖用户文件） */
+function buildMultiPageTestPdf(pages: number): string {
+  const objects: Record<number, string> = {};
+  objects[1] = '1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n';
+  const kids = Array.from({ length: pages }, (_, i) => `${3 + i} 0 R`).join(' ');
+  objects[2] = `2 0 obj\n<< /Type /Pages /Kids [${kids}] /Count ${pages} >>\nendobj\n`;
+  const fontId = pages + 3;
+  objects[fontId] = `${fontId} 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n`;
+  for (let i = 0; i < pages; i++) {
+    const pageId = 3 + i;
+    const contentId = pages + 4 + i;
+    const content = `BT /F1 18 Tf 72 720 Td (Page ${i + 1} - MinePDF perf test) Tj ET\n`;
+    objects[pageId] =
+      `${pageId} 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] ` +
+      `/Contents ${contentId} 0 R /Resources << /Font << /F1 ${fontId} 0 R >> >> >>\nendobj\n`;
+    objects[contentId] =
+      `${contentId} 0 obj\n<< /Length ${Buffer.byteLength(content, 'latin1')} >>\nstream\n${content}endstream\nendobj\n`;
+  }
+  let pdf = '%PDF-1.4\n';
+  const offsets: number[] = [];
+  const ids = Object.keys(objects)
+    .map(Number)
+    .sort((a, b) => a - b);
+  for (const i of ids) {
+    offsets[i] = Buffer.byteLength(pdf, 'latin1');
+    pdf += objects[i];
+  }
+  const maxId = Math.max(...ids);
+  const xrefStart = Buffer.byteLength(pdf, 'latin1');
+  pdf += `xref\n0 ${maxId + 1}\n0000000000 65535 f \n`;
+  for (let i = 1; i <= maxId; i++) {
+    pdf += offsets[i] != null ? `${String(offsets[i]).padStart(10, '0')} 00000 n \n` : '0000000000 65535 f \n';
+  }
+  pdf += `trailer\n<< /Size ${maxId + 1} /Root 1 0 R >>\nstartxref\n${xrefStart}\n%%EOF\n`;
+  return pdf;
+}
+
 function createSplash(): BrowserWindow {
   const win = new BrowserWindow({
     width: 460,
@@ -246,11 +283,19 @@ async function createMainWindow(): Promise<BrowserWindow> {
         'Library',
         'smoke-autoscan.pdf',
       );
+      // 整文件夹导入回归：外部目录应原样导入（保留目录结构）
+      const extImportDir = path.join(app.getPath('temp'), 'pkm-smoke-docs', 'ext-folder');
+      const extImportSub = path.join(extImportDir, 'sub');
+      // 性能/会话诊断用内置多页 PDF（不依赖用户机器上的真实文件）
+      const multiPagePdfPath = path.join(app.getPath('temp'), 'pkm-smoke-docs', 'PID-Tuning-Methods.pdf');
       try {
         fs.mkdirSync(path.dirname(testPdfPath), { recursive: true });
         fs.writeFileSync(testPdfPath, buildTestPdf(), 'latin1');
         fs.mkdirSync(path.dirname(autoScanPdfPath), { recursive: true });
         fs.writeFileSync(autoScanPdfPath, buildTestPdf(true).replace('2026', '2027'), 'latin1');
+        fs.mkdirSync(extImportSub, { recursive: true });
+        fs.writeFileSync(path.join(extImportSub, 'hello.pdf'), buildTestPdf(true), 'latin1');
+        fs.writeFileSync(multiPagePdfPath, buildMultiPageTestPdf(8), 'latin1');
       } catch (err) {
         console.error('[smoke] cannot write test pdf', err);
         app.exit(1);
@@ -259,6 +304,7 @@ async function createMainWindow(): Promise<BrowserWindow> {
       const script = `
         (async () => {
           const path = ${JSON.stringify(testPdfPath)};
+          const extDir = ${JSON.stringify(extImportDir)};
           const out = { steps: [] };
           const step = async (name, fn) => {
             try { const v = await fn(); out.steps.push([name, true, v]); return v; }
@@ -351,6 +397,47 @@ async function createMainWindow(): Promise<BrowserWindow> {
             await step('deletePdf', () => window.pkm.deletePdf(pdf.id));
             const autoPdf = snap3 && snap3.pdfs.find(p => p.filename === 'smoke-autoscan.pdf');
             if (autoPdf) await step('deleteAutoPdf', () => window.pkm.deletePdf(autoPdf.id));
+            // 整文件夹导入：外部目录应原样复制（保留目录结构），而不是只挑 PDF
+            const folderImp = await step('importFolderWhole', async () => {
+              const snap0 = await window.pkm.getSnapshot();
+              const root0 = snap0.libraries[0].rootFolderId;
+              const res = await window.pkm.importPdfs([extDir], root0);
+              const snap = await window.pkm.getSnapshot();
+              const f = snap.folders.find((x) => x.parentId === root0 && x.name === 'ext-folder');
+              const pdf = snap.pdfs.find(
+                (p) => p.filename === 'hello.pdf' && p.filepath.indexOf('ext-folder') > -1,
+              );
+              const ok = res.imported === 1 && !!f && !!pdf;
+              if (f) await window.pkm.deleteFolder(f.id);
+              return ok;
+            });
+            void folderImp;
+            // 拖拽排序：同级文件夹与知识库都可重排
+            const reorderFolders = await step('reorderFolders', async () => {
+              const snap0 = await window.pkm.getSnapshot();
+              const root0 = snap0.libraries[0].rootFolderId;
+              const a = await window.pkm.createFolder('排序A', root0);
+              const b = await window.pkm.createFolder('排序B', root0);
+              await window.pkm.reorderFolder(b.id, a.id);
+              const snap = await window.pkm.getSnapshot();
+              const kids = snap.folders.filter((x) => x.parentId === root0);
+              const ok = kids.findIndex((x) => x.id === b.id) < kids.findIndex((x) => x.id === a.id);
+              await window.pkm.deleteFolder(a.id);
+              await window.pkm.deleteFolder(b.id);
+              return ok;
+            });
+            void reorderFolders;
+            const reorderLibs = await step('reorderLibraries', async () => {
+              const lib2 = await window.pkm.createLibrary('排序知识库');
+              const libs = await window.pkm.libraryList();
+              const first = libs[0];
+              await window.pkm.reorderLibrary(lib2.id, first.id);
+              const libs2 = await window.pkm.libraryList();
+              const ok = libs2[0] && libs2[0].id === lib2.id;
+              if (lib2) await window.pkm.deleteLibrary(lib2.id);
+              return !!ok;
+            });
+            void reorderLibs;
           }
           if (folder) await step('deleteFolder', () => window.pkm.deleteFolder(folder.id));
           return JSON.stringify(out);
@@ -389,7 +476,9 @@ async function createMainWindow(): Promise<BrowserWindow> {
                   (async () => {
                     if (typeof window.__pkmOpenPdf !== 'function') return false;
                     const path = ${JSON.stringify(testPdfPath)};
+                    const perfPath = ${JSON.stringify(multiPagePdfPath)};
                     await window.pkm.importPdfs([path], null);
+                    await window.pkm.importPdfs([perfPath], null);
                     const snap = await window.pkm.getSnapshot();
                     const pdf = snap.pdfs.find(p => p.filename === 'smoke-test.pdf');
                     if (!pdf) return false;
@@ -670,11 +759,15 @@ async function createMainWindow(): Promise<BrowserWindow> {
                 // 应用内性能诊断：PDFium IPC 渲染真实 PDF 的每页耗时
                 const perfDiag = await win.webContents.executeJavaScript(`
                   (async () => {
-                    const path = 'C:\\\\Users\\\\Lenovo\\\\Documents\\\\MinePDF\\\\Library\\\\en\\\\PID-Tuning-Methods.pdf';
-                    const imp = await window.pkm.importPdfs([path], null);
-                    const snap = await window.pkm.getSnapshot();
-                    const pdf = snap.pdfs.find((p) => p.filename === 'PID-Tuning-Methods.pdf');
-                    if (!pdf) return { imported: imp.imported, pdf: false };
+                    const perfPath = ${JSON.stringify(multiPagePdfPath)};
+                    let snap = await window.pkm.getSnapshot();
+                    let pdf = snap.pdfs.find((p) => p.filename === 'PID-Tuning-Methods.pdf');
+                    if (!pdf) {
+                      await window.pkm.importPdfs([perfPath], null);
+                      snap = await window.pkm.getSnapshot();
+                      pdf = snap.pdfs.find((p) => p.filename === 'PID-Tuning-Methods.pdf');
+                    }
+                    if (!pdf) return { imported: 0, pdf: false };
                     const times = [];
                     for (let p = 1; p <= pdf.pageCount; p++) {
                       const t1 = performance.now();
@@ -702,7 +795,7 @@ async function createMainWindow(): Promise<BrowserWindow> {
                     await new Promise((r) => setTimeout(r, 900));
                     const c = document.querySelector('.pdf-page-sheet canvas');
                     return {
-                      imported: imp.imported,
+                      imported: 1,
                       pageCount: pdf.pageCount,
                       perPageMs: times,
                       avgMs: +(times.reduce((a, b) => a + b, 0) / times.length).toFixed(2),
@@ -1549,6 +1642,25 @@ async function createMainWindow(): Promise<BrowserWindow> {
                   })()
                 `);
                 console.log('[capture] hlMergeDiag', JSON.stringify(hlMergeDiag));
+                // 删除 PDF 后，已打开的标签页应被自动清理（含分屏）
+                const deleteTabDiag = await win.webContents.executeJavaScript(`
+                  (async () => {
+                    const snap = await window.pkm.getSnapshot();
+                    const a = snap.pdfs.find((p) => p.filename === 'smoke-test.pdf');
+                    if (!a) return { pdf: false };
+                    window.__pkmAct('clearScreens');
+                    window.__pkmOpenPdf(a.id);
+                    window.__pkmAct('openPdfInNewTab', a.id);
+                    await new Promise((r) => setTimeout(r, 300));
+                    await window.pkm.deletePdf(a.id);
+                    if (typeof window.__pkmRefresh === 'function') await window.__pkmRefresh();
+                    await new Promise((r) => setTimeout(r, 300));
+                    const st = window.__pkmStore();
+                    const gone = !st.screens.some((sc) => sc.tabs.some((t) => t.pdfId === a.id));
+                    return { pdf: true, gone, screensLeft: st.screens.length };
+                  })()
+                `);
+                console.log('[capture] deleteTabDiag', JSON.stringify(deleteTabDiag));
               } catch (err) {
                 console.error('[capture] failed', err);
               }

@@ -179,11 +179,13 @@ export interface PkmApi {
   createLibrary(name: string): Promise<LibraryRecord>;
   renameLibrary(id: number, name: string): Promise<void>;
   deleteLibrary(id: number): Promise<void>;
+  reorderLibrary(id: number, beforeId: number | null): Promise<void>;
 
   createFolder(name: string, parentId: number | null): Promise<Folder>;
   renameFolder(id: number, name: string): Promise<void>;
   deleteFolder(id: number): Promise<void>;
   moveFolder(id: number, parentId: number | null): Promise<void>;
+  reorderFolder(id: number, beforeId: number | null): Promise<void>;
 
   inboxList(): Promise<PdfRecord[]>;
   inboxAdd(filePath: string): Promise<PdfRecord>;

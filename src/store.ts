@@ -237,6 +237,34 @@ export const useApp = create<AppState>((set, get) => ({
   refresh: async () => {
     try {
       const [snap, inbox] = await Promise.all([window.pkm.getSnapshot(), window.pkm.inboxList()]);
+      // 文件被删除后，关闭所有指向已不存在文件的标签页（含分屏），避免标签残留
+      const live = (t: DocTab) =>
+        t.kind === 'inbox' ? inbox.some((p) => p.id === t.pdfId) : snap.pdfs.some((p) => p.id === t.pdfId);
+      let screens = get()
+        .screens.map((sc) => ({
+          ...sc,
+          tabs: sc.tabs.filter(live),
+        }))
+        .filter((sc) => sc.tabs.length > 0)
+        .map((sc) =>
+          sc.tabs.some((t) => t.id === sc.activeTabId)
+            ? sc
+            : { ...sc, activeTabId: sc.tabs[0]?.id ?? null },
+        );
+      let activeScreenId = screens.some((sc) => sc.id === get().activeScreenId)
+        ? get().activeScreenId
+        : (screens[0]?.id ?? null);
+      const activePdfId = derivePdfId(screens, activeScreenId);
+      const cur = get();
+      // 仅在标签确实变化时才更新阅读区状态，避免每次 watcher 同步都触发重渲染
+      const screensChanged =
+        cur.screens.length !== screens.length ||
+        cur.screens.some(
+          (sc, i) =>
+            sc.tabs.length !== screens[i].tabs.length ||
+            sc.activeTabId !== screens[i].activeTabId ||
+            sc.tabs.some((t, j) => t.id !== screens[i].tabs[j].id),
+        );
       set({
         libraries: snap.libraries,
         folders: snap.folders,
@@ -244,11 +272,15 @@ export const useApp = create<AppState>((set, get) => ({
         inboxPdfs: inbox,
         tags: snap.tags,
         settings: snap.settings,
+        ...(screensChanged
+          ? {
+              screens,
+              activeScreenId,
+              activePdfId,
+              splitLayout: screens.length <= 1 ? 'single' : cur.splitLayout,
+            }
+          : {}),
       });
-      const active = get().activePdfId;
-      if (active != null && !snap.pdfs.some((p) => p.id === active) && !inbox.some((p) => p.id === active)) {
-        set({ activePdfId: null });
-      }
     } catch (err) {
       get().toast('error', err instanceof Error ? err.message : String(err));
     }
