@@ -39,7 +39,6 @@ export default function App() {
   const inspectorCollapsed = useApp((s) => s.inspectorCollapsed);
   const sidebarCollapsed = useApp((s) => s.sidebarCollapsed);
 
-  const [dragging, setDragging] = useState(false);
   const [missingPdf, setMissingPdf] = useState<PdfRecord | null>(null);
 
   useEffect(() => {
@@ -129,7 +128,7 @@ export default function App() {
 
   // 系统用 MinePDF 打开 PDF（双击 / 打开方式）→ 复制进临时区并预览
   useEffect(() => {
-    return window.pkm.onExternalPdf((filePath) => {
+    const off = window.pkm.onExternalPdf((filePath) => {
       void (async () => {
         try {
           const item = await window.pkm.inboxAdd(filePath);
@@ -142,6 +141,9 @@ export default function App() {
         }
       })();
     });
+    // 订阅完成后通知主进程：可以派发启动时/运行中收到的系统打开请求了
+    window.pkm.rendererReady();
+    return off;
   }, [refresh, t, terr, toast]);
 
   // Ctrl+B 折叠 / 展开左侧边栏（沉浸阅读）
@@ -158,20 +160,12 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
+  // 窗口级兜底拖放：拖到空白区域（非文件夹）时导入到当前选中目录；
+  // 文件夹行的拖放由 Sidebar 内部处理（stopPropagation），不会走到这里。
   useEffect(() => {
     const hasFiles = (e: DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes('Files');
-    const onDragOver = (e: DragEvent) => {
-      if (hasFiles(e)) {
-        e.preventDefault();
-        setDragging(true);
-      }
-    };
-    const onDragLeave = (e: DragEvent) => {
-      if (e.relatedTarget == null) setDragging(false);
-    };
     const onDrop = (e: DragEvent) => {
       e.preventDefault();
-      setDragging(false);
       if (!hasFiles(e) || !e.dataTransfer?.files.length) return;
       const paths: string[] = [];
       for (const f of Array.from(e.dataTransfer.files)) {
@@ -200,12 +194,8 @@ export default function App() {
         }
       })();
     };
-    window.addEventListener('dragover', onDragOver);
-    window.addEventListener('dragleave', onDragLeave);
     window.addEventListener('drop', onDrop);
     return () => {
-      window.removeEventListener('dragover', onDragOver);
-      window.removeEventListener('dragleave', onDragLeave);
       window.removeEventListener('drop', onDrop);
     };
   }, [refresh, selectedFolderId, t, terr, toast]);
@@ -303,15 +293,6 @@ export default function App() {
       </div>
 
       <SearchModal />
-
-      {dragging && (
-        <div className="pointer-events-none fixed inset-0 z-[80] flex items-center justify-center bg-app-accent/10 backdrop-blur-[2px]">
-          <div className="flex flex-col items-center gap-2 rounded-2xl border-2 border-dashed border-app-accent bg-app-panel px-10 py-8 shadow-2xl">
-            <FolderSearch size={30} className="text-app-accent" />
-            <span className="text-sm font-medium">{t('app.dragDropHint')}</span>
-          </div>
-        </div>
-      )}
 
       <div
         aria-live="polite"

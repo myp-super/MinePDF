@@ -92,6 +92,8 @@ export function Sidebar() {
   const [menu, setMenu] = useState<{ x: number; y: number; items: ContextMenuItem[] } | null>(null);
   const [importMenu, setImportMenu] = useState(false);
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
+  const [rootDragOver, setRootDragOver] = useState(false);
+  const rootDragDepth = useRef(0);
   const [moveOpen, setMoveOpen] = useState(false);
   const [inboxOpen, setInboxOpen] = useState(true);
   const [inboxMoveId, setInboxMoveId] = useState<number | null>(null);
@@ -382,6 +384,8 @@ export function Sidebar() {
 
   const handleRootDrop = async (e: React.DragEvent) => {
     noDrag(e);
+    rootDragDepth.current = 0;
+    setRootDragOver(false);
     if (dragHasFiles(e)) {
       await doImport(pathsFromDrag(e), null);
       return;
@@ -541,12 +545,25 @@ export function Sidebar() {
             <div
               role="treeitem"
               tabIndex={0}
-              className="group flex cursor-pointer items-center gap-1 rounded-md px-1 py-1.5 text-xs font-semibold hover:bg-app-panel2 focus-visible:ring-2 focus-visible:ring-app-accent/60"
+              className={`group flex cursor-pointer items-center gap-1 rounded-md px-1 py-1.5 text-xs font-semibold transition-all duration-150 ${
+                rootDragOver
+                  ? 'scale-[1.02] bg-app-accent/20 shadow-lg ring-1 ring-app-accent'
+                  : 'hover:bg-app-panel2'
+              } focus-visible:ring-2 focus-visible:ring-app-accent/60`}
               onClick={() => setSelectedFolder(null)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') setSelectedFolder(null);
               }}
               onDragOver={noDrag}
+              onDragEnter={(e) => {
+                noDrag(e);
+                rootDragDepth.current += 1;
+                setRootDragOver(true);
+              }}
+              onDragLeave={() => {
+                rootDragDepth.current = Math.max(0, rootDragDepth.current - 1);
+                if (rootDragDepth.current === 0) setRootDragOver(false);
+              }}
               onDrop={(e) => void handleRootDrop(e)}
               onContextMenu={(e) => {
                 e.preventDefault();
@@ -849,6 +866,9 @@ function FolderNode({
   const [renaming, setRenaming] = useState(false);
   const [name, setName] = useState(folder.name);
   const [dragOver, setDragOver] = useState(false);
+  // 拖入计数器：行内包含多个子元素，直接 onDragLeave 会在子元素间闪烁，
+  // 用 enter/leave 深度计数保证只在真正离开该行时才取消高亮。
+  const dragDepth = useRef(0);
 
   const children = folders.filter((f) => f.parentId === folder.id);
   const pdfsIn = pdfs.filter((p) => p.folderId === folder.id);
@@ -856,6 +876,7 @@ function FolderNode({
 
   const handleDrop = async (e: React.DragEvent) => {
     noDrag(e);
+    dragDepth.current = 0;
     setDragOver(false);
     if (dragHasFiles(e)) {
       await onDropFiles(pathsFromDrag(e));
@@ -949,11 +970,11 @@ function FolderNode({
       <div
         role="treeitem"
         tabIndex={0}
-        className={`group flex cursor-pointer items-center gap-1 rounded-md py-[3px] text-xs transition-colors ${
+        className={`group flex cursor-pointer items-center gap-1 rounded-md py-[3px] text-xs transition-all duration-150 ${
           dragOver
-            ? 'bg-app-accent/15 outline outline-1 outline-app-accent'
+            ? 'scale-[1.03] bg-app-accent/20 text-app-text shadow-lg ring-1 ring-app-accent'
             : 'hover:bg-app-panel2'
-        } ${selectedFolderId === folder.id ? 'bg-app-accent/10 text-app-text' : 'text-app-text/90'} focus-visible:ring-2 focus-visible:ring-app-accent/60`}
+        } ${selectedFolderId === folder.id && !dragOver ? 'bg-app-accent/10 text-app-text' : 'text-app-text/90'} focus-visible:ring-2 focus-visible:ring-app-accent/60`}
         style={{ paddingLeft: 6 + depth * 14 }}
         draggable
         onDragStart={(e) => {
@@ -963,9 +984,13 @@ function FolderNode({
         onDragOver={noDrag}
         onDragEnter={(e) => {
           noDrag(e);
+          dragDepth.current += 1;
           setDragOver(true);
         }}
-        onDragLeave={() => setDragOver(false)}
+        onDragLeave={() => {
+          dragDepth.current = Math.max(0, dragDepth.current - 1);
+          if (dragDepth.current === 0) setDragOver(false);
+        }}
         onDrop={(e) => void handleDrop(e)}
         onClick={() => setSelectedFolder(folder.id)}
         onKeyDown={(e) => {
@@ -984,9 +1009,15 @@ function FolderNode({
           {isOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
         </button>
         {isOpen ? (
-          <FolderOpen size={13} className="text-app-accent2/90" />
+          <FolderOpen
+            size={dragOver ? 16 : 13}
+            className={`transition-all ${dragOver ? 'text-app-accent' : 'text-app-accent2/90'}`}
+          />
         ) : (
-          <Folder size={13} className="text-app-accent2/90" />
+          <Folder
+            size={dragOver ? 16 : 13}
+            className={`transition-all ${dragOver ? 'text-app-accent' : 'text-app-accent2/90'}`}
+          />
         )}
         {renaming ? (
           <input

@@ -43,6 +43,9 @@ const api: PkmApi = {
   isDefaultPdfApp: () => invoke('app:is-default-pdf'),
   setPdfAssociation: (enable) => invoke('app:set-pdf-association', enable),
   openDefaultApps: () => invoke('app:open-defaultapps'),
+  rendererReady: () => {
+    ipcRenderer.send('app:renderer-ready');
+  },
   onExternalPdf: (cb) => subscribe('app:external-pdf', (v) => cb(String(v))),
 
   importPdfs: (paths, folderId, opts) => invoke('pdf:import', paths, folderId, opts),

@@ -3,7 +3,12 @@ import fs from 'fs';
 import path from 'path';
 import { pathToFileURL } from 'url';
 import { closeDb, initDatabase } from './db/database';
-import { ensureNoForcedPdfAssociation, registerIpc, setMainWindow } from './ipc/register';
+import {
+  ensureNoForcedPdfAssociation,
+  onRendererReady,
+  registerIpc,
+  setMainWindow,
+} from './ipc/register';
 import { startLibraryWatcher, stopLibraryWatcher } from './services/libraryWatcher';
 import { checkForUpdates } from './services/updater';
 import { getSettings } from './services/settings';
@@ -21,6 +26,21 @@ let mainWindow: BrowserWindow | null = null;
 let splashWindow: BrowserWindow | null = null;
 /** 双击 PDF / “打开方式”传入的文件路径（临时预览） */
 const externalPdfs: string[] = [];
+/** 渲染进程是否已就绪（订阅了 app:external-pdf），就绪后才派发外部文件 */
+let rendererReady = false;
+
+onRendererReady(() => {
+  rendererReady = true;
+  flushExternalPdfs();
+});
+
+/** 把待处理的系统打开请求派发给渲染进程（未就绪则保留缓冲） */
+function flushExternalPdfs(): void {
+  if (!rendererReady || !mainWindow || mainWindow.isDestroyed()) return;
+  for (const f of externalPdfs.splice(0)) {
+    mainWindow.webContents.send('app:external-pdf', f);
+  }
+}
 
 function pdfFromArgv(argv: string[]): string[] {
   return argv.filter((a) => a.toLowerCase().endsWith('.pdf') && fs.existsSync(a));
@@ -36,10 +56,11 @@ console.log('[main] single-instance-lock', gotLock);
 if (!gotLock) {
   app.quit();
 } else {
-  app.on('second-instance', () => {
-    // 已运行时再次用 MinePDF 打开 PDF
-    const files = pdfFromArgv(process.argv.slice(1));
-    if (mainWindow && !mainWindow.isDestroyed()) {
+  app.on('second-instance', (_event, argv) => {
+    // 已运行时再次用 MinePDF 打开 PDF。
+    // 注意：必须用事件参数 argv（新进程的命令行），不能用 process.argv（本进程的）。
+    const files = pdfFromArgv(argv.slice(1));
+    if (rendererReady && mainWindow && !mainWindow.isDestroyed()) {
       for (const f of files) mainWindow.webContents.send('app:external-pdf', f);
     } else {
       externalPdfs.push(...files);
@@ -1387,6 +1408,48 @@ async function createMainWindow(): Promise<BrowserWindow> {
                   })()
                 `);
                 console.log('[capture] autoHideDiag', JSON.stringify(autoHideDiag));
+                // 拖拽导入反馈：文件夹高亮放大、离开清除、无全屏虚化遮罩
+                const dragDropDiag = await win.webContents.executeJavaScript(`
+                  (async () => {
+                    const snap = await window.pkm.getSnapshot();
+                    let folder = snap.folders.find((f) => f.name === '拖放测试');
+                    if (!folder) folder = await window.pkm.createFolder('拖放测试', null);
+                    if (typeof window.__pkmRefresh === 'function') await window.__pkmRefresh();
+                    await new Promise((r) => setTimeout(r, 300));
+                    if (!folder) return { folder: false };
+                    const dt = new DataTransfer();
+                    dt.items.add(new File(['x'], 'drag-test.pdf', { type: 'application/pdf' }));
+                    const el = [...document.querySelectorAll('[role="treeitem"]')].find(
+                      (n) => (n.textContent || '').includes(folder.name),
+                    );
+                    if (!el) return { row: false };
+                    el.dispatchEvent(
+                      new DragEvent('dragenter', { dataTransfer: dt, bubbles: true, cancelable: true }),
+                    );
+                    await new Promise((r) => setTimeout(r, 120));
+                    const highlighted =
+                      (el.className || '').includes('scale-') &&
+                      (el.className || '').includes('ring-1 ring-app-accent');
+                    el.dispatchEvent(
+                      new DragEvent('dragleave', { bubbles: true, cancelable: true, relatedTarget: document.body }),
+                    );
+                    await new Promise((r) => setTimeout(r, 120));
+                    const cleared = !(el.className || '').includes('ring-1 ring-app-accent');
+                    const noBlurOverlay = ![...document.querySelectorAll('div')].some(
+                      (d) =>
+                        (d.className || '').includes('backdrop-blur') &&
+                        (d.className || '').includes('fixed'),
+                    );
+                    try {
+                      await window.pkm.deleteFolder(folder.id);
+                      if (typeof window.__pkmRefresh === 'function') await window.__pkmRefresh();
+                    } catch {
+                      /* ignore */
+                    }
+                    return { folder: true, row: !!el, highlighted, cleared, noBlurOverlay };
+                  })()
+                `);
+                console.log('[capture] dragDropDiag', JSON.stringify(dragDropDiag));
                 const hlMergeDiag = await win.webContents.executeJavaScript(`
                   (async () => {
                     const snap = await window.pkm.getSnapshot();
@@ -1499,11 +1562,9 @@ app.whenReady().then(async () => {
   // 启动时若由系统以默认 PDF 应用唤起，把文件交给渲染进程做临时预览
   if (!smokeTest) {
     externalPdfs.push(...pdfFromArgv(process.argv.slice(1)));
-    setTimeout(() => {
-      for (const f of externalPdfs.splice(0)) {
-        mainWindow?.webContents.send('app:external-pdf', f);
-      }
-    }, 1500);
+    flushExternalPdfs();
+    // 兜底：渲染进程就绪信号万一丢失，稍后仍尝试派发一次
+    setTimeout(flushExternalPdfs, 3000);
   }
 
   // 启动后延迟自动检查更新（设置里开启且配置了更新源时）

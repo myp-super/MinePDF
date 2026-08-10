@@ -176,6 +176,8 @@ export interface PkmApi {
   isDefaultPdfApp(): Promise<boolean>;
   setPdfAssociation(enable: boolean): Promise<boolean>;
   openDefaultApps(): Promise<void>;
+  /** 渲染进程已完成订阅（app:external-pdf），通知主进程可派发系统打开请求 */
+  rendererReady(): void;
   onExternalPdf(cb: (filePath: string) => void): () => void;
 
   importPdfs(

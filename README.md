@@ -72,8 +72,8 @@ npm run dist
 打 tag 即自动构建发布（GitHub Actions 生成 Release 并更新 Pages 上的 update.json）：
 
 ```bash
-git tag v3.2.0
-git push origin v3.2.0
+git tag v3.2.1
+git push origin v3.2.1
 ```
 
 ## 数据目录

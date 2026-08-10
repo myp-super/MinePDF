@@ -66,6 +66,12 @@ export function setMainWindow(win: BrowserWindow | null): void {
   mainWin = win;
 }
 
+/** 渲染进程就绪回调（main.ts 用于在页面挂载后再派发外部 PDF） */
+let rendererReadyCb: (() => void) | null = null;
+export function onRendererReady(cb: () => void): void {
+  rendererReadyCb = cb;
+}
+
 /** MinePDF 注册的 PDF ProgID */
 const PDF_PROG_ID = 'MinePDF.pdf';
 
@@ -105,6 +111,76 @@ async function userChoiceProgId(): Promise<string | null> {
   );
   const m = out ? /REG_SZ\s+(\S+)/i.exec(out) : null;
   return m ? m[1] : null;
+}
+
+/** 生成一份最小合法 PDF（用于触发系统“打开方式”对话框） */
+function buildSamplePdf(): string {
+  const objects: Record<number, string> = {
+    1: '1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n',
+    2: '2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n',
+    3: '3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R >>\nendobj\n',
+    4: '4 0 obj\n<< /Length 40 >>\nstream\nBT /F1 18 Tf 72 720 Td (MinePDF) Tj ET\nendstream\nendobj\n',
+  };
+  let pdf = '%PDF-1.4\n';
+  const offsets: number[] = [];
+  for (const id of [1, 2, 3, 4]) {
+    offsets[id] = Buffer.byteLength(pdf, 'latin1');
+    pdf += objects[id];
+  }
+  const xref = Buffer.byteLength(pdf, 'latin1');
+  pdf += 'xref\n0 5\n0000000000 65535 f \n';
+  for (let i = 1; i <= 4; i++) {
+    pdf += `${String(offsets[i]).padStart(10, '0')} 00000 n \n`;
+  }
+  pdf += `trailer\n<< /Size 5 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  return pdf;
+}
+
+/** 写入 MinePDF 的 .pdf ProgID（命令 + 图标），让应用出现在系统“打开方式”列表 */
+async function ensurePdfProgId(): Promise<void> {
+  const icon = path.join(process.resourcesPath, 'file-assoc.ico');
+  await regRun(['add', 'HKCU\\Software\\Classes\\.pdf', '/ve', '/d', PDF_PROG_ID, '/f']);
+  await regRun([
+    'add',
+    `HKCU\\Software\\Classes\\${PDF_PROG_ID}\\shell\\open\\command`,
+    '/ve',
+    '/d',
+    `"${process.execPath}" "%1"`,
+    '/f',
+  ]);
+  await regRun([
+    'add',
+    `HKCU\\Software\\Classes\\${PDF_PROG_ID}\\DefaultIcon`,
+    '/ve',
+    '/d',
+    `"${icon}"`,
+    '/f',
+  ]);
+}
+
+/**
+ * 触发系统“打开方式”对话框，让用户选择 MinePDF 并勾选“始终使用此应用”。
+ * Windows 10/11 的 UserChoice 带哈希校验，只有系统对话框能正确写入，
+ * 程序直接改注册表会被系统拒绝。失败时回退到系统默认应用设置页。
+ */
+async function openChoosePdfApp(): Promise<void> {
+  try {
+    await ensurePdfProgId();
+    let sample: string | null = null;
+    const pdfs = repository.getPdfs();
+    if (pdfs.length > 0) sample = pdfs[0].filepath;
+    if (!sample) {
+      const dir = path.join(getDataDir(), 'config');
+      fs.mkdirSync(dir, { recursive: true });
+      sample = path.join(dir, 'open-with-sample.pdf');
+      fs.writeFileSync(sample, buildSamplePdf(), 'latin1');
+    }
+    await new Promise<void>((resolve) =>
+      execFile('rundll32', ['shell32.dll,OpenAs_RunDLL', sample], () => resolve()),
+    );
+  } catch {
+    await shell.openExternal('ms-settings:defaultapps');
+  }
 }
 
 /**
@@ -194,31 +270,14 @@ export function registerIpc(): void {
   // ---------- 默认 PDF 应用 ----------
   handle('app:is-default-pdf', async () => {
     const uc = await userChoiceProgId();
-    if (isMineProgId(uc)) return true;
+    // Windows 10/11 中 UserChoice 才是双击真正生效的关联，优先以它为准
+    if (uc) return isMineProgId(uc);
     const def = await defaultPdfProgId();
     return isMineProgId(def);
   });
   handle('app:set-pdf-association', async (enable: boolean) => {
-    const icon = path.join(process.resourcesPath, 'file-assoc.ico');
     if (enable) {
-      await regRun(['add', 'HKCU\\Software\\Classes\\.pdf', '/ve', '/d', PDF_PROG_ID, '/f']);
-      await regRun([
-        'add',
-        `HKCU\\Software\\Classes\\${PDF_PROG_ID}\\shell\\open\\command`,
-        '/ve',
-        '/d',
-        `"${process.execPath}" "%1"`,
-        '/f',
-      ]);
-      await regRun([
-        'add',
-        `HKCU\\Software\\Classes\\${PDF_PROG_ID}\\DefaultIcon`,
-        '/ve',
-        '/d',
-        `"${icon}"`,
-        '/f',
-      ]);
-      await shell.openExternal('ms-settings:defaultapps');
+      await openChoosePdfApp();
       updateSettings({ pdfDefaultApp: true });
       return true;
     }
@@ -241,7 +300,10 @@ export function registerIpc(): void {
     updateSettings({ pdfDefaultApp: false });
     return false;
   });
-  handle('app:open-defaultapps', () => shell.openExternal('ms-settings:defaultapps'));
+  handle('app:open-defaultapps', () => openChoosePdfApp());
+  handle('app:renderer-ready', () => {
+    rendererReadyCb?.();
+  });
 
   // ---------- PDF ----------
   handle<ImportResult>('pdf:import', (paths: string[], folderId: number | null, opts?: { replace?: boolean }) =>
