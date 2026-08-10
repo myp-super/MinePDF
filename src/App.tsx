@@ -147,16 +147,28 @@ export default function App() {
           await refresh();
           useApp.getState().setSelectedFolder(null);
           useApp.getState().openPdf(item.id);
+          // 兜底：若启动竞态导致 inbox 列表暂时不含该记录，刷新后重开一次
+          const found = useApp.getState().inboxPdfs.some((p) => p.id === item.id);
+          if (!found) {
+            await refresh();
+            useApp.getState().openPdf(item.id);
+          }
           toast('success', t('inbox.added'));
         } catch (err) {
           toast('error', terr(err instanceof Error ? err.message : String(err)));
         }
       })();
     });
-    // 订阅完成后通知主进程：可以派发启动时/运行中收到的系统打开请求了
-    window.pkm.rendererReady();
     return off;
   }, [refresh, t, terr, toast]);
+
+  // 只在应用数据就绪（且会话恢复完成后）才通知主进程派发外部 PDF，
+  // 避免与初始快照加载/上次会话恢复竞争导致首帧渲染落空。
+  // 该 effect 声明在 restoreLastSession 之后，React 按声明顺序执行。
+  useEffect(() => {
+    if (!ready) return;
+    window.pkm.rendererReady();
+  }, [ready]);
 
   // Ctrl+B 折叠 / 展开左侧边栏（沉浸阅读）
   useEffect(() => {

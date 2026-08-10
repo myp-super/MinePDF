@@ -1739,6 +1739,49 @@ async function createMainWindow(): Promise<BrowserWindow> {
                   })()
                 `);
                 console.log('[capture] externalDiag', JSON.stringify(externalDiag));
+                // 外部 PDF 首次打开渲染：精确复现 inboxAdd → refresh → openPdf
+                win.webContents.send('app:external-pdf', testPdfPath);
+                await new Promise((r) => setTimeout(r, 4000));
+                const externalRenderDiag = await win.webContents.executeJavaScript(`
+                  (async () => {
+                    const st = window.__pkmStore();
+                    const canvas = document.querySelector('[data-pan-scroll] canvas');
+                    const loading = !!document.querySelector('[data-testid="pdf-loading"]');
+                    const painted = canvas ? canvas.width > 0 : false;
+                    const inbox = await window.pkm.inboxList();
+                    for (const p of inbox) await window.pkm.inboxRemove(p.id);
+                    return {
+                      activePdfId: st.activePdfId,
+                      screens: st.screens.length,
+                      painted,
+                      canvasW: canvas ? canvas.width : 0,
+                      loading,
+                    };
+                  })()
+                `);
+                console.log('[capture] externalRenderDiag', JSON.stringify(externalRenderDiag));
+                // Chromium IntersectionObserver 对 0 尺寸元素的行为（首屏死锁排查）
+                const zeroSizeDiag = await win.webContents.executeJavaScript(`
+                  (async () => {
+                    const el = document.createElement('div');
+                    el.style.width = '0px';
+                    el.style.height = '0px';
+                    el.style.position = 'fixed';
+                    el.style.top = '100px';
+                    el.style.left = '100px';
+                    document.body.appendChild(el);
+                    const res = await new Promise((resolve) => {
+                      const io = new IntersectionObserver((entries) => {
+                        io.disconnect();
+                        resolve(entries[0] ? entries[0].isIntersecting : null);
+                      }, {});
+                      io.observe(el);
+                    });
+                    el.remove();
+                    return { zeroSizeIntersecting: res };
+                  })()
+                `);
+                console.log('[capture] zeroSizeDiag', JSON.stringify(zeroSizeDiag));
                 // 目录树弹窗：空白区右键 → 新建子文件夹 → 折叠/展开/选中高亮
                 const pickerDiag = await win.webContents.executeJavaScript(`
                   (async () => {

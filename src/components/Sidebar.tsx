@@ -160,6 +160,8 @@ export function Sidebar() {
     onPick: (folderId: number) => void;
   } | null>(null);
   const [inboxOpen, setInboxOpen] = useState(true);
+  const [inboxDragOver, setInboxDragOver] = useState(false);
+  const inboxDragDepth = useRef(0);
   const [inboxHeight, setInboxHeight] = useState<number>(
     () => Number(localStorage.getItem('pkm.inboxHeight')) || 160,
   );
@@ -427,6 +429,27 @@ export function Sidebar() {
         },
       ],
     });
+  };
+
+  /** 把拖入的 PDF 直接加入临时区（不进入知识库） */
+  const handleInboxDrop = async (e: React.DragEvent) => {
+    noDrag(e);
+    inboxDragDepth.current = 0;
+    setInboxDragOver(false);
+    const paths = pathsFromDrag(e).filter((p) => p.toLowerCase().endsWith('.pdf'));
+    if (!paths.length) return;
+    try {
+      let first: PdfRecord | null = null;
+      for (const p of paths) {
+        const item = await window.pkm.inboxAdd(p);
+        if (!first) first = item;
+      }
+      await refresh();
+      if (first) useApp.getState().openPdf(first.id);
+      toast('success', t('inbox.added'));
+    } catch (err) {
+      toast('error', terr(err instanceof Error ? err.message : String(err)));
+    }
   };
 
   const requestRemovePdf = (pdf: PdfRecord) => {
@@ -868,7 +891,25 @@ export function Sidebar() {
       />
 
       {/* 临时阅读区：双击 / “打开方式”打开的 PDF，不进入知识库 */}
-      <div className="border-t border-app-border">
+      <div
+        className={`border-t border-app-border transition-all ${
+          inboxDragOver ? 'bg-app-accent/10 shadow-[inset_0_0_0_1.5px_var(--app-accent)]' : ''
+        }`}
+        onDragOver={noDrag}
+        onDragEnter={(e) => {
+          noDrag(e);
+          if (dragHasFiles(e)) {
+            inboxDragDepth.current += 1;
+            setInboxDragOver(true);
+          }
+        }}
+        onDragLeave={() => {
+          inboxDragDepth.current = Math.max(0, inboxDragDepth.current - 1);
+          if (inboxDragDepth.current === 0) setInboxDragOver(false);
+        }}
+        onDrop={(e) => void handleInboxDrop(e)}
+        title={t('inbox.dropHint')}
+      >
         <div className="flex items-center justify-between px-2 py-1">
           <button
             className="flex min-w-0 items-center gap-1.5 text-[11px] font-medium text-app-muted transition-colors hover:text-app-text"
