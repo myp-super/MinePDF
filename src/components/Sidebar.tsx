@@ -1081,9 +1081,19 @@ function LibraryNode({
   const isOpen = expanded.has(lib.rootFolderId);
   const isDefault = defaultLibrary?.id === lib.id;
   const children = folders.filter((f) => f.parentId === lib.rootFolderId);
-  const pdfsIn = pdfs.filter(
+  // 直接挂在知识库根目录下的 PDF（树中渲染）
+  const directPdfs = pdfs.filter(
     (p) => p.folderId === lib.rootFolderId || (isDefault && p.folderId === null),
   );
+  // 知识库文件总数：包含所有子文件夹里的 PDF
+  const libFolderIds = new Set(
+    folders.filter((f) => f.libraryId === lib.id).map((f) => f.id),
+  );
+  const libPdfCount = pdfs.filter(
+    (p) =>
+      (p.folderId != null && libFolderIds.has(p.folderId)) ||
+      (isDefault && p.folderId === null),
+  ).length;
   const renaming = localRenaming || autoRename;
 
   const commitRename = async () => {
@@ -1255,7 +1265,7 @@ function LibraryNode({
         )}
         {!renaming && (
           <span className="ml-auto pr-1 text-[10px] font-normal text-app-muted">
-            {t('sidebar.filesCount', { n: pdfsIn.length })}
+            {t('sidebar.filesCount', { n: libPdfCount })}
           </span>
         )}
       </div>
@@ -1314,7 +1324,7 @@ function LibraryNode({
               }}
             />
           )}
-          {pdfsIn.map((p) => (
+          {directPdfs.map((p) => (
             <PdfRow
               key={p.id}
               pdf={p}

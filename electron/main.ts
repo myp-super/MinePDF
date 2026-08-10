@@ -1782,6 +1782,26 @@ async function createMainWindow(): Promise<BrowserWindow> {
                   })()
                 `);
                 console.log('[capture] zeroSizeDiag', JSON.stringify(zeroSizeDiag));
+                // 知识库文件总数：应包含子文件夹里的 PDF
+                const countDiag = await win.webContents.executeJavaScript(`
+                  (async () => {
+                    const lib = await window.pkm.createLibrary('CountLib');
+                    const sub = await window.pkm.createFolder('Sub', lib.rootFolderId);
+                    const testPath = ${JSON.stringify(testPdfPath)};
+                    await window.pkm.importPdfs([testPath], sub.id);
+                    if (typeof window.__pkmRefresh === 'function') await window.__pkmRefresh();
+                    await new Promise((r) => setTimeout(r, 600));
+                    const row = [...document.querySelectorAll('[data-panel="sidebar"] [role="treeitem"]')].find(
+                      (el) => (el.textContent || '').includes('CountLib'),
+                    );
+                    const m = row ? /(\\d+)\\s*个文件/.exec(row.textContent || '') : null;
+                    const ok = !!m && m[1] === '1';
+                    await window.pkm.deleteLibrary(lib.id);
+                    if (typeof window.__pkmRefresh === 'function') await window.__pkmRefresh();
+                    return { row: !!row, count: m ? m[1] : null, ok, rowText: (row ? row.textContent || '' : '').slice(0, 80) };
+                  })()
+                `);
+                console.log('[capture] countDiag', JSON.stringify(countDiag));
                 // 目录树弹窗：空白区右键 → 新建子文件夹 → 折叠/展开/选中高亮
                 const pickerDiag = await win.webContents.executeJavaScript(`
                   (async () => {
