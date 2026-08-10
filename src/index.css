@@ -243,6 +243,14 @@ body {
 .annotation-hl.selected {
   outline: 2px solid var(--app-accent2);
 }
+/* 拖拽高亮实时预览：荧光笔涂过效果（不拦截鼠标事件） */
+.live-highlight {
+  position: absolute;
+  pointer-events: none;
+  mix-blend-mode: multiply;
+  border-radius: 1px;
+  z-index: 6;
+}
 .search-hl {
   position: absolute;
   background: rgba(34, 211, 238, 0.38);

@@ -34,6 +34,9 @@ interface PdfPageProps {
   annotations: AnnotationRecord[];
   searchMatches: SearchMatch[];
   selectedAnnotationId: number | null;
+  /** 拖拽高亮实时预览（PDF 坐标，未提交） */
+  liveHighlights?: Quad[];
+  highlightColor: string;
   linkService: PdfLinkService;
   /** PDFium 已给出的页面物理尺寸（doc 未就绪时用于占位布局） */
   fallbackW: number | null;
@@ -74,6 +77,8 @@ export function PdfPage({
   annotations,
   searchMatches,
   selectedAnnotationId,
+  liveHighlights,
+  highlightColor,
   linkService,
   fallbackW,
   fallbackH,
@@ -151,6 +156,10 @@ export function PdfPage({
             convertToViewportPoint: (x: number, y: number) => [
               x * scale,
               (fallbackH - y) * scale,
+            ],
+            convertToPdfPoint: (x: number, y: number) => [
+              x / scale,
+              fallbackH - y / scale,
             ],
           } as PageViewport;
         }
@@ -438,6 +447,26 @@ export function PdfPage({
             );
           }),
         )}
+
+      {/* 拖拽高亮实时预览：荧光笔涂过效果（未提交，pointer-events 穿透） */}
+      {viewport &&
+        liveHighlights?.map((q, i) => {
+          const [left, top] = viewport.convertToViewportPoint(q.x, q.y + q.h);
+          const [right, bottom] = viewport.convertToViewportPoint(q.x + q.w, q.y);
+          return (
+            <div
+              key={`lh-${i}`}
+              className="live-highlight"
+              style={{
+                left,
+                top,
+                width: Math.max(1, right - left),
+                height: Math.max(1, bottom - top),
+                background: hexToRgba(highlightColor, 0.38),
+              }}
+            />
+          );
+        })}
 
       {/* Search hit overlay */}
       {viewport &&

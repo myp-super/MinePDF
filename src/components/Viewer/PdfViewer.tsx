@@ -20,6 +20,12 @@ import {
   toImageBitmap,
 } from '../../lib/pageImageCache';
 import { pdfiumRenderQueued } from '../../lib/pdfiumBatcher';
+import {
+  getPageTextQuads,
+  mergeSelectionItems,
+  nearestTextIndex,
+  type TextItemQuad,
+} from '../../lib/textIndex';
 import { useApp } from '../../store';
 import { ContextMenu } from '../ui';
 import { PdfPage, type PdfLinkService } from './PdfPage';
@@ -87,6 +93,15 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
   const [toolbarCollapsed, setToolbarCollapsed] = useState(false);
   const [highlightMode, setHighlightMode] = useState(false);
   const [highlightColor, setHighlightColor] = useState('#fde047');
+  /** 拖拽高亮实时预览：页码 -> 合并后的连续色块（PDF 坐标） */
+  const [liveSel, setLiveSel] = useState<Record<number, Quad[]>>({});
+  const hlDragRef = useRef(false);
+  const hlStartRef = useRef<{ page: number; idx: number } | null>(null);
+  const hlCurRef = useRef<{ page: number; idx: number } | null>(null);
+  const hlLastMoveRef = useRef<{ x: number; y: number } | null>(null);
+  const hlRafRef = useRef(0);
+  /** 已就绪的页文本项索引（读序），供拖拽期间同步命中测试 */
+  const textQuadsRef = useRef<Map<number, TextItemQuad[]>>(new Map());
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchMatches, setSearchMatches] = useState<SearchMatch[]>([]);
@@ -469,6 +484,21 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
     updateVirtual();
   }, [updateVirtual, layout]);
 
+  // 高亮选词文本项预热：虚拟窗口内的页提前取好文本四边形，拖拽选词零等待
+  useEffect(() => {
+    if (!doc || !virtualRange) return;
+    const L = layoutRef.current;
+    for (let r = virtualRange.start; r < virtualRange.end; r++) {
+      for (const n of L.rows[r] ?? []) {
+        void getPageTextQuads(doc, pdf.id, n)
+          .then((its) => {
+            if (docRef.current === doc) textQuadsRef.current.set(n, its);
+          })
+          .catch(() => undefined);
+      }
+    }
+  }, [doc, virtualRange, pdf.id, layout]);
+
   // 宽度自适应策略（3.2.1）：
   // - 打开文档时适配一次；
   // - 标题栏最大化/还原按键：始终自动适配宽度；
@@ -760,70 +790,172 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
     [searchMatches, searchCurrent, scrollToPage],
   );
 
-  // ---------- text selection -> highlight ----------
-  const handleMouseUp = () => {
-    if (!highlightMode || !doc) return;
-    const sel = window.getSelection();
-    if (!sel || sel.isCollapsed) return;
-    const text = sel.toString().trim();
-    if (!text) return;
+  // ---------- text selection -> highlight（Edge 式：文本项连续选词，按行合并） ----------
+  const pageAtPoint = (x: number, y: number): number | null => {
+    for (const [n, el] of pageRefs.current) {
+      const r = el.getBoundingClientRect();
+      if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return n;
+    }
+    return null;
+  };
 
-    const byPage = new Map<number, Quad[]>();
-    for (let i = 0; i < sel.rangeCount; i++) {
-      const range = sel.getRangeAt(i);
-      const node = range.commonAncestorContainer;
-      const el = (node.nodeType === 1 ? node : node.parentElement) as HTMLElement | null;
-      const pageEl = el?.closest('[data-page-number]') as HTMLElement | null;
-      if (!pageEl) return;
-      const page = Number(pageEl.getAttribute('data-page-number'));
-      const vp = viewportsRef.current.get(page);
-      if (!vp) return;
-      const pageRect = pageEl.getBoundingClientRect();
-      const quads: Quad[] = [];
-      for (const r of Array.from(range.getClientRects())) {
-        if (r.width < 1 || r.height < 1) continue;
-        const [px1, py1] = vp.convertToPdfPoint(r.left - pageRect.left, r.top - pageRect.top);
-        const [px2, py2] = vp.convertToPdfPoint(r.right - pageRect.left, r.bottom - pageRect.top);
-        quads.push({
-          x: Math.min(px1, px2),
-          y: Math.min(py1, py2),
-          w: Math.abs(px2 - px1),
-          h: Math.abs(py2 - py1),
+  const textIndexAt = (page: number, x: number, y: number): number => {
+    const items = textQuadsRef.current.get(page);
+    if (!items || !items.length) return -1;
+    const el = pageRefs.current.get(page);
+    const vp = viewportsRef.current.get(page);
+    if (!el || !vp) return -1;
+    const r = el.getBoundingClientRect();
+    const [px, py] = vp.convertToPdfPoint(x - r.left, y - r.top);
+    return nearestTextIndex(items, px, py);
+  };
+
+  /** 计算起点到当前点的逐页选中文本项（支持跨页与反向拖动） */
+  const computeSelection = (
+    start: { page: number; idx: number },
+    endPage: number,
+    endIdx: number,
+  ): { page: number; items: TextItemQuad[] }[] => {
+    const p0 = start.page;
+    const p1 = endPage;
+    const lo = Math.min(p0, p1);
+    const hi = Math.max(p0, p1);
+    const out: { page: number; items: TextItemQuad[] }[] = [];
+    for (let p = lo; p <= hi; p++) {
+      const items = textQuadsRef.current.get(p);
+      if (!items || !items.length) continue;
+      let a: number;
+      let b: number;
+      if (p0 <= p1) {
+        a = p === p0 ? start.idx : 0;
+        b = p === p1 ? endIdx : items.length - 1;
+      } else {
+        a = p === p1 ? endIdx : 0;
+        b = p === p0 ? start.idx : items.length - 1;
+      }
+      a = Math.max(0, Math.min(a, items.length - 1));
+      b = Math.max(0, Math.min(b, items.length - 1));
+      const sel = items.slice(Math.min(a, b), Math.max(a, b) + 1);
+      if (sel.length) out.push({ page: p, items: sel });
+    }
+    return out;
+  };
+
+  const updateHlSelection = () => {
+    const start = hlStartRef.current;
+    const last = hlLastMoveRef.current;
+    if (!start || !last) return;
+    const curPage = pageAtPoint(last.x, last.y);
+    if (curPage == null) return;
+    const curIdx = textIndexAt(curPage, last.x, last.y);
+    if (curIdx < 0) return;
+    hlCurRef.current = { page: curPage, idx: curIdx };
+    const sel = computeSelection(start, curPage, curIdx);
+    const next: Record<number, Quad[]> = {};
+    for (const { page, items } of sel) next[page] = mergeSelectionItems(items);
+    setLiveSel(next);
+  };
+
+  const commitHlSelection = async () => {
+    const start = hlStartRef.current;
+    const cur = hlCurRef.current;
+    setLiveSel({});
+    if (!start || !cur) return;
+    const pages = computeSelection(start, cur.page, cur.idx);
+    if (!pages.length) return;
+    try {
+      for (const { page, items } of pages) {
+        const quads = mergeSelectionItems(items);
+        if (!quads.length) continue;
+        await window.pkm.createAnnotation({
+          pdfId: pdf.id,
+          page,
+          content: items.map((i) => i.str).join(''),
+          note: '',
+          position: JSON.stringify(quads),
+          color: highlightColor,
         });
       }
-      if (!quads.length) return;
-      byPage.set(page, [...(byPage.get(page) ?? []), ...quads]);
+      setAnnotations(await window.pkm.listAnnotations(pdf.id));
+      setInspectorTab('annotations');
+      toast(
+        'success',
+        pages.length > 1
+          ? t('toolbar.highlighted.multi', { n: pages.length })
+          : t('toolbar.highlighted'),
+      );
+    } catch (err) {
+      toast('error', terr(err instanceof Error ? err.message : String(err)));
     }
-    // 同一行的碎片合并成整块，避免“三个字被拆成三块”
-    for (const [page, quads] of byPage) {
-      byPage.set(page, mergeLineQuads(quads));
-    }
+  };
 
-    void (async () => {
-      try {
-        for (const [page, quads] of byPage) {
-          await window.pkm.createAnnotation({
-            pdfId: pdf.id,
-            page,
-            content: text,
-            note: '',
-            position: JSON.stringify(quads),
-            color: highlightColor,
-          });
-        }
-        sel.removeAllRanges();
-        setAnnotations(await window.pkm.listAnnotations(pdf.id));
-        setInspectorTab('annotations');
-        toast(
-          'success',
-          t('toolbar.highlighted', {
-            multi: byPage.size > 1 ? t('toolbar.highlighted.multi', { n: byPage.size }) : '',
-          }),
-        );
-      } catch (err) {
-        toast('error', terr(err instanceof Error ? err.message : String(err)));
+  const hlMouseDown = (e: React.MouseEvent) => {
+    if (!highlightMode || !doc) return;
+    if (e.button !== 0) return;
+    const page = pageAtPoint(e.clientX, e.clientY);
+    if (page == null) return;
+    // 同步阻止浏览器原生选区，避免与预览色块叠加
+    e.preventDefault();
+    const cached = textQuadsRef.current.get(page);
+    if (cached) {
+      startHlDrag(e, page, cached);
+      return;
+    }
+    void getPageTextQuads(doc, pdf.id, page)
+      .then((items) => {
+        textQuadsRef.current.set(page, items);
+        if (!hlStartRef.current) startHlDrag(e, page, items);
+      })
+      .catch(() => undefined);
+  };
+
+  const startHlDrag = (e: React.MouseEvent, page: number, items: TextItemQuad[]) => {
+    const [px, py] = pdfPointAt(e.clientX, e.clientY, page);
+    const idx = nearestTextIndex(items, px, py);
+    if (idx < 0) return;
+    try {
+      window.getSelection()?.removeAllRanges();
+    } catch {
+      /* ignore */
+    }
+    hlStartRef.current = { page, idx };
+    hlCurRef.current = { page, idx };
+    hlDragRef.current = true;
+    hlLastMoveRef.current = null;
+    const onMove = (ev: MouseEvent) => {
+      hlLastMoveRef.current = { x: ev.clientX, y: ev.clientY };
+      if (hlRafRef.current) return;
+      hlRafRef.current = requestAnimationFrame(() => {
+        hlRafRef.current = 0;
+        updateHlSelection();
+      });
+    };
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      if (hlRafRef.current) {
+        cancelAnimationFrame(hlRafRef.current);
+        hlRafRef.current = 0;
       }
-    })();
+      hlDragRef.current = false;
+      void commitHlSelection();
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  };
+
+  const pdfPointAt = (x: number, y: number, page: number): [number, number] => {
+    const el = pageRefs.current.get(page);
+    const vp = viewportsRef.current.get(page);
+    if (!el || !vp) return [0, 0];
+    const r = el.getBoundingClientRect();
+    const [cx, cy] = vp.convertToPdfPoint(x - r.left, y - r.top);
+    return [cx, cy];
+  };
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if (highlightMode) hlMouseDown(e);
+    else onPanMouseDown(e);
   };
 
   const handleAnnotationClick = (a: AnnotationRecord) => {
@@ -938,6 +1070,8 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
       searchMatches={searchByPage.get(n) ?? []}
       selectedAnnotationId={selectedAnnotationId}
       linkService={linkService}
+      liveHighlights={liveSel[n]}
+      highlightColor={highlightColor}
       onAnnotationClick={handleAnnotationClick}
       onAnnotationContextMenu={(a, x, y) => setAnnMenu({ a, x, y })}
       onJumpToPage={gotoPage}
@@ -1081,12 +1215,13 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
             className={`h-full overflow-auto bg-[var(--app-canvas)] ${
               panning
                 ? 'cursor-grabbing select-none'
-                : !rightDragPan && canPan && !highlightMode && !screenshotMode
+                : highlightMode
+                  ? 'select-none'
+                  : !rightDragPan && canPan && !screenshotMode
                   ? 'cursor-grab'
                   : ''
             }`}
-            onMouseDown={onPanMouseDown}
-            onMouseUp={handleMouseUp}
+            onMouseDown={handleMouseDown}
           >
             {/* 虚拟滚动：容器总高度 = 全部行高之和，只挂载可视区 ± 预载行，
                 m-auto：内容小于视口时居中；超出时自动贴左贴顶，保证四边都能滚动到 */}
@@ -1157,33 +1292,6 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
       )}
     </main>
   );
-}
-
-/**
- * 把同一行的多个小矩形合并成一个连续高亮块（类似 Edge 的选词效果）。
- * PDF.js 文本层是逐字绝对定位的，直接取 selection 会把“三个字”拆成三块；
- * 这里按垂直重叠分组，每组取外接矩形，整行/整块只高亮一次。
- */
-function mergeLineQuads(quads: Quad[]): Quad[] {
-  if (quads.length < 2) return quads;
-  const sorted = [...quads].sort((a, b) => a.y - b.y || a.x - b.x);
-  const groups: Quad[][] = [];
-  for (const q of sorted) {
-    const g = groups.find((grp) => {
-      const gMinY = Math.min(...grp.map((x) => x.y));
-      const gMaxY = Math.max(...grp.map((x) => x.y + x.h));
-      return q.y < gMaxY && q.y + q.h > gMinY;
-    });
-    if (g) g.push(q);
-    else groups.push([q]);
-  }
-  return groups.map((grp) => {
-    const minX = Math.min(...grp.map((x) => x.x));
-    const minY = Math.min(...grp.map((x) => x.y));
-    const maxX = Math.max(...grp.map((x) => x.x + x.w));
-    const maxY = Math.max(...grp.map((x) => x.y + x.h));
-    return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
-  });
 }
 
 /** 将阅读区选区截成 PNG：跨页自动拼接（高清画布像素） */
