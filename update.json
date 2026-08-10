@@ -1,8 +1,8 @@
 {
+  "version": "3.3.7",
   "notes": [
-    "v3.3.6 - 知识库文件总数包含子文件夹，移除操作成功/提示类角标通知"
+    "v3.3.7 - 渲染优化：PDFium首帧秒出（页数/尺寸不等pdf.js与readPdf，提前恢复阅读页码），0.25级渲染桶只缩小不发虚，Sumatra式相邻页预渲染翻页秒开"
   ],
-  "version": "3.3.6",
-  "publishDate": "2026-08-10",
-  "url": "https://github.com/myp-super/MinePDF/releases/download/v3.3.6/MinePDF.Setup.3.3.6.exe"
+  "url": "https://github.com/myp-super/MinePDF/releases/download/v3.3.7/MinePDF.Setup.3.3.7.exe",
+  "publishDate": "2026-08-10"
 }
