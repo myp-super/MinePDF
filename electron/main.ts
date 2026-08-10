@@ -1661,6 +1661,100 @@ async function createMainWindow(): Promise<BrowserWindow> {
                   })()
                 `);
                 console.log('[capture] deleteTabDiag', JSON.stringify(deleteTabDiag));
+                // 外部 PDF 桥：主进程发送 app:external-pdf，渲染进程应复制进临时区
+                win.webContents.send('app:external-pdf', testPdfPath);
+                await new Promise((r) => setTimeout(r, 2500));
+                const externalDiag = await win.webContents.executeJavaScript(`
+                  (async () => {
+                    const inbox = await window.pkm.inboxList();
+                    const hit = inbox.find(
+                      (p) => p.filename === 'smoke-test.pdf' &&
+                        p.filepath.toLowerCase().indexOf('\\\\inbox\\\\') > -1,
+                    );
+                    if (hit) await window.pkm.inboxRemove(hit.id);
+                    return { found: !!hit };
+                  })()
+                `);
+                console.log('[capture] externalDiag', JSON.stringify(externalDiag));
+                // 目录树弹窗：空白区右键 → 新建子文件夹 → 折叠/展开/选中高亮
+                const pickerDiag = await win.webContents.executeJavaScript(`
+                  (async () => {
+                    const lib = await window.pkm.createLibrary('PickerLib');
+                    const outer = await window.pkm.createFolder('Outer', lib.rootFolderId);
+                    await window.pkm.createFolder('Inner', outer.id);
+                    if (typeof window.__pkmRefresh === 'function') await window.__pkmRefresh();
+                    await new Promise((r) => setTimeout(r, 500));
+                    const sidebar = document.querySelector('[data-panel="sidebar"]');
+                    const scroll = sidebar && sidebar.querySelector('.overflow-y-auto');
+                    if (!scroll) return { lib: !!lib, scroll: false };
+                    const rect = scroll.getBoundingClientRect();
+                    scroll.dispatchEvent(new MouseEvent('contextmenu', {
+                      bubbles: true, cancelable: true,
+                      clientX: rect.left + 30, clientY: rect.bottom - 20,
+                    }));
+                    await new Promise((r) => setTimeout(r, 250));
+                    const menuBtn = [...document.querySelectorAll('button')].find(
+                      (b) => (b.textContent || '').includes('新建子文件夹'),
+                    );
+                    if (!menuBtn) return { lib: !!lib, menu: false };
+                    menuBtn.click();
+                    await new Promise((r) => setTimeout(r, 350));
+                    const modal = [...document.querySelectorAll('.fixed')].find(
+                      (el) => (el.className || '').includes('z-50') &&
+                        (el.textContent || '').includes('选择新建在哪个知识库'),
+                    );
+                    if (!modal) return { lib: !!lib, menu: true, modal: false };
+                    const rows = (name) => [...modal.querySelectorAll('div')].filter(
+                      (d) => (d.className || '').includes('cursor-pointer') &&
+                        (d.textContent || '').trim() === name,
+                    );
+                    const libRow = rows('PickerLib')[0];
+                    const outerVisible = rows('Outer').length > 0;
+                    // 用完整鼠标事件序列模拟真实点击
+                    const realClick = (el) => {
+                      const r = el.getBoundingClientRect();
+                      const cx = r.left + r.width / 2;
+                      const cy = r.top + r.height / 2;
+                      el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, clientX: cx, clientY: cy }));
+                      el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, clientX: cx, clientY: cy }));
+                      el.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: cx, clientY: cy }));
+                    };
+                    const rowHtml = libRow ? (libRow.outerHTML || '').slice(0, 120) : '';
+                    if (libRow) realClick(libRow);
+                    await new Promise((r) => setTimeout(r, 120));
+                    const outerCountImmediate = rows('Outer').length;
+                    await new Promise((r) => setTimeout(r, 250));
+                    const outerCollapsed = outerVisible && rows('Outer').length === 0;
+                    if (libRow) realClick(libRow);
+                    await new Promise((r) => setTimeout(r, 300));
+                    const outerExpandedAgain = rows('Outer').length > 0;
+                    const outerRow = rows('Outer')[0];
+                    if (outerRow) realClick(outerRow);
+                    await new Promise((r) => setTimeout(r, 300));
+                    const innerVisible = rows('Inner').length > 0;
+                    const selectedHighlight = outerRow
+                      ? (outerRow.className || '').includes('bg-app-accent')
+                      : false;
+                    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+                    await new Promise((r) => setTimeout(r, 200));
+                    await window.pkm.deleteLibrary(lib.id);
+                    if (typeof window.__pkmRefresh === 'function') await window.__pkmRefresh();
+                    return {
+                      lib: !!lib,
+                      menu: true,
+                      modal: true,
+                      libRow: !!libRow,
+                      outerVisible,
+                      outerCountImmediate,
+                      outerCollapsed,
+                      outerExpandedAgain,
+                      innerVisible,
+                      selectedHighlight,
+                      rowHtml,
+                    };
+                  })()
+                `);
+                console.log('[capture] pickerDiag', JSON.stringify(pickerDiag));
               } catch (err) {
                 console.error('[capture] failed', err);
               }

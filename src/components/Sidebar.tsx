@@ -145,6 +145,10 @@ export function Sidebar() {
 
   const [query, setQuery] = useState('');
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
+  /** 排序模式：开启后拖拽只用于同级重排，不触发“移入文件夹” */
+  const [sortMode, setSortMode] = useState<boolean>(
+    () => localStorage.getItem('pkm.sortMode') === '1',
+  );
   const [menu, setMenu] = useState<{ x: number; y: number; items: ContextMenuItem[] } | null>(null);
   const [importMenu, setImportMenu] = useState(false);
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
@@ -526,6 +530,24 @@ export function Sidebar() {
   /** 知识库区空白处右键菜单 */
   const blankMenuItems: ContextMenuItem[] = [
     {
+      label: `${sortMode ? '✓ ' : ''}${t('sidebar.sortMode')}`,
+      icon: <RefreshCcw size={12} />,
+      onClick: () => {
+        setSortMode((v) => {
+          const next = !v;
+          try {
+            localStorage.setItem('pkm.sortMode', next ? '1' : '0');
+          } catch {
+            /* ignore */
+          }
+          return next;
+        });
+      },
+    },
+    {
+      divider: true,
+    },
+    {
       label: t('sidebar.newLibrary'),
       icon: <LibraryBig size={12} />,
       onClick: () => void createLibraryAndRename(),
@@ -670,19 +692,21 @@ export function Sidebar() {
           <div className="mt-0.5">
             {libraries.map((lib) => (
               <Fragment key={lib.id}>
-                <InsertZone
-                  onDrop={(id, kind) => {
-                    if (kind !== 'library') return;
-                    void (async () => {
-                      try {
-                        await window.pkm.reorderLibrary(id, lib.id);
-                        await refresh();
-                      } catch (err) {
-                        toast('error', terr(err instanceof Error ? err.message : String(err)));
-                      }
-                    })();
-                  }}
-                />
+                {sortMode && (
+                  <InsertZone
+                    onDrop={(id, kind) => {
+                      if (kind !== 'library') return;
+                      void (async () => {
+                        try {
+                          await window.pkm.reorderLibrary(id, lib.id);
+                          await refresh();
+                        } catch (err) {
+                          toast('error', terr(err instanceof Error ? err.message : String(err)));
+                        }
+                      })();
+                    }}
+                  />
+                )}
                 <LibraryNode
                   lib={lib}
                 defaultLibrary={defaultLibrary}
@@ -737,22 +761,35 @@ export function Sidebar() {
                     }
                   })()
                 }
+                sortMode={sortMode}
+                onReorderLibrary={(libId) =>
+                  void (async () => {
+                    try {
+                      await window.pkm.reorderLibrary(libId, lib.id);
+                      await refresh();
+                    } catch (err) {
+                      toast('error', terr(err instanceof Error ? err.message : String(err)));
+                    }
+                  })()
+                }
                 />
               </Fragment>
             ))}
-            <InsertZone
-              onDrop={(id, kind) => {
-                if (kind !== 'library') return;
-                void (async () => {
-                  try {
-                    await window.pkm.reorderLibrary(id, null);
-                    await refresh();
-                  } catch (err) {
-                    toast('error', terr(err instanceof Error ? err.message : String(err)));
-                  }
-                })();
-              }}
-            />
+            {sortMode && (
+              <InsertZone
+                onDrop={(id, kind) => {
+                  if (kind !== 'library') return;
+                  void (async () => {
+                    try {
+                      await window.pkm.reorderLibrary(id, null);
+                      await refresh();
+                    } catch (err) {
+                      toast('error', terr(err instanceof Error ? err.message : String(err)));
+                    }
+                  })();
+                }}
+              />
+            )}
             {libraries.length === 0 && (
               <div
                 className="cursor-pointer rounded-md border border-dashed border-app-border px-2 py-3 text-center text-[11px] text-app-muted transition-colors hover:border-app-accent/50 hover:bg-app-panel2"
@@ -953,6 +990,8 @@ function LibraryNode({
   onDropFiles,
   onDropFolder,
   onDropPdf,
+  sortMode,
+  onReorderLibrary,
 }: {
   lib: LibraryRecord;
   defaultLibrary: LibraryRecord | null;
@@ -974,6 +1013,8 @@ function LibraryNode({
   onDropFiles: (paths: string[]) => Promise<void>;
   onDropFolder: (folderId: number) => void;
   onDropPdf: (pdfId: number) => void;
+  sortMode: boolean;
+  onReorderLibrary: (libId: number) => void;
 }) {
   const t = useT();
   const terr = useTError();
@@ -1020,8 +1061,15 @@ function LibraryNode({
     }
     const f = e.dataTransfer.getData(FOLDER_MIME);
     const p = e.dataTransfer.getData(PDF_MIME);
+    const l = e.dataTransfer.getData(LIBRARY_MIME);
     try {
-      if (f) {
+      if (sortMode && l) {
+        onReorderLibrary(Number(l));
+        toggleExpanded(lib.rootFolderId);
+      } else if (sortMode) {
+        // 排序模式下拖文件夹到知识库行不执行“移入”，避免误操作
+        return;
+      } else if (f) {
         onDropFolder(Number(f));
         toggleExpanded(lib.rootFolderId);
       } else if (p) {
@@ -1162,23 +1210,26 @@ function LibraryNode({
         <div>
           {children.map((f) => (
             <Fragment key={f.id}>
-              <InsertZone
-                onDrop={(id, kind) => {
-                  if (kind !== 'folder') return;
-                  void (async () => {
-                    try {
-                      await reorderFolderInto(folders, id, f.id, lib.rootFolderId);
-                      await refresh();
-                    } catch (err) {
-                      toast('error', terr(err instanceof Error ? err.message : String(err)));
-                    }
-                  })();
-                }}
-              />
+              {sortMode && (
+                <InsertZone
+                  onDrop={(id, kind) => {
+                    if (kind !== 'folder') return;
+                    void (async () => {
+                      try {
+                        await reorderFolderInto(folders, id, f.id, lib.rootFolderId);
+                        await refresh();
+                      } catch (err) {
+                        toast('error', terr(err instanceof Error ? err.message : String(err)));
+                      }
+                    })();
+                  }}
+                />
+              )}
               <FolderNode
                 folder={f}
                 depth={0}
                 renamingId={renamingId}
+                sortMode={sortMode}
                 expanded={expanded}
                 toggleExpanded={toggleExpanded}
                 refresh={refresh}
@@ -1195,19 +1246,21 @@ function LibraryNode({
               />
             </Fragment>
           ))}
-          <InsertZone
-            onDrop={(id, kind) => {
-              if (kind !== 'folder') return;
-              void (async () => {
-                try {
-                  await reorderFolderInto(folders, id, null, lib.rootFolderId);
-                  await refresh();
-                } catch (err) {
-                  toast('error', terr(err instanceof Error ? err.message : String(err)));
-                }
-              })();
-            }}
-          />
+          {sortMode && (
+            <InsertZone
+              onDrop={(id, kind) => {
+                if (kind !== 'folder') return;
+                void (async () => {
+                  try {
+                    await reorderFolderInto(folders, id, null, lib.rootFolderId);
+                    await refresh();
+                  } catch (err) {
+                    toast('error', terr(err instanceof Error ? err.message : String(err)));
+                  }
+                })();
+              }}
+            />
+          )}
           {pdfsIn.map((p) => (
             <PdfRow
               key={p.id}
@@ -1244,12 +1297,6 @@ export function FolderTreePicker({
     () => new Set(libraries.map((l) => l.rootFolderId)),
   );
   const [selectedId, setSelectedId] = useState<number | null>(null);
-  useEffect(() => {
-    if (open) {
-      setExpanded(new Set(libraries.map((l) => l.rootFolderId)));
-      setSelectedId(libraries[0]?.rootFolderId ?? null);
-    }
-  }, [open, libraries]);
 
   const toggle = (id: number) =>
     setExpanded((s) => {
@@ -1363,6 +1410,7 @@ function FolderNode({
   folder,
   depth,
   renamingId,
+  sortMode,
   expanded,
   toggleExpanded,
   refresh,
@@ -1380,6 +1428,7 @@ function FolderNode({
   folder: FolderType;
   depth: number;
   renamingId: number | null;
+  sortMode: boolean;
   expanded: Set<number>;
   toggleExpanded: (id: number) => void;
   refresh: () => Promise<void>;
@@ -1423,7 +1472,14 @@ function FolderNode({
     const f = e.dataTransfer.getData(FOLDER_MIME);
     const p = e.dataTransfer.getData(PDF_MIME);
     try {
-      if (f) {
+      if (sortMode && f) {
+        const dragged = folders.find((x) => x.id === Number(f));
+        if (!dragged || dragged.parentId !== folder.parentId) return;
+        await reorderFolderInto(folders, Number(f), folder.id, folder.parentId!);
+        await refresh();
+      } else if (sortMode) {
+        return;
+      } else if (f) {
         await window.pkm.moveFolder(Number(f), folder.id);
         await refresh();
         toggleExpanded(folder.id);
@@ -1604,22 +1660,25 @@ function FolderNode({
         <div>
           {children.map((f) => (
             <Fragment key={f.id}>
-              <InsertZone
-                onDrop={(id, kind) => {
-                  if (kind !== 'folder') return;
-                  void (async () => {
-                    try {
-                      await reorderFolderInto(folders, id, f.id, folder.id);
-                      await refresh();
-                    } catch (err) {
-                      toast('error', terr(err instanceof Error ? err.message : String(err)));
-                    }
-                  })();
-                }}
-              />
+              {sortMode && (
+                <InsertZone
+                  onDrop={(id, kind) => {
+                    if (kind !== 'folder') return;
+                    void (async () => {
+                      try {
+                        await reorderFolderInto(folders, id, f.id, folder.id);
+                        await refresh();
+                      } catch (err) {
+                        toast('error', terr(err instanceof Error ? err.message : String(err)));
+                      }
+                    })();
+                  }}
+                />
+              )}
               <FolderNode
                 folder={f}
                 depth={depth + 1}
+                sortMode={sortMode}
                 expanded={expanded}
                 toggleExpanded={toggleExpanded}
                 refresh={refresh}
@@ -1637,19 +1696,21 @@ function FolderNode({
               />
             </Fragment>
           ))}
-          <InsertZone
-            onDrop={(id, kind) => {
-              if (kind !== 'folder') return;
-              void (async () => {
-                try {
-                  await reorderFolderInto(folders, id, null, folder.id);
-                  await refresh();
-                } catch (err) {
-                  toast('error', terr(err instanceof Error ? err.message : String(err)));
-                }
-              })();
-            }}
-          />
+          {sortMode && (
+            <InsertZone
+              onDrop={(id, kind) => {
+                if (kind !== 'folder') return;
+                void (async () => {
+                  try {
+                    await reorderFolderInto(folders, id, null, folder.id);
+                    await refresh();
+                  } catch (err) {
+                    toast('error', terr(err instanceof Error ? err.message : String(err)));
+                  }
+                })();
+              }}
+            />
+          )}
           {pdfsIn.map((p) => (
             <PdfRow
               key={p.id}

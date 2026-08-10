@@ -389,7 +389,9 @@ export function registerIpc(): void {
     return false;
   });
   handle('app:open-defaultapps', () => openChoosePdfApp());
-  handle('app:renderer-ready', () => {
+  // 渲染进程就绪信号由 preload 用 ipcRenderer.send 发送，必须用 ipcMain.on 接收
+  // （ipcMain.handle 只响应 invoke，会让外部 PDF 永远卡在缓冲区）
+  ipcMain.on('app:renderer-ready', () => {
     rendererReadyCb?.();
   });
 

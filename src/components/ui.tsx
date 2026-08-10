@@ -150,13 +150,14 @@ export function ConfirmDialog({
 }
 
 export interface ContextMenuItem {
-  label: string;
+  /** 分隔线项不需要 label / onClick */
+  label?: string;
   icon?: React.ReactNode;
   danger?: boolean;
   disabled?: boolean;
   /** 分隔线项：渲染一条分隔线而不是按钮 */
   divider?: boolean;
-  onClick: () => void;
+  onClick?: () => void;
 }
 
 /** 右键菜单：fixed 定位并自动约束在视口内 */
@@ -215,7 +216,7 @@ export function ContextMenu({
             )}
             disabled={item.disabled}
             onClick={() => {
-              item.onClick();
+              item.onClick?.();
               onClose();
             }}
           >
