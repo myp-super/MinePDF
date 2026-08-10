@@ -12,6 +12,7 @@ import {
   Import,
   Inbox as InboxIcon,
   Library,
+  LibraryBig,
   PanelLeftClose,
   PanelLeftOpen,
   Plus,
@@ -21,7 +22,7 @@ import {
 } from 'lucide-react';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useT, useTError } from '../i18n';
-import type { Folder as FolderType, PdfRecord } from '../shared/types';
+import type { Folder as FolderType, LibraryRecord, PdfRecord } from '../shared/types';
 import { useApp } from '../store';
 import { Button, ConfirmDialog, ContextMenu, type ContextMenuItem, IconButton, Modal } from './ui';
 
@@ -62,6 +63,7 @@ export function Sidebar() {
   const t = useT();
   const terr = useTError();
   const folders = useApp((s) => s.folders);
+  const libraries = useApp((s) => s.libraries);
   const pdfs = useApp((s) => s.pdfs);
   const tags = useApp((s) => s.tags);
   const settings = useApp((s) => s.settings);
@@ -88,15 +90,15 @@ export function Sidebar() {
 
   const [query, setQuery] = useState('');
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
-  const [rootExpanded, setRootExpanded] = useState(true);
   const [menu, setMenu] = useState<{ x: number; y: number; items: ContextMenuItem[] } | null>(null);
   const [importMenu, setImportMenu] = useState(false);
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
-  const [rootDragOver, setRootDragOver] = useState(false);
-  const rootDragDepth = useRef(0);
-  const [moveOpen, setMoveOpen] = useState(false);
+  const [renamingNode, setRenamingNode] = useState<{ kind: 'library' | 'folder'; id: number } | null>(null);
+  const [picker, setPicker] = useState<{
+    title: string;
+    onPick: (folderId: number) => void;
+  } | null>(null);
   const [inboxOpen, setInboxOpen] = useState(true);
-  const [inboxMoveId, setInboxMoveId] = useState<number | null>(null);
   const [inboxHeight, setInboxHeight] = useState<number>(
     () => Number(localStorage.getItem('pkm.inboxHeight')) || 160,
   );
@@ -133,11 +135,22 @@ export function Sidebar() {
       .catch(() => undefined);
   }, []);
 
-  const topFolders = useMemo(
-    () => folders.filter((f) => f.parentId === null).sort((a, b) => a.name.localeCompare(b.name, 'zh')),
-    [folders],
-  );
-  const rootPdfs = useMemo(() => pdfs.filter((p) => p.folderId === null), [pdfs]);
+  const defaultLibrary = useMemo(() => libraries[0] ?? null, [libraries]);
+
+  // 知识库默认展开（Obsidian 式），用户手动折叠过的保持折叠
+  useEffect(() => {
+    setExpanded((s) => {
+      const next = new Set(s);
+      let changed = false;
+      for (const l of libraries) {
+        if (!next.has(l.rootFolderId)) {
+          next.add(l.rootFolderId);
+          changed = true;
+        }
+      }
+      return changed ? next : s;
+    });
+  }, [libraries]);
 
   const q = query.trim().toLowerCase();
   const searchPdfs = q
@@ -174,19 +187,68 @@ export function Sidebar() {
 
   const importFiles = async () => {
     setImportMenu(false);
-    await doImport(await window.pkm.openPdfDialog(), selectedFolderId);
+    const paths = await window.pkm.openPdfDialog();
+    if (paths.length) importToPicker(paths);
   };
   const importFolder = async () => {
     setImportMenu(false);
-    await doImport(await window.pkm.openFolderDialog(), selectedFolderId);
+    const paths = await window.pkm.openFolderDialog();
+    if (paths.length) importToPicker(paths);
   };
 
-  const createFolder = async (parentId: number | null) => {
+  /** 选择目标目录（树形弹窗）后再执行 */
+  const importToPicker = (paths: string[]) => {
+    setPicker({
+      title: t('sidebar.pickImportTitle'),
+      onPick: (folderId) => void doImport(paths, folderId),
+    });
+  };
+
+  /** 新建知识库：创建后立即进入重命名 */
+  const createLibraryAndRename = async () => {
     try {
-      await window.pkm.createFolder(t('sidebar.newFolderName'), parentId);
-      if (parentId != null) toggleExpanded(parentId);
-      else setRootExpanded(true);
+      const lib = await window.pkm.createLibrary(t('sidebar.newLibraryName'));
       await refresh();
+      setExpanded((s) => new Set(s).add(lib.rootFolderId));
+      setRenamingNode({ kind: 'library', id: lib.rootFolderId });
+    } catch (err) {
+      toast('error', terr(err instanceof Error ? err.message : String(err)));
+    }
+  };
+
+  /** 新建子文件夹：先弹树形选择框，确定后创建并进入重命名 */
+  const createSubfolderWithPicker = () => {
+    setPicker({
+      title: t('sidebar.pickFolderTitle'),
+      onPick: async (folderId) => {
+        try {
+          const created = await window.pkm.createFolder(t('sidebar.newSubfolderName'), folderId);
+          // 展开新文件夹的所有祖先
+          const ids = new Set<number>();
+          let cur: FolderType | undefined = folders.find((f) => f.id === folderId);
+          while (cur) {
+            ids.add(cur.id);
+            if (cur.parentId == null) break;
+            const pid = cur.parentId;
+            cur = folders.find((f) => f.id === pid);
+          }
+          setExpanded((s) => new Set([...s, ...ids]));
+          await refresh();
+          setRenamingNode({ kind: 'folder', id: created.id });
+        } catch (err) {
+          toast('error', terr(err instanceof Error ? err.message : String(err)));
+        }
+      },
+    });
+  };
+
+  /** 新建子文件夹（父级已确定，直接创建并进入重命名） */
+  const createFolder = async (parentId: number) => {
+    try {
+      const created = await window.pkm.createFolder(t('sidebar.newSubfolderName'), parentId);
+      toggleExpanded(parentId);
+      await refresh();
+      setRenamingNode({ kind: 'folder', id: created.id });
     } catch (err) {
       toast('error', terr(err instanceof Error ? err.message : String(err)));
     }
@@ -214,8 +276,8 @@ export function Sidebar() {
     });
   };
 
-  const batchMoveTo = async (folderId: number | null) => {
-    setMoveOpen(false);
+  const batchMoveTo = async (folderId: number) => {
+    setPicker(null);
     const ids = selectedPdfIds;
     if (!ids.length) return;
     try {
@@ -257,8 +319,8 @@ export function Sidebar() {
     });
   };
 
-  const moveInboxToLibrary = async (id: number, folderId: number | null) => {
-    setInboxMoveId(null);
+  const moveInboxToLibrary = async (id: number, folderId: number) => {
+    setPicker(null);
     try {
       await window.pkm.inboxToLibrary(id, folderId);
       await refresh();
@@ -276,7 +338,11 @@ export function Sidebar() {
         {
           label: t('inbox.toLibrary'),
           icon: <Library size={12} />,
-          onClick: () => setInboxMoveId(pdf.id),
+          onClick: () =>
+            setPicker({
+              title: t('sidebar.moveTitle'),
+              onPick: (folderId) => void moveInboxToLibrary(pdf.id, folderId),
+            }),
         },
         {
           label: t('sidebar.openInReader'),
@@ -339,12 +405,11 @@ export function Sidebar() {
           {
             label: t('sidebar.moveTo'),
             icon: <Folder size={12} />,
-            onClick: () => setMoveOpen(true),
-          },
-          {
-            label: t('sidebar.moveToRoot'),
-            icon: <Folder size={12} />,
-            onClick: () => void batchMoveTo(null),
+            onClick: () =>
+              setPicker({
+                title: t('sidebar.moveTitle'),
+                onPick: (folderId) => void batchMoveTo(folderId),
+              }),
           },
           {
             label: t('sidebar.batchDelete'),
@@ -365,7 +430,19 @@ export function Sidebar() {
         {
           label: t('sidebar.moveTo'),
           icon: <Folder size={12} />,
-          onClick: () => setMoveOpen(true),
+          onClick: () =>
+            setPicker({
+              title: t('sidebar.moveTitle'),
+              onPick: (folderId) =>
+                void (async () => {
+                  try {
+                    await window.pkm.movePdf(pdf.id, folderId);
+                    await refresh();
+                  } catch (err) {
+                    toast('error', terr(err instanceof Error ? err.message : String(err)));
+                  }
+                })(),
+            }),
         },
         ...pdfMenuItems(
           pdf,
@@ -382,44 +459,27 @@ export function Sidebar() {
     });
   };
 
-  const handleRootDrop = async (e: React.DragEvent) => {
-    noDrag(e);
-    rootDragDepth.current = 0;
-    setRootDragOver(false);
-    if (dragHasFiles(e)) {
-      await doImport(pathsFromDrag(e), null);
-      return;
-    }
-    const f = e.dataTransfer.getData(FOLDER_MIME);
-    const p = e.dataTransfer.getData(PDF_MIME);
-    try {
-      if (f) {
-        await window.pkm.moveFolder(Number(f), null);
-        await refresh();
-      } else if (p) {
-        await window.pkm.movePdf(Number(p), null);
-        await refresh();
-      }
-    } catch (err) {
-      toast('error', terr(err instanceof Error ? err.message : String(err)));
-    }
-  };
-
   const openTaggedPdf = (p: PdfRecord) => {
     openPdf(p.id);
     setTagFilter(null);
   };
 
-  const rootMenuItems: ContextMenuItem[] = [
+  /** 知识库区空白处右键菜单 */
+  const blankMenuItems: ContextMenuItem[] = [
     {
-      label: t('sidebar.openLibraryFolder'),
-      icon: <Library size={12} />,
-      onClick: () => void window.pkm.openLibraryFolder(),
+      label: t('sidebar.newLibrary'),
+      icon: <LibraryBig size={12} />,
+      onClick: () => void createLibraryAndRename(),
     },
     {
-      label: t('sidebar.newRootFolder'),
+      label: t('sidebar.newSubfolder'),
       icon: <FolderPlus size={12} />,
-      onClick: () => void createFolder(null),
+      onClick: createSubfolderWithPicker,
+    },
+    {
+      label: t('sidebar.importFiles'),
+      icon: <Import size={12} />,
+      onClick: () => void importFiles(),
     },
   ];
 
@@ -509,8 +569,8 @@ export function Sidebar() {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
-          <IconButton title={t('sidebar.newRootFolder')} onClick={() => void createFolder(null)}>
-            <FolderPlus size={14} />
+          <IconButton title={t('sidebar.newLibrary')} onClick={() => void createLibraryAndRename()}>
+            <LibraryBig size={14} />
           </IconButton>
         </div>
       </div>
@@ -520,6 +580,13 @@ export function Sidebar() {
         onClick={(e) => {
           // 点击树区空白处取消多选
           if (!(e.target as HTMLElement).closest('[role="treeitem"]')) clearSelectedPdfs();
+        }}
+        onContextMenu={(e) => {
+          // 知识库区空白处右键：新建知识库 / 新建子文件夹 / 导入 PDF
+          if (!(e.target as HTMLElement).closest('[role="treeitem"]')) {
+            e.preventDefault();
+            setMenu({ x: e.clientX, y: e.clientY, items: blankMenuItems });
+          }
         }}
       >
         {searchPdfs ? (
@@ -542,85 +609,70 @@ export function Sidebar() {
           </div>
         ) : (
           <div className="mt-0.5">
-            <div
-              role="treeitem"
-              tabIndex={0}
-              className={`group flex cursor-pointer items-center gap-1 rounded-md px-1 py-1.5 text-xs font-semibold transition-all duration-150 ${
-                rootDragOver
-                  ? 'scale-[1.02] bg-app-accent/20 shadow-lg ring-1 ring-app-accent'
-                  : 'hover:bg-app-panel2'
-              } focus-visible:ring-2 focus-visible:ring-app-accent/60`}
-              onClick={() => setSelectedFolder(null)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') setSelectedFolder(null);
-              }}
-              onDragOver={noDrag}
-              onDragEnter={(e) => {
-                noDrag(e);
-                rootDragDepth.current += 1;
-                setRootDragOver(true);
-              }}
-              onDragLeave={() => {
-                rootDragDepth.current = Math.max(0, rootDragDepth.current - 1);
-                if (rootDragDepth.current === 0) setRootDragOver(false);
-              }}
-              onDrop={(e) => void handleRootDrop(e)}
-              onContextMenu={(e) => {
-                e.preventDefault();
-                setMenu({ x: e.clientX, y: e.clientY, items: rootMenuItems });
-              }}
-              title={t('sidebar.dragHint')}
-            >
-              <button
-                className="flex h-4 w-4 items-center justify-center text-app-muted"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setRootExpanded((v) => !v);
-                }}
-                aria-label={t('sidebar.expandCollapse')}
+            {libraries.map((lib) => (
+              <LibraryNode
+                key={lib.id}
+                lib={lib}
+                defaultLibrary={defaultLibrary}
+                expanded={expanded}
+                toggleExpanded={toggleExpanded}
+                refresh={refresh}
+                toast={toast}
+                openPdf={openPdf}
+                onMenu={(items, x, y) => setMenu({ x, y, items })}
+                onPdfMenu={openPdfMenu}
+                setConfirm={setConfirm}
+                autoRename={
+                  renamingNode?.kind === 'library' && renamingNode.id === lib.rootFolderId
+                }
+                renamingId={renamingNode?.kind === 'folder' ? renamingNode.id : null}
+                onRenameDone={() => setRenamingNode(null)}
+                createChild={(parentId) => void createFolder(parentId)}
+                onPickFolder={createSubfolderWithPicker}
+                onMoveTo={(folderId) =>
+                  setPicker({
+                    title: t('sidebar.moveTitle'),
+                    onPick: (targetId) =>
+                      void (async () => {
+                        try {
+                          await window.pkm.moveFolder(folderId, targetId);
+                          await refresh();
+                        } catch (err) {
+                          toast('error', terr(err instanceof Error ? err.message : String(err)));
+                        }
+                      })(),
+                  })
+                }
+                onRemovePdf={requestRemovePdf}
+                onDropFiles={(paths) => doImport(paths, lib.rootFolderId)}
+                onDropFolder={(folderId) =>
+                  void (async () => {
+                    try {
+                      await window.pkm.moveFolder(folderId, lib.rootFolderId);
+                      await refresh();
+                    } catch (err) {
+                      toast('error', terr(err instanceof Error ? err.message : String(err)));
+                    }
+                  })()
+                }
+                onDropPdf={(pdfId) =>
+                  void (async () => {
+                    try {
+                      await window.pkm.movePdf(pdfId, lib.rootFolderId);
+                      await refresh();
+                    } catch (err) {
+                      toast('error', terr(err instanceof Error ? err.message : String(err)));
+                    }
+                  })()
+                }
+              />
+            ))}
+            {libraries.length === 0 && (
+              <div
+                className="cursor-pointer rounded-md border border-dashed border-app-border px-2 py-3 text-center text-[11px] text-app-muted transition-colors hover:border-app-accent/50 hover:bg-app-panel2"
+                onClick={() => void createLibraryAndRename()}
               >
-                {rootExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-              </button>
-              <BookMarked size={14} className="text-app-accent" />
-              <span className="cq-mylib-label whitespace-nowrap">
-                {t('sidebar.myLibrary')}
-              </span>
-              <span className="ml-auto pr-1 text-[10px] font-normal text-app-muted">
-                {t('sidebar.filesCount', { n: pdfs.length })}
-              </span>
-            </div>
-            {rootExpanded && (
-              <div>
-                {rootPdfs.map((p) => (
-                  <PdfRow
-                    key={p.id}
-                    pdf={p}
-                    depth={0}
-                    onClick={() => openPdf(p.id)}
-                    onMenu={(x, y) => openPdfMenu(p, x, y)}
-                  />
-                ))}
-                {topFolders.map((f) => (
-                  <FolderNode
-                    key={f.id}
-                    folder={f}
-                    depth={0}
-                    expanded={expanded}
-                    toggleExpanded={toggleExpanded}
-                    refresh={refresh}
-                    toast={toast}
-                    openPdf={openPdf}
-                    onMenu={(items, x, y) => setMenu({ x, y, items })}
-                    onPdfMenu={openPdfMenu}
-                    setConfirm={setConfirm}
-                    createChild={() => void createFolder(f.id)}
-                    onRemovePdf={requestRemovePdf}
-                    onDropFiles={(paths) => doImport(paths, f.id)}
-                  />
-                ))}
-                {rootPdfs.length === 0 && topFolders.length === 0 && (
-                  <div className="px-2 py-3 text-center text-[11px] text-app-muted">{t('sidebar.emptyHint')}</div>
-                )}
+                {t('sidebar.noLibraryHint')}
               </div>
             )}
           </div>
@@ -776,61 +828,388 @@ export function Sidebar() {
           onCancel={() => setConfirm(null)}
         />
       )}
-      {moveOpen && (
-        <Modal open onClose={() => setMoveOpen(false)} title={t('sidebar.moveTitle')} width={360}>
-          <div className="max-h-[50vh] space-y-0.5 overflow-y-auto">
-            <button
-              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs hover:bg-app-panel2"
-              onClick={() => void batchMoveTo(null)}
-            >
-              <BookMarked size={13} className="text-app-accent" />
-              {t('sidebar.moveToRoot')}
-            </button>
-            {folders.map((f) => (
-              <button
-                key={f.id}
-                className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs hover:bg-app-panel2"
-                style={{ paddingLeft: 8 + f.path.split('/').length * 12 }}
-                onClick={() => void batchMoveTo(f.id)}
-              >
-                <Folder size={13} className="shrink-0 text-app-accent2/90" />
-                <span className="min-w-0 flex-1 truncate">{f.name}</span>
-              </button>
-            ))}
-          </div>
-        </Modal>
-      )}
-      {inboxMoveId != null && (
-        <Modal open onClose={() => setInboxMoveId(null)} title={t('inbox.toLibrary')} width={360}>
-          <div className="max-h-[50vh] space-y-0.5 overflow-y-auto">
-            <button
-              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs hover:bg-app-panel2"
-              onClick={() => void moveInboxToLibrary(inboxMoveId, null)}
-            >
-              <BookMarked size={13} className="text-app-accent" />
-              {t('sidebar.moveToRoot')}
-            </button>
-            {folders.map((f) => (
-              <button
-                key={f.id}
-                className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs hover:bg-app-panel2"
-                style={{ paddingLeft: 8 + f.path.split('/').length * 12 }}
-                onClick={() => void moveInboxToLibrary(inboxMoveId, f.id)}
-              >
-                <Folder size={13} className="shrink-0 text-app-accent2/90" />
-                <span className="min-w-0 flex-1 truncate">{f.name}</span>
-              </button>
-            ))}
-          </div>
-        </Modal>
+      {picker && (
+        <FolderTreePicker
+          open
+          title={picker.title}
+          libraries={libraries}
+          folders={folders}
+          onPick={(folderId) => {
+            const pick = picker.onPick;
+            setPicker(null);
+            void pick(folderId);
+          }}
+          onClose={() => setPicker(null)}
+        />
       )}
     </aside>
+  );
+}
+
+function LibraryNode({
+  lib,
+  defaultLibrary,
+  expanded,
+  toggleExpanded,
+  refresh,
+  toast,
+  openPdf,
+  onMenu,
+  onPdfMenu,
+  setConfirm,
+  autoRename,
+  onRenameDone,
+  renamingId,
+  createChild,
+  onPickFolder,
+  onMoveTo,
+  onRemovePdf,
+  onDropFiles,
+  onDropFolder,
+  onDropPdf,
+}: {
+  lib: LibraryRecord;
+  defaultLibrary: LibraryRecord | null;
+  expanded: Set<number>;
+  toggleExpanded: (id: number) => void;
+  refresh: () => Promise<void>;
+  toast: (kind: 'info' | 'success' | 'error', text: string) => void;
+  openPdf: (id: number) => void;
+  onMenu: (items: ContextMenuItem[], x: number, y: number) => void;
+  onPdfMenu: (pdf: PdfRecord, x: number, y: number) => void;
+  setConfirm: (c: ConfirmState) => void;
+  autoRename: boolean;
+  onRenameDone: () => void;
+  renamingId: number | null;
+  createChild: (parentId: number) => void;
+  onPickFolder: () => void;
+  onMoveTo: (folderId: number) => void;
+  onRemovePdf: (pdf: PdfRecord) => void;
+  onDropFiles: (paths: string[]) => Promise<void>;
+  onDropFolder: (folderId: number) => void;
+  onDropPdf: (pdfId: number) => void;
+}) {
+  const t = useT();
+  const terr = useTError();
+  const folders = useApp((s) => s.folders);
+  const pdfs = useApp((s) => s.pdfs);
+  const selectedFolderId = useApp((s) => s.selectedFolderId);
+  const setSelectedFolder = useApp((s) => s.setSelectedFolder);
+  const [localRenaming, setLocalRenaming] = useState(false);
+  const [name, setName] = useState(lib.name);
+  const [dragOver, setDragOver] = useState(false);
+  const dragDepth = useRef(0);
+  const isOpen = expanded.has(lib.rootFolderId);
+  const isDefault = defaultLibrary?.id === lib.id;
+  const children = folders.filter((f) => f.parentId === lib.rootFolderId);
+  const pdfsIn = pdfs.filter(
+    (p) => p.folderId === lib.rootFolderId || (isDefault && p.folderId === null),
+  );
+  const renaming = localRenaming || autoRename;
+
+  const commitRename = async () => {
+    setLocalRenaming(false);
+    onRenameDone();
+    const next = name.trim();
+    if (!next || next === lib.name) {
+      setName(lib.name);
+      return;
+    }
+    try {
+      await window.pkm.renameLibrary(lib.id, next);
+      await refresh();
+    } catch (err) {
+      toast('error', terr(err instanceof Error ? err.message : String(err)));
+      setName(lib.name);
+    }
+  };
+
+  const handleDrop = async (e: React.DragEvent) => {
+    noDrag(e);
+    dragDepth.current = 0;
+    setDragOver(false);
+    if (dragHasFiles(e)) {
+      await onDropFiles(pathsFromDrag(e));
+      return;
+    }
+    const f = e.dataTransfer.getData(FOLDER_MIME);
+    const p = e.dataTransfer.getData(PDF_MIME);
+    try {
+      if (f) {
+        onDropFolder(Number(f));
+        toggleExpanded(lib.rootFolderId);
+      } else if (p) {
+        onDropPdf(Number(p));
+        toggleExpanded(lib.rootFolderId);
+      }
+    } catch (err) {
+      toast('error', terr(err instanceof Error ? err.message : String(err)));
+    }
+  };
+
+  const openMenu = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    onMenu(
+      [
+        {
+          label: t('sidebar.newSubfolder'),
+          icon: <FolderPlus size={12} />,
+          onClick: () => {
+            onPickFolder();
+            toggleExpanded(lib.rootFolderId);
+          },
+        },
+        {
+          label: t('sidebar.rename'),
+          icon: <RefreshCcw size={12} />,
+          onClick: () => setLocalRenaming(true),
+        },
+        {
+          label: t('sidebar.revealInSystem'),
+          icon: <Folder size={12} />,
+          onClick: () => void window.pkm.revealFolder(lib.rootFolderId),
+        },
+        {
+          label: t('sidebar.deleteLibrary'),
+          danger: true,
+          icon: <Trash2 size={12} />,
+          onClick: () =>
+            setConfirm({
+              title: t('sidebar.deleteLibrary'),
+              message: t('sidebar.deleteLibraryMsg', { name: lib.name }),
+              confirmLabel: t('common.delete'),
+              danger: true,
+              action: async () => {
+                try {
+                  await window.pkm.deleteLibrary(lib.id);
+                  await refresh();
+                  toast('success', t('sidebar.libraryDeleted', { name: lib.name }));
+                } catch (err) {
+                  toast('error', terr(err instanceof Error ? err.message : String(err)));
+                }
+              },
+            }),
+        },
+      ],
+      e.clientX,
+      e.clientY,
+    );
+  };
+
+  return (
+    <div>
+      <div
+        role="treeitem"
+        tabIndex={0}
+        className={`group flex cursor-pointer items-center gap-1 rounded-md py-1.5 text-xs font-semibold transition-all duration-150 ${
+          dragOver
+            ? 'scale-[1.02] bg-app-accent/20 text-app-text shadow-lg ring-1 ring-app-accent'
+            : 'hover:bg-app-panel2'
+        } ${
+          selectedFolderId === lib.rootFolderId && !dragOver
+            ? 'bg-app-accent/10 text-app-text'
+            : 'text-app-text/90'
+        } focus-visible:ring-2 focus-visible:ring-app-accent/60`}
+        style={{ paddingLeft: 6 }}
+        onDragOver={noDrag}
+        onDragEnter={(e) => {
+          noDrag(e);
+          dragDepth.current += 1;
+          setDragOver(true);
+        }}
+        onDragLeave={() => {
+          dragDepth.current = Math.max(0, dragDepth.current - 1);
+          if (dragDepth.current === 0) setDragOver(false);
+        }}
+        onDrop={(e) => void handleDrop(e)}
+        onClick={() => setSelectedFolder(lib.rootFolderId)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') setSelectedFolder(lib.rootFolderId);
+        }}
+        onContextMenu={openMenu}
+        title={t('sidebar.dragHint')}
+      >
+        <button
+          className="flex h-4 w-4 items-center justify-center text-app-muted"
+          onClick={(e) => {
+            e.stopPropagation();
+            toggleExpanded(lib.rootFolderId);
+          }}
+          aria-label={t('sidebar.expandCollapse')}
+        >
+          {isOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+        </button>
+        <BookMarked size={dragOver ? 16 : 14} className={dragOver ? 'text-app-accent' : 'text-app-accent'} />
+        {renaming ? (
+          <input
+            autoFocus
+            className="h-5 min-w-0 flex-1 rounded border border-app-accent bg-app-panel2 px-1 text-xs outline-none"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            onBlur={() => void commitRename()}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') void commitRename();
+              if (e.key === 'Escape') {
+                setLocalRenaming(false);
+                setName(lib.name);
+                onRenameDone();
+              }
+            }}
+            onClick={(e) => e.stopPropagation()}
+          />
+        ) : (
+          <span className="cq-mylib-label min-w-0 flex-1 truncate whitespace-nowrap">{lib.name}</span>
+        )}
+        {!renaming && (
+          <span className="ml-auto pr-1 text-[10px] font-normal text-app-muted">
+            {t('sidebar.filesCount', { n: pdfsIn.length })}
+          </span>
+        )}
+      </div>
+      {isOpen && (
+        <div>
+          {children.map((f) => (
+            <FolderNode
+              key={f.id}
+              folder={f}
+              depth={0}
+              renamingId={renamingId}
+              expanded={expanded}
+              toggleExpanded={toggleExpanded}
+              refresh={refresh}
+              toast={toast}
+              openPdf={openPdf}
+              onMenu={onMenu}
+              onPdfMenu={onPdfMenu}
+              setConfirm={setConfirm}
+              createChild={createChild}
+              onMoveTo={onMoveTo}
+              onRenameDone={onRenameDone}
+              onRemovePdf={onRemovePdf}
+              onDropFiles={onDropFiles}
+            />
+          ))}
+          {pdfsIn.map((p) => (
+            <PdfRow
+              key={p.id}
+              pdf={p}
+              depth={0}
+              onClick={() => openPdf(p.id)}
+              onMenu={(x, y) => onPdfMenu(p, x, y)}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** 树形目录选择弹窗：新建子文件夹 / 导入 / 移动 PDF 共用 */
+export function FolderTreePicker({
+  open,
+  title,
+  libraries,
+  folders,
+  onPick,
+  onClose,
+}: {
+  open: boolean;
+  title: string;
+  libraries: LibraryRecord[];
+  folders: FolderType[];
+  onPick: (folderId: number) => void;
+  onClose: () => void;
+}) {
+  const t = useT();
+  const [expanded, setExpanded] = useState<Set<number>>(
+    () => new Set(libraries.map((l) => l.rootFolderId)),
+  );
+  useEffect(() => {
+    if (open) setExpanded(new Set(libraries.map((l) => l.rootFolderId)));
+  }, [open, libraries]);
+
+  const renderFolder = (parentId: number, depth: number) => {
+    const children = folders.filter((f) => f.parentId === parentId);
+    return (
+      <div>
+        {children.map((f) => (
+          <div key={f.id}>
+            <div
+              className="group flex w-full cursor-pointer items-center gap-1 rounded-md px-2 py-1.5 text-left text-xs hover:bg-app-panel2"
+              style={{ paddingLeft: 10 + depth * 14 }}
+              onClick={() => onPick(f.id)}
+            >
+              <button
+                className="flex h-4 w-4 shrink-0 items-center justify-center text-app-muted"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setExpanded((s) => {
+                    const next = new Set(s);
+                    if (next.has(f.id)) next.delete(f.id);
+                    else next.add(f.id);
+                    return next;
+                  });
+                }}
+                aria-label={t('sidebar.expandCollapseFolder')}
+              >
+                {expanded.has(f.id) ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+              </button>
+              <Folder size={13} className="shrink-0 text-app-accent2/90" />
+              <span className="min-w-0 flex-1 truncate">{f.name}</span>
+            </div>
+            {expanded.has(f.id) && renderFolder(f.id, depth + 1)}
+          </div>
+        ))}
+      </div>
+    );
+  };
+
+  return (
+    <Modal open={open} onClose={onClose} title={title} width={380}>
+      <div className="max-h-[55vh] space-y-0.5 overflow-y-auto">
+        {libraries.length === 0 && (
+          <div className="px-2 py-3 text-center text-[11px] text-app-muted">
+            {t('sidebar.noLibraryHint')}
+          </div>
+        )}
+        {libraries.map((lib) => (
+          <div key={lib.id}>
+            <div
+              className="flex w-full cursor-pointer items-center gap-1 rounded-md px-2 py-1.5 text-left text-xs hover:bg-app-panel2"
+              onClick={() => onPick(lib.rootFolderId)}
+            >
+              <button
+                className="flex h-4 w-4 shrink-0 items-center justify-center text-app-muted"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setExpanded((s) => {
+                    const next = new Set(s);
+                    if (next.has(lib.rootFolderId)) next.delete(lib.rootFolderId);
+                    else next.add(lib.rootFolderId);
+                    return next;
+                  });
+                }}
+                aria-label={t('sidebar.expandCollapse')}
+              >
+                {expanded.has(lib.rootFolderId) ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+              </button>
+              <BookMarked size={13} className="shrink-0 text-app-accent" />
+              <span className="min-w-0 flex-1 truncate font-medium">{lib.name}</span>
+            </div>
+            {expanded.has(lib.rootFolderId) && renderFolder(lib.rootFolderId, 1)}
+          </div>
+        ))}
+      </div>
+      <div className="mt-2 text-[10.5px] text-app-muted">{t('sidebar.pickHint')}</div>
+    </Modal>
   );
 }
 
 function FolderNode({
   folder,
   depth,
+  renamingId,
   expanded,
   toggleExpanded,
   refresh,
@@ -840,11 +1219,14 @@ function FolderNode({
   onPdfMenu,
   setConfirm,
   createChild,
+  onMoveTo,
+  onRenameDone,
   onRemovePdf,
   onDropFiles,
 }: {
   folder: FolderType;
   depth: number;
+  renamingId: number | null;
   expanded: Set<number>;
   toggleExpanded: (id: number) => void;
   refresh: () => Promise<void>;
@@ -853,7 +1235,9 @@ function FolderNode({
   onMenu: (items: ContextMenuItem[], x: number, y: number) => void;
   onPdfMenu: (pdf: PdfRecord, x: number, y: number) => void;
   setConfirm: (c: ConfirmState) => void;
-  createChild: () => void;
+  createChild: (parentId: number) => void;
+  onMoveTo?: (folderId: number) => void;
+  onRenameDone?: () => void;
   onRemovePdf: (pdf: PdfRecord) => void;
   onDropFiles: (paths: string[]) => Promise<void>;
 }) {
@@ -863,7 +1247,7 @@ function FolderNode({
   const pdfs = useApp((s) => s.pdfs);
   const selectedFolderId = useApp((s) => s.selectedFolderId);
   const setSelectedFolder = useApp((s) => s.setSelectedFolder);
-  const [renaming, setRenaming] = useState(false);
+  const [localRenaming, setLocalRenaming] = useState(false);
   const [name, setName] = useState(folder.name);
   const [dragOver, setDragOver] = useState(false);
   // 拖入计数器：行内包含多个子元素，直接 onDragLeave 会在子元素间闪烁，
@@ -873,6 +1257,7 @@ function FolderNode({
   const children = folders.filter((f) => f.parentId === folder.id);
   const pdfsIn = pdfs.filter((p) => p.folderId === folder.id);
   const isOpen = expanded.has(folder.id);
+  const renaming = localRenaming || renamingId === folder.id;
 
   const handleDrop = async (e: React.DragEvent) => {
     noDrag(e);
@@ -900,9 +1285,13 @@ function FolderNode({
   };
 
   const commitRename = async () => {
-    setRenaming(false);
+    setLocalRenaming(false);
+    onRenameDone?.();
     const next = name.trim();
-    if (!next || next === folder.name) return;
+    if (!next || next === folder.name) {
+      setName(folder.name);
+      return;
+    }
     try {
       await window.pkm.renameFolder(folder.id, next);
       await refresh();
@@ -917,20 +1306,25 @@ function FolderNode({
     e.stopPropagation();
     onMenu(
       [
-        { label: t('sidebar.newChildFolder'), icon: <FolderPlus size={12} />, onClick: createChild },
-        { label: t('sidebar.rename'), icon: <RefreshCcw size={12} />, onClick: () => setRenaming(true) },
         {
-          label: t('sidebar.moveToRoot'),
-          icon: <Folder size={12} />,
-          onClick: async () => {
-            try {
-              await window.pkm.moveFolder(folder.id, null);
-              await refresh();
-            } catch (err) {
-              toast('error', terr(err instanceof Error ? err.message : String(err)));
-            }
-          },
+          label: t('sidebar.newChildFolder'),
+          icon: <FolderPlus size={12} />,
+          onClick: () => createChild(folder.id),
         },
+        {
+          label: t('sidebar.rename'),
+          icon: <RefreshCcw size={12} />,
+          onClick: () => setLocalRenaming(true),
+        },
+        ...(onMoveTo
+          ? [
+              {
+                label: t('sidebar.moveTo'),
+                icon: <Folder size={12} />,
+                onClick: () => onMoveTo!(folder.id),
+              },
+            ]
+          : []),
         {
           label: t('sidebar.revealInSystem'),
           icon: <Folder size={12} />,
@@ -1029,8 +1423,9 @@ function FolderNode({
             onKeyDown={(e) => {
               if (e.key === 'Enter') void commitRename();
               if (e.key === 'Escape') {
-                setRenaming(false);
+                setLocalRenaming(false);
                 setName(folder.name);
+                onRenameDone?.();
               }
             }}
             onClick={(e) => e.stopPropagation()}
@@ -1044,7 +1439,7 @@ function FolderNode({
             title={t('sidebar.newChildFolder')}
             onClick={(e) => {
               e.stopPropagation();
-              createChild();
+              createChild(folder.id);
               toggleExpanded(folder.id);
             }}
           >
@@ -1067,17 +1462,10 @@ function FolderNode({
               onMenu={onMenu}
               onPdfMenu={onPdfMenu}
               setConfirm={setConfirm}
-              createChild={() => {
-                void (async () => {
-                  try {
-                    await window.pkm.createFolder(t('sidebar.newFolderName'), f.id);
-                    toggleExpanded(f.id);
-                    await refresh();
-                  } catch (err) {
-                    toast('error', terr(err instanceof Error ? err.message : String(err)));
-                  }
-                })();
-              }}
+              renamingId={renamingId}
+              createChild={createChild}
+              onMoveTo={onMoveTo}
+              onRenameDone={onRenameDone}
               onRemovePdf={onRemovePdf}
               onDropFiles={onDropFiles}
             />
@@ -1199,18 +1587,6 @@ function pdfMenuItems(
         void window.pkm
           .openPdfExternal(pdf.id)
           .catch((err: unknown) => toast('error', terr(err instanceof Error ? err.message : String(err))));
-      },
-    },
-    {
-      label: t('sidebar.moveToRoot'),
-      icon: <Folder size={12} />,
-      onClick: async () => {
-        try {
-          await window.pkm.movePdf(pdf.id, null);
-          await refresh();
-        } catch (err) {
-          toast('error', terr(err instanceof Error ? err.message : String(err)));
-        }
       },
     },
     ...(pdf.status === 'missing'

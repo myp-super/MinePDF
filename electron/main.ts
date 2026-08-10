@@ -267,7 +267,10 @@ async function createMainWindow(): Promise<BrowserWindow> {
           await step('bridge', async () => typeof window.pkm.getSnapshot === 'function');
           await step('updateCheck', async () => (await window.pkm.checkForUpdates()).status === 'disabled');
           const snap = await step('snapshot', () => window.pkm.getSnapshot());
-          const folder = await step('createFolder', () => window.pkm.createFolder('冒烟测试', null));
+          const rootId = snap && snap.libraries && snap.libraries[0]
+            ? snap.libraries[0].rootFolderId
+            : null;
+          const folder = await step('createFolder', () => window.pkm.createFolder('冒烟测试', rootId));
           const imp = await step('import', () => window.pkm.importPdfs([path], folder && folder.id));
           const snap2 = await step('snapshot2', () => window.pkm.getSnapshot());
           const pdf = snap2 && snap2.pdfs.find(p => folder && p.folderId === folder.id);
@@ -276,7 +279,7 @@ async function createMainWindow(): Promise<BrowserWindow> {
             await step('copiedToLibrary', () => pdf.filepath.toLowerCase().indexOf('minepdf') > -1 && path.indexOf(pdf.filepath.toLowerCase()) === -1);
             await step('folderRealDir', () => pdf.filepath.toLowerCase().indexOf('\u5192\u70df\u6d4b\u8bd5') > -1);
             await step('movePdfToRoot', async () => {
-              await window.pkm.movePdf(pdf.id, null);
+              await window.pkm.movePdf(pdf.id, rootId);
               const snap = await window.pkm.getSnapshot();
               const moved = snap.pdfs.find((p) => p.id === pdf.id);
               return !!moved && moved.filepath.toLowerCase().indexOf('\u5192\u70df\u6d4b\u8bd5') === -1;
@@ -1471,7 +1474,13 @@ async function createMainWindow(): Promise<BrowserWindow> {
                   (async () => {
                     const snap = await window.pkm.getSnapshot();
                     let folder = snap.folders.find((f) => f.name === '拖放测试');
-                    if (!folder) folder = await window.pkm.createFolder('拖放测试', null);
+                    if (!folder) {
+                      const snap0 = await window.pkm.getSnapshot();
+                      const rootId0 = snap0.libraries && snap0.libraries[0]
+                        ? snap0.libraries[0].rootFolderId
+                        : null;
+                      folder = await window.pkm.createFolder('拖放测试', rootId0);
+                    }
                     if (typeof window.__pkmRefresh === 'function') await window.__pkmRefresh();
                     await new Promise((r) => setTimeout(r, 300));
                     if (!folder) return { folder: false };

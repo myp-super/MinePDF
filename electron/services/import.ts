@@ -143,23 +143,17 @@ export async function importPdfs(
         return;
       }
 
-      // 整目录复制到目标文件夹下（保留结构）
-      const name = uniqueDirName(targetDir, path.basename(sourceDir));
-      const dest = path.join(targetDir, name);
-      await fs.promises.cp(sourceDir, dest, { recursive: true });
-
+      // 外部文件夹：把其中所有 PDF 直接导入目标文件夹（不保留目录结构）
       const files: string[] = [];
-      await walkDir(dest, files, errors);
+      await walkDir(sourceDir, files, errors);
       for (const f of files) {
-        const rel = path.relative(libraryDir, f);
-        const relDir = path.dirname(rel).split(path.sep).filter(Boolean).join('/');
-        let folderIdForPdf: number | null = null;
-        if (relDir) {
-          folderIdForPdf = repository.ensureFolderByRelPath(relDir).id;
-        } else {
-          folderIdForPdf = folderId;
+        try {
+          const finalPath = uniqueTargetPath(targetDir, path.basename(f));
+          await fs.promises.copyFile(f, finalPath);
+          await registerPdf(finalPath, folderId);
+        } catch (err) {
+          errors.push(`${path.basename(f)}: ${err instanceof Error ? err.message : String(err)}`);
         }
-        await registerPdf(f, folderIdForPdf);
       }
     } catch (err) {
       errors.push(`${path.basename(sourceDir)}: ${err instanceof Error ? err.message : String(err)}`);

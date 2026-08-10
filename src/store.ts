@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { AppSettings, Folder, PdfRecord, Tag } from './shared/types';
+import type { AppSettings, Folder, LibraryRecord, PdfRecord, Tag } from './shared/types';
 import type { OutlineNode } from './lib/pdf';
 
 export type ViewMode = 'library' | 'settings';
@@ -121,6 +121,7 @@ function sidebarPatchOnClose(s: AppState): Partial<AppState> {
 
 interface AppState {
   ready: boolean;
+  libraries: LibraryRecord[];
   folders: Folder[];
   pdfs: PdfRecord[];
   inboxPdfs: PdfRecord[];
@@ -201,6 +202,7 @@ let toastSeq = 1;
 
 export const useApp = create<AppState>((set, get) => ({
   ready: false,
+  libraries: [],
   folders: [],
   pdfs: [],
   inboxPdfs: [],
@@ -236,6 +238,7 @@ export const useApp = create<AppState>((set, get) => ({
     try {
       const [snap, inbox] = await Promise.all([window.pkm.getSnapshot(), window.pkm.inboxList()]);
       set({
+        libraries: snap.libraries,
         folders: snap.folders,
         pdfs: snap.pdfs,
         inboxPdfs: inbox,

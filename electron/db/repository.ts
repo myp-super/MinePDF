@@ -3,6 +3,7 @@ import path from 'path';
 import type {
   AnnotationRecord,
   Folder,
+  LibraryRecord,
   NewAnnotation,
   NoteRecord,
   PdfRecord,
@@ -22,7 +23,15 @@ const mapFolder = (r: Row): Folder => ({
   name: String(r.name),
   parentId: r.parent_id == null ? null : Number(r.parent_id),
   path: String(r.path ?? ''),
+  libraryId: r.library_id == null ? null : Number(r.library_id),
   createdTime: String(r.created_time),
+});
+
+const mapLibrary = (r: Row): LibraryRecord => ({
+  id: Number(r.id),
+  name: String(r.name),
+  rootFolderId: r.root_folder_id == null ? -1 : Number(r.root_folder_id),
+  createdAt: String(r.created_time),
 });
 
 const mapTag = (r: Row): Tag => ({
@@ -138,6 +147,91 @@ function writeAnnotationMirror(pdfId: number, items: AnnotationRecord[]): void {
 }
 
 export const repository = {
+  // ---------- libraries（知识库 = Library 下的一级目录） ----------
+  getLibraries(): LibraryRecord[] {
+    const db = getDb();
+    const rows = db
+      .prepare(
+        `SELECT l.id, l.name, l.created_time, f.id AS root_folder_id
+         FROM libraries l
+         LEFT JOIN folders f ON f.library_id = l.id AND f.parent_id IS NULL
+         ORDER BY l.name COLLATE NOCASE`,
+      )
+      .all() as Row[];
+    return rows.map(mapLibrary);
+  },
+
+  getLibrary(id: number): LibraryRecord | null {
+    return this.getLibraries().find((l) => l.id === id) ?? null;
+  },
+
+  /** 默认知识库（迁移后总是存在；用于兼容旧的空 folderId 调用） */
+  getDefaultLibrary(): LibraryRecord | null {
+    const db = getDb();
+    const r = db
+      .prepare(
+        `SELECT l.id, l.name, l.created_time, f.id AS root_folder_id
+         FROM libraries l
+         LEFT JOIN folders f ON f.library_id = l.id AND f.parent_id IS NULL
+         ORDER BY l.id LIMIT 1`,
+      )
+      .get() as Row | undefined;
+    return r ? mapLibrary(r) : null;
+  },
+
+  defaultLibraryRootId(): number {
+    const lib = this.getDefaultLibrary();
+    if (!lib || lib.rootFolderId <= 0) throw new Error('知识库尚未初始化，请先新建知识库');
+    return lib.rootFolderId;
+  },
+
+  createLibrary(name: string): LibraryRecord {
+    const db = getDb();
+    const n = sanitizeFolderName(name);
+    const dup = db.prepare('SELECT id FROM libraries WHERE name = ? COLLATE NOCASE').get(n);
+    if (dup) throw new Error('已存在同名知识库');
+    const dir = path.join(getLibraryPdfDir(), n);
+    if (fs.existsSync(dir)) throw new Error('本地目录已存在同名文件夹');
+    const t = now();
+    const libRes = db.prepare('INSERT INTO libraries (name, created_time) VALUES (?, ?)').run(n, t);
+    const libId = Number(libRes.lastInsertRowid);
+    fs.mkdirSync(dir, { recursive: true });
+    const fRes = db
+      .prepare(
+        'INSERT INTO folders (name, parent_id, path, library_id, created_time) VALUES (?, NULL, ?, ?, ?)',
+      )
+      .run(n, n, libId, t);
+    return { id: libId, name: n, rootFolderId: Number(fRes.lastInsertRowid), createdAt: t };
+  },
+
+  renameLibrary(id: number, name: string): void {
+    const db = getDb();
+    const lib = this.getLibrary(id);
+    if (!lib) throw new Error('知识库不存在');
+    const n = sanitizeFolderName(name);
+    const dup = db.prepare('SELECT id FROM libraries WHERE name = ? COLLATE NOCASE AND id != ?').get(n, id);
+    if (dup) throw new Error('已存在同名知识库');
+    const oldDir = path.join(getLibraryPdfDir(), lib.name);
+    const newDir = path.join(getLibraryPdfDir(), n);
+    if (path.resolve(oldDir) !== path.resolve(newDir)) {
+      if (fs.existsSync(newDir) && fs.existsSync(oldDir)) throw new Error('本地目录已存在同名文件夹');
+      if (fs.existsSync(oldDir)) {
+        fs.renameSync(oldDir, newDir);
+      } else if (!fs.existsSync(newDir)) {
+        fs.mkdirSync(newDir, { recursive: true });
+      }
+    }
+    db.prepare('UPDATE libraries SET name = ? WHERE id = ?').run(n, id);
+    this.applyFolderRename(lib.rootFolderId, n, n);
+  },
+
+  deleteLibrary(id: number): void {
+    const lib = this.getLibrary(id);
+    if (!lib) throw new Error('知识库不存在');
+    if (lib.rootFolderId > 0) this.deleteFolder(lib.rootFolderId);
+    getDb().prepare('DELETE FROM libraries WHERE id = ?').run(id);
+  },
+
   // ---------- folders (mirrored to real directories under Library) ----------
   getFolders(): Folder[] {
     const db = getDb();
@@ -154,11 +248,13 @@ export const repository = {
     return r ? mapFolder(r) : null;
   },
 
-  /** Filesystem directory for a folder (or Library root when folderId is null). */
+  /** Filesystem directory for a folder (null → 默认知识库根目录). */
   folderFsDir(folderId: number | null): string {
     if (folderId == null) {
-      fs.mkdirSync(getLibraryPdfDir(), { recursive: true });
-      return getLibraryPdfDir();
+      const lib = this.getDefaultLibrary();
+      const dir = lib ? path.join(getLibraryPdfDir(), lib.name) : getLibraryPdfDir();
+      fs.mkdirSync(dir, { recursive: true });
+      return dir;
     }
     const f = this.getFolder(folderId);
     if (!f) throw new Error('目标文件夹不存在');
@@ -177,21 +273,51 @@ export const repository = {
     const db = getDb();
     const parts = relPath.split('/').filter(Boolean);
     let parentId: number | null = null;
+    let libId: number | null = null;
     let acc = '';
     let folder: Folder | null = null;
-    for (const part of parts) {
+    for (let i = 0; i < parts.length; i++) {
+      const part = parts[i];
       acc = acc ? `${acc}/${part}` : part;
       const existing = db
         .prepare('SELECT * FROM folders WHERE parent_id IS ? AND name = ?')
         .get(parentId, part) as Row | undefined;
       if (existing) {
         folder = mapFolder(existing);
+        if (i === 0) {
+          libId = folder.libraryId;
+        } else if (libId != null && folder.libraryId == null) {
+          db.prepare('UPDATE folders SET library_id = ? WHERE id = ?').run(libId, folder.id);
+          folder = mapFolder(db.prepare('SELECT * FROM folders WHERE id = ?').get(folder.id) as Row);
+        }
+      } else if (i === 0) {
+        // 顶层目录 = 知识库
+        let lib = db
+          .prepare('SELECT id FROM libraries WHERE name = ? COLLATE NOCASE')
+          .get(part) as Row | undefined;
+        let newLibId: number;
+        if (lib) {
+          newLibId = Number(lib.id);
+        } else {
+          const t = now();
+          fs.mkdirSync(path.join(getLibraryPdfDir(), part), { recursive: true });
+          const r = db.prepare('INSERT INTO libraries (name, created_time) VALUES (?, ?)').run(part, t);
+          newLibId = Number(r.lastInsertRowid);
+        }
+        libId = newLibId;
+        const res = db
+          .prepare(
+            'INSERT INTO folders (name, parent_id, path, library_id, created_time) VALUES (?, NULL, ?, ?, ?)',
+          )
+          .run(part, acc, newLibId, now());
+        folder = mapFolder(db.prepare('SELECT * FROM folders WHERE id = ?').get(res.lastInsertRowid) as Row);
       } else {
         const res = db
-          .prepare('INSERT INTO folders (name, parent_id, path, created_time) VALUES (?, ?, ?, ?)')
-          .run(part, parentId, acc, now());
-        const r = db.prepare('SELECT * FROM folders WHERE id = ?').get(res.lastInsertRowid) as Row;
-        folder = mapFolder(r);
+          .prepare(
+            'INSERT INTO folders (name, parent_id, path, library_id, created_time) VALUES (?, ?, ?, ?, ?)',
+          )
+          .run(part, parentId, acc, libId, now());
+        folder = mapFolder(db.prepare('SELECT * FROM folders WHERE id = ?').get(res.lastInsertRowid) as Row);
       }
       parentId = folder.id;
     }
@@ -200,23 +326,23 @@ export const repository = {
   },
 
   createFolder(name: string, parentId: number | null): Folder {
+    if (parentId == null) throw new Error('请选择目标知识库或文件夹');
     const db = getDb();
     const n = sanitizeFolderName(name);
-    if (parentId != null) {
-      const parent = this.getFolder(parentId);
-      if (!parent) throw new Error('父文件夹不存在');
-    }
+    const parent = this.getFolder(parentId);
+    if (!parent) throw new Error('父文件夹不存在');
     const dup = db
       .prepare('SELECT id FROM folders WHERE parent_id IS ? AND name = ?')
       .get(parentId, n);
     if (dup) throw new Error('同级已存在同名文件夹');
 
-    const parent = parentId != null ? this.getFolder(parentId) : null;
-    const rel = joinRel(parent?.path ?? '', n);
+    const rel = joinRel(parent.path, n);
     realDirForRel(rel); // create the real directory in Library
     const res = db
-      .prepare('INSERT INTO folders (name, parent_id, path, created_time) VALUES (?, ?, ?, ?)')
-      .run(n, parentId, rel, now());
+      .prepare(
+        'INSERT INTO folders (name, parent_id, path, library_id, created_time) VALUES (?, ?, ?, ?, ?)',
+      )
+      .run(n, parentId, rel, parent.libraryId, now());
     const created = db.prepare('SELECT * FROM folders WHERE id = ?').get(res.lastInsertRowid) as Row;
     return mapFolder(row(created));
   },
@@ -250,20 +376,20 @@ export const repository = {
     const db = getDb();
     const f = this.getFolder(id);
     if (!f) throw new Error('文件夹不存在');
+    if (parentId == null) throw new Error('请选择目标知识库或文件夹');
     if (id === parentId) throw new Error('不能移动到自身');
     // Reject moving into its own subtree (cycle check).
-    if (parentId != null) {
-      let cur: number | null = parentId;
-      const visited = new Set<number>();
-      while (cur != null && !visited.has(cur)) {
-        if (cur === id) throw new Error('不能移动到自身的子文件夹');
-        visited.add(cur);
-        const r = db.prepare('SELECT parent_id FROM folders WHERE id = ?').get(cur);
-        cur = r ? ((r as Row).parent_id as number | null) : null;
-      }
+    let cur: number | null = parentId;
+    const visited = new Set<number>();
+    while (cur != null && !visited.has(cur)) {
+      if (cur === id) throw new Error('不能移动到自身的子文件夹');
+      visited.add(cur);
+      const r = db.prepare('SELECT parent_id FROM folders WHERE id = ?').get(cur);
+      cur = r ? ((r as Row).parent_id as number | null) : null;
     }
-    const parent = parentId != null ? this.getFolder(parentId) : null;
-    const newRel = joinRel(parent?.path ?? '', f.name);
+    const parent = this.getFolder(parentId);
+    if (!parent) throw new Error('父文件夹不存在');
+    const newRel = joinRel(parent.path, f.name);
     const dup = db
       .prepare('SELECT id FROM folders WHERE parent_id IS ? AND name = ? AND id != ?')
       .get(parentId, f.name, id);
@@ -281,6 +407,14 @@ export const repository = {
     }
     db.prepare('UPDATE folders SET parent_id = ? WHERE id = ?').run(parentId, id);
     this.applyFolderRename(id, f.name, newRel);
+    // 跨知识库移动时，整个子树归属新的知识库
+    if (parent.libraryId != null) {
+      db.prepare(`UPDATE folders SET library_id = ? WHERE path = ? OR path LIKE ? || '/%'`).run(
+        parent.libraryId,
+        newRel,
+        newRel,
+      );
+    }
   },
 
   /** Update path of a folder and all descendants after rename/move. */
@@ -520,7 +654,8 @@ export const repository = {
     const db = getDb();
     const pdf = this.getPdf(id);
     if (!pdf) throw new Error('PDF 记录不存在');
-    const targetDir = this.folderFsDir(folderId);
+    const effectiveFolderId = folderId ?? this.defaultLibraryRootId();
+    const targetDir = this.folderFsDir(effectiveFolderId);
     let dest = path.join(targetDir, pdf.filename);
     if (fs.existsSync(dest) && path.resolve(dest) !== path.resolve(pdf.filepath)) {
       dest = uniqueFileInDir(targetDir, pdf.filename);
@@ -531,7 +666,7 @@ export const repository = {
     }
     db.prepare(
       `UPDATE pdfs SET folder_id = ?, filepath = ?, filename = ?, status = 'ok', updated_time = ? WHERE id = ?`,
-    ).run(folderId, dest, path.basename(dest), now(), id);
+    ).run(effectiveFolderId, dest, path.basename(dest), now(), id);
   },
 
   deletePdf(id: number): void {
@@ -619,7 +754,8 @@ export const repository = {
     const pdf = this.getPdf(id);
     if (!pdf) throw new Error('PDF 记录不存在');
     if (!fs.existsSync(pdf.filepath)) throw new Error('源文件不存在或已被移动');
-    const targetDir = this.folderFsDir(folderId);
+    const effectiveFolderId = folderId ?? this.defaultLibraryRootId();
+    const targetDir = this.folderFsDir(effectiveFolderId);
     let dest = path.join(targetDir, pdf.filename);
     if (fs.existsSync(dest) && path.resolve(dest) !== path.resolve(pdf.filepath)) {
       dest = uniqueFileInDir(targetDir, pdf.filename);
@@ -627,7 +763,7 @@ export const repository = {
     fs.renameSync(pdf.filepath, dest);
     db.prepare(
       `UPDATE pdfs SET scope = 'library', folder_id = ?, filepath = ?, filename = ?, status = 'ok', updated_time = ? WHERE id = ?`,
-    ).run(folderId, dest, path.basename(dest), now(), id);
+    ).run(effectiveFolderId, dest, path.basename(dest), now(), id);
     return this.getPdf(id)!;
   },
 

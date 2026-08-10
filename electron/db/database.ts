@@ -58,6 +58,9 @@ function migrateSchema(db: Database.Database): void {
   if (!cols.some((c) => c.name === 'path')) {
     db.exec(`ALTER TABLE folders ADD COLUMN path TEXT NOT NULL DEFAULT ''`);
   }
+  if (!cols.some((c) => c.name === 'library_id')) {
+    db.exec(`ALTER TABLE folders ADD COLUMN library_id INTEGER`);
+  }
   const rows = db
     .prepare('SELECT id, name, parent_id, path FROM folders')
     .all() as Array<Record<string, unknown>>;
@@ -102,6 +105,110 @@ function migrateSchema(db: Database.Database): void {
   if (!noteCols.some((c) => c.name === 'note_dir')) {
     db.exec(`ALTER TABLE notes ADD COLUMN note_dir TEXT`);
   }
+  migrateLibraries(db);
+}
+
+/** Next free directory name inside Library root (used for the default library). */
+function uniqueLibraryName(base: string): string {
+  let name = base;
+  let i = 2;
+  while (fs.existsSync(path.join(getLibraryPdfDir(), name))) {
+    name = `${base} (${i})`;
+    i++;
+  }
+  return name;
+}
+
+/**
+ * v3.3.0 多知识库迁移：
+ * - 新增 libraries 表，每个知识库 = Library 下的一级目录；
+ * - 为默认知识库「我的知识库」建立根文件夹行；
+ * - 把原有顶层文件夹收进默认知识库（真实目录一并移动），并重映射所有 PDF 路径。
+ */
+function migrateLibraries(db: Database.Database): void {
+  const count = (db.prepare('SELECT COUNT(*) AS c FROM libraries').get() as { c: number }).c;
+  if (count > 0) return;
+  const t = new Date().toISOString();
+  const libName = uniqueLibraryName('我的知识库');
+  const libRes = db.prepare('INSERT INTO libraries (name, created_time) VALUES (?, ?)').run(libName, t);
+  const libId = Number(libRes.lastInsertRowid);
+  const rootRes = db
+    .prepare(
+      'INSERT INTO folders (name, parent_id, path, library_id, created_time) VALUES (?, NULL, ?, ?, ?)',
+    )
+    .run(libName, libName, libId, t);
+  const rootId = Number(rootRes.lastInsertRowid);
+  const libDir = path.join(getLibraryPdfDir(), libName);
+  fs.mkdirSync(libDir, { recursive: true });
+
+  // 顶层文件夹收进默认知识库（移动真实目录 + 更新路径树 + 重映射 PDF）
+  const tops = db
+    .prepare('SELECT id, name, path FROM folders WHERE parent_id IS NULL AND id != ? ORDER BY id')
+    .all(rootId) as Array<{ id: number; name: string; path: string }>;
+  const updPath = db.prepare(
+    `UPDATE folders SET path = ? || substr(path, ?) WHERE path = ? OR path LIKE ? || '/%'`,
+  );
+  const updPdf = db.prepare('UPDATE pdfs SET filepath = ?, updated_time = ? WHERE id = ?');
+  for (const f of tops) {
+    const oldRel = f.path;
+    const newRel = `${libName}/${oldRel}`;
+    const oldDir = path.join(getLibraryPdfDir(), ...oldRel.split('/'));
+    const newDir = path.join(libDir, ...oldRel.split('/'));
+    if (fs.existsSync(oldDir) && path.resolve(oldDir) !== path.resolve(newDir)) {
+      try {
+        fs.renameSync(oldDir, newDir);
+      } catch {
+        fs.mkdirSync(newDir, { recursive: true });
+      }
+    }
+    db.prepare('UPDATE folders SET parent_id = ?, library_id = ?, path = ? WHERE id = ?').run(
+      rootId,
+      libId,
+      newRel,
+      f.id,
+    );
+    updPath.run(newRel, oldRel.length + 1, oldRel, oldRel);
+    const pdfs = db.prepare('SELECT id, filepath FROM pdfs').all() as Array<{
+      id: number;
+      filepath: string;
+    }>;
+    for (const p of pdfs) {
+      const fp = String(p.filepath);
+      if (fp.toLowerCase().startsWith(oldDir.toLowerCase() + path.sep)) {
+        const rest = fp.slice(oldDir.length).replace(/^[\\/]+/, '');
+        updPdf.run(path.join(newDir, rest), t, Number(p.id));
+      }
+    }
+  }
+
+  // Library 根目录的 PDF 归入默认知识库根文件夹
+  const rootPdfs = db
+    .prepare("SELECT id, filepath, filename FROM pdfs WHERE folder_id IS NULL AND scope = 'library'")
+    .all() as Array<{ id: number; filepath: string; filename: string }>;
+  for (const p of rootPdfs) {
+    const filename = String(p.filename);
+    let dest = path.join(libDir, filename);
+    let i = 1;
+    const ext = path.extname(filename);
+    const base = path.basename(filename, ext);
+    while (fs.existsSync(dest)) {
+      dest = path.join(libDir, `${base} (${i})${ext}`);
+      i++;
+    }
+    if (fs.existsSync(String(p.filepath)) && path.resolve(String(p.filepath)) !== path.resolve(dest)) {
+      try {
+        fs.renameSync(String(p.filepath), dest);
+      } catch {
+        /* keep original location */
+      }
+    }
+    db.prepare(
+      'UPDATE pdfs SET folder_id = ?, filepath = ?, filename = ?, updated_time = ? WHERE id = ?',
+    ).run(rootId, dest, path.basename(dest), t, Number(p.id));
+  }
+
+  // 兜底：任何仍无知识库的文件夹归入默认库
+  db.prepare('UPDATE folders SET library_id = ? WHERE library_id IS NULL').run(libId);
 }
 
 /** 去掉非法字符，得到安全的笔记文件夹/文件名 */

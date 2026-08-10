@@ -3,21 +3,27 @@ import React, { useState } from 'react';
 import { useT, useTError } from '../i18n';
 import { useApp } from '../store';
 import { Button } from './ui';
+import { FolderTreePicker } from './Sidebar';
 
 export function EmptyState() {
   const t = useT();
   const terr = useTError();
-  const selectedFolderId = useApp((s) => s.selectedFolderId);
   const refresh = useApp((s) => s.refresh);
   const toast = useApp((s) => s.toast);
   const settings = useApp((s) => s.settings);
+  const libraries = useApp((s) => s.libraries);
+  const folders = useApp((s) => s.folders);
   const [busy, setBusy] = useState(false);
+  const [picker, setPicker] = useState<{
+    title: string;
+    onPick: (folderId: number) => void;
+  } | null>(null);
 
-  const doImport = async (paths: string[]) => {
+  const doImport = async (paths: string[], folderId: number | null) => {
     if (!paths.length) return;
     setBusy(true);
     try {
-      const res = await window.pkm.importPdfs(paths, selectedFolderId);
+      const res = await window.pkm.importPdfs(paths, folderId);
       await refresh();
       // 导入成功后自动打开最新导入的 PDF，让用户立刻看到效果
       const first = useApp.getState().pdfs[0];
@@ -39,6 +45,28 @@ export function EmptyState() {
     }
   };
 
+  const importFiles = async () => {
+    const paths = await window.pkm.openPdfDialog();
+    if (!paths.length) return;
+    setPicker({
+      title: t('sidebar.pickImportTitle'),
+      onPick: (folderId) => {
+        void doImport(paths, folderId);
+      },
+    });
+  };
+
+  const importFolder = async () => {
+    const paths = await window.pkm.openFolderDialog();
+    if (!paths.length) return;
+    setPicker({
+      title: t('sidebar.pickImportTitle'),
+      onPick: (folderId) => {
+        void doImport(paths, folderId);
+      },
+    });
+  };
+
   return (
     <main className="flex min-w-0 flex-1 items-center justify-center bg-app-base">
       <div className="flex max-w-lg flex-col items-center px-6 text-center">
@@ -51,14 +79,14 @@ export function EmptyState() {
           <Button
             variant="primary"
             disabled={busy}
-            onClick={async () => doImport(await window.pkm.openPdfDialog())}
+            onClick={() => void importFiles()}
           >
             <FilePlus2 size={13} /> {t('empty.chooseFiles')}
           </Button>
           <Button
             variant="outline"
             disabled={busy}
-            onClick={async () => doImport(await window.pkm.openFolderDialog())}
+            onClick={() => void importFolder()}
           >
             <FolderSearch size={13} /> {t('empty.importFolder')}
           </Button>
@@ -81,6 +109,20 @@ export function EmptyState() {
           </div>
         </div>
       </div>
+      {picker && (
+        <FolderTreePicker
+          open
+          title={picker.title}
+          libraries={libraries}
+          folders={folders}
+          onPick={(folderId) => {
+            const pick = picker.onPick;
+            setPicker(null);
+            pick(folderId);
+          }}
+          onClose={() => setPicker(null)}
+        />
+      )}
     </main>
   );
 }

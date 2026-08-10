@@ -75,6 +75,32 @@ export function SettingsPage() {
     }
   };
 
+  const applyDefaultPdf = async () => {
+    setBusy(true);
+    try {
+      const res = await window.pkm.setPdfAssociation(true);
+      setDefaultPdf(res);
+      toast('success', t('settings.defaultPdfApplied'));
+    } catch (err) {
+      toast('error', terr(err instanceof Error ? err.message : String(err)));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const cancelDefaultPdf = async () => {
+    setBusy(true);
+    try {
+      await window.pkm.setPdfAssociation(false);
+      setDefaultPdf(false);
+      toast('success', t('settings.defaultPdfCancelled'));
+    } catch (err) {
+      toast('error', terr(err instanceof Error ? err.message : String(err)));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const checkUpdate = async () => {
     setChecking(true);
     try {
@@ -243,9 +269,17 @@ export function SettingsPage() {
                         : t('settings.defaultPdfUnknown'),
                 })}
               </div>
+              <div className="mt-0.5 text-[10.5px] text-app-muted">{t('settings.defaultPdfHint')}</div>
             </div>
-            <Button size="sm" variant="outline" onClick={() => void window.pkm.openDefaultApps()}>
-              {t('settings.setupDefaultPdf')}
+            <Button
+              size="sm"
+              variant={defaultPdf ? 'outline' : 'primary'}
+              disabled={busy}
+              onClick={() =>
+                defaultPdf ? void cancelDefaultPdf() : void applyDefaultPdf()
+              }
+            >
+              {defaultPdf ? t('settings.cancelDefaultPdf') : t('settings.setupDefaultPdf')}
             </Button>
           </div>
           <p className="text-[10.5px] leading-relaxed text-app-muted/80">{t('settings.defaultPdfHint')}</p>

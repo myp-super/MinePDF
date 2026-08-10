@@ -3,11 +3,18 @@
  * 表名与字段与需求文档一致，另补充文件大小、页数、状态等实用字段。
  */
 export const SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS libraries (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  created_time TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS folders (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL,
   parent_id INTEGER REFERENCES folders(id) ON DELETE CASCADE,
   path TEXT NOT NULL DEFAULT '',
+  library_id INTEGER REFERENCES libraries(id) ON DELETE CASCADE,
   created_time TEXT NOT NULL
 );
 
@@ -67,5 +74,5 @@ CREATE INDEX IF NOT EXISTS idx_pdf_tags_pdf ON pdf_tags(pdf_id);
 CREATE INDEX IF NOT EXISTS idx_pdf_tags_tag ON pdf_tags(tag_id);
 CREATE INDEX IF NOT EXISTS idx_notes_pdf ON notes(pdf_id);
 CREATE INDEX IF NOT EXISTS idx_annotations_pdf ON annotations(pdf_id);
-PRAGMA user_version = 5;
+PRAGMA user_version = 6;
 `;

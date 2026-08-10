@@ -46,6 +46,7 @@ export default function App() {
       try {
         const [snap, inbox] = await Promise.all([window.pkm.getSnapshot(), window.pkm.inboxList()]);
         useApp.setState({
+          libraries: snap.libraries,
           folders: snap.folders,
           pdfs: snap.pdfs,
           inboxPdfs: inbox,

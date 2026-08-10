@@ -1,5 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
 import { execFile, spawn } from 'child_process';
+import { createHash } from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import type {
@@ -7,6 +8,7 @@ import type {
   AppInfo,
   AppSettings,
   ImportResult,
+  LibraryRecord,
   NewAnnotation,
   PdfRecord,
   PdfiumOpenResult,
@@ -158,6 +160,93 @@ async function ensurePdfProgId(): Promise<void> {
   ]);
 }
 
+/** 获取当前 Windows 用户的 SID（UserChoice 哈希输入之一） */
+function getUserSid(): Promise<string | null> {
+  return new Promise((resolve) => {
+    execFile('whoami', ['/user'], { windowsHide: true }, (err, stdout) => {
+      if (err) return resolve(null);
+      const m = /S-1-[\d-]+/i.exec(stdout);
+      resolve(m ? m[0] : null);
+    });
+  });
+}
+
+/**
+ * UserChoice 哈希算法（与 SetUserFTA / Firefox 一致）：
+ * format = 扩展名 + SID + ProgId + 固定时间戳（1601 ticks 的十六进制），UTF-16LE 明文，MD5 双重哈希后 Base64。
+ * 注意：Windows 11 24H2+ 的 UCPD 驱动会拦截第三方进程写入 UserChoice，
+ * 此函数仅作为旧版 Windows 的快速通道，写完后一律读回校验。
+ */
+function computeUserChoiceHash(extension: string, sid: string, progId: string): string {
+  // 1969-07-20 20:17:40 UTC 的 FILETIME ticks（自 1601-01-01，100ns 单位）
+  const ms = Date.UTC(1969, 6, 20, 20, 17, 40);
+  const ticks = BigInt(Math.round((ms / 1000 + 11644473600) * 10000000));
+  const timestampHex = ticks.toString(16).padStart(16, '0');
+  const input = `${extension}${sid}${progId}${timestampHex}`;
+  const bytes = Buffer.from(input, 'utf16le');
+  const h1 = createHash('md5').update(bytes).digest();
+  const h2 = createHash('md5').update(h1).digest();
+  return h2.toString('base64');
+}
+
+/** 尽力写入 UserChoice（Win10/老系统可用；24H2+ 被 UCPD 拦截则静默失败，不影响主流程） */
+async function tryWriteUserChoice(): Promise<boolean> {
+  try {
+    const sid = await getUserSid();
+    if (!sid) return false;
+    const hash = computeUserChoiceHash('.pdf', sid, PDF_PROG_ID);
+    const key =
+      'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\.pdf\\UserChoice';
+    await regRun(['add', key, '/v', 'ProgId', '/t', 'REG_SZ', '/d', PDF_PROG_ID, '/f']);
+    await regRun(['add', key, '/v', 'Hash', '/t', 'REG_SZ', '/d', hash, '/f']);
+    const uc = await userChoiceProgId();
+    return isMineProgId(uc);
+  } catch {
+    return false;
+  }
+}
+
+/** 一键设为默认：写 .pdf 默认值（无 UserChoice 时立即生效）+ 尝试 UserChoice + 系统对话框兜底 */
+async function setDefaultPdfAssociation(): Promise<boolean> {
+  await ensurePdfProgId();
+  // 优先直接写 UserChoice（仅旧版 Windows 生效），写成功即完成
+  if (await tryWriteUserChoice()) {
+    updateSettings({ pdfDefaultApp: true });
+    return true;
+  }
+  // 24H2+ 只能靠系统对话框写 UserChoice；HKCU\Software\Classes\.pdf 默认值已让双击立即生效
+  await openChoosePdfApp();
+  updateSettings({ pdfDefaultApp: true });
+  return true;
+}
+
+/** 取消默认：删除 MinePDF 写入的关联与残留 ProgID */
+async function cancelDefaultPdfAssociation(): Promise<void> {
+  const def = await defaultPdfProgId();
+  if (isMineProgId(def)) {
+    await regRun(['delete', 'HKCU\\Software\\Classes\\.pdf', '/ve', '/f']);
+  }
+  const uc = await userChoiceProgId();
+  if (isMineProgId(uc)) {
+    await regRun([
+      'delete',
+      'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\.pdf\\UserChoice',
+      '/v',
+      'ProgId',
+      '/f',
+    ]);
+    await regRun([
+      'delete',
+      'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\.pdf\\UserChoice',
+      '/v',
+      'Hash',
+      '/f',
+    ]);
+  }
+  await regRun(['delete', `HKCU\\Software\\Classes\\${PDF_PROG_ID}`, '/f']);
+  updateSettings({ pdfDefaultApp: false });
+}
+
 /**
  * 触发系统“打开方式”对话框，让用户选择 MinePDF 并勾选“始终使用此应用”。
  * Windows 10/11 的 UserChoice 带哈希校验，只有系统对话框能正确写入，
@@ -166,15 +255,10 @@ async function ensurePdfProgId(): Promise<void> {
 async function openChoosePdfApp(): Promise<void> {
   try {
     await ensurePdfProgId();
-    let sample: string | null = null;
-    const pdfs = repository.getPdfs();
-    if (pdfs.length > 0) sample = pdfs[0].filepath;
-    if (!sample) {
-      const dir = path.join(getDataDir(), 'config');
-      fs.mkdirSync(dir, { recursive: true });
-      sample = path.join(dir, 'open-with-sample.pdf');
-      fs.writeFileSync(sample, buildSamplePdf(), 'latin1');
-    }
+    const dir = path.join(getDataDir(), 'config');
+    fs.mkdirSync(dir, { recursive: true });
+    const sample = path.join(dir, 'open-with-sample.pdf');
+    if (!fs.existsSync(sample)) fs.writeFileSync(sample, buildSamplePdf(), 'latin1');
     await new Promise<void>((resolve) =>
       execFile('rundll32', ['shell32.dll,OpenAs_RunDLL', sample], () => resolve()),
     );
@@ -246,11 +330,18 @@ export function registerIpc(): void {
 
   // ---------- 库快照 ----------
   handle('library:snapshot', () => ({
+    libraries: repository.getLibraries(),
     folders: repository.getFolders(),
     pdfs: repository.getPdfs(),
     tags: repository.getTags(),
     settings: getSettings(),
   }));
+
+  // ---------- 知识库 ----------
+  handle<LibraryRecord[]>('library:list', () => repository.getLibraries());
+  handle<LibraryRecord>('library:create', (name: string) => repository.createLibrary(name));
+  handle('library:rename', (id: number, name: string) => repository.renameLibrary(id, name));
+  handle('library:delete', (id: number) => repository.deleteLibrary(id));
 
   // ---------- 文件夹 ----------
   handle('folder:create', (name: string, parentId: number | null) => repository.createFolder(name, parentId));
@@ -277,27 +368,9 @@ export function registerIpc(): void {
   });
   handle('app:set-pdf-association', async (enable: boolean) => {
     if (enable) {
-      await openChoosePdfApp();
-      updateSettings({ pdfDefaultApp: true });
-      return true;
+      return setDefaultPdfAssociation();
     }
-    // 关闭：撤销本应用写入的 .pdf 默认值、ProgID，以及用户选择里指向 MinePDF 的条目
-    const def = await defaultPdfProgId();
-    if (isMineProgId(def)) {
-      await regRun(['delete', 'HKCU\\Software\\Classes\\.pdf', '/ve', '/f']);
-    }
-    const uc = await userChoiceProgId();
-    if (isMineProgId(uc)) {
-      await regRun([
-        'delete',
-        'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\.pdf\\UserChoice',
-        '/v',
-        'ProgId',
-        '/f',
-      ]);
-    }
-    await regRun(['delete', `HKCU\\Software\\Classes\\${PDF_PROG_ID}`, '/f']);
-    updateSettings({ pdfDefaultApp: false });
+    await cancelDefaultPdfAssociation();
     return false;
   });
   handle('app:open-defaultapps', () => openChoosePdfApp());

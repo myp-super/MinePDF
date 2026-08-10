@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import type { Folder, PdfRecord } from '../../src/shared/types';
+import type { Folder, LibraryRecord, PdfRecord } from '../../src/shared/types';
 import { getLibraryPdfDir } from '../db/database';
 import { repository } from '../db/repository';
 import { guessPageCount } from './pdfMeta';
@@ -28,6 +28,19 @@ function nameOf(relPath: string): string {
 
 function realPathOf(dir: string, relPath: string): string {
   return relPath ? path.join(dir, ...relPath.split('/')) : dir;
+}
+
+/** Next free filename inside dir: name.pdf, name (1).pdf, ... */
+function uniqueFileInDir(dir: string, filename: string): string {
+  const ext = path.extname(filename);
+  const base = path.basename(filename, ext);
+  let candidate = path.join(dir, filename);
+  let i = 1;
+  while (fs.existsSync(candidate)) {
+    candidate = path.join(dir, `${base} (${i})${ext}`);
+    i++;
+  }
+  return candidate;
 }
 
 /** Walk Library collecting dirs (relPath -> name) and files (relPath + size). */
@@ -78,6 +91,61 @@ export async function scanLibrary(): Promise<{ added: number }> {
     diskFiles.map((f) => path.join(dir, ...f.relPath.split('/')).toLowerCase()),
   );
 
+  // ---------- 0. 知识库 reconcile：顶层目录 ↔ libraries 表（新建/重命名/删除） ----------
+  const libraries = repository.getLibraries();
+  const libByRel = new Map<string, LibraryRecord>();
+  for (const l of libraries) libByRel.set(l.name, l);
+  const diskLibDirs = [...diskDirs.keys()].filter((rel) => !rel.includes('/'));
+  const consumedLibDirs = new Set<string>();
+  for (const l of libraries) {
+    if (diskLibDirs.includes(l.name)) {
+      consumedLibDirs.add(l.name);
+      continue;
+    }
+    // 知识库目录在本地消失：若同级恰好多出一个目录则视为重命名，否则删除
+    const orphans = diskLibDirs.filter(
+      (rel) => !libByRel.has(rel) && !consumedLibDirs.has(rel),
+    );
+    if (orphans.length === 1) {
+      repository.renameLibrary(l.id, orphans[0]);
+      consumedLibDirs.add(orphans[0]);
+      continue;
+    }
+    repository.deleteLibrary(l.id);
+    libByRel.delete(l.name);
+  }
+  for (const rel of diskLibDirs) {
+    if (consumedLibDirs.has(rel) || libByRel.has(rel)) continue;
+    const lib = repository.createLibrary(rel);
+    libByRel.set(rel, lib);
+    consumedLibDirs.add(rel);
+  }
+
+  // Library 根目录散落的 PDF 收进默认知识库（保证每个库内文件都在知识库目录下）
+  let defaultRootId: number | null = null;
+  try {
+    defaultRootId = repository.defaultLibraryRootId();
+  } catch {
+    defaultRootId = null;
+  }
+  if (defaultRootId != null) {
+    const lib = repository.getDefaultLibrary();
+    const rootFiles = diskFiles.filter((f) => !f.relPath.includes('/'));
+    for (const f of rootFiles) {
+      if (!lib) break;
+      const src = path.join(dir, f.relPath);
+      const targetDir = path.join(dir, lib.name);
+      fs.mkdirSync(targetDir, { recursive: true });
+      const dest = uniqueFileInDir(targetDir, path.basename(f.relPath));
+      try {
+        if (path.resolve(src) !== path.resolve(dest)) fs.renameSync(src, dest);
+        f.relPath = `${lib.name}/${path.basename(dest)}`;
+      } catch {
+        /* 保留原位，仍按根目录文件处理 */
+      }
+    }
+  }
+
   // ---------- 1. folder reconcile (rename detection, top-down) ----------
   const dbFolders = repository.getFolders();
   const folderByRel = new Map<string, Folder>();
@@ -116,7 +184,9 @@ export async function scanLibrary(): Promise<{ added: number }> {
       continue;
     }
     // 目录已在本地删除：严格同步，删除该文件夹及其记录（笔记/标注随之清理）
-    repository.deleteFolder(f.id);
+    if (f.parentId !== null) {
+      repository.deleteFolder(f.id);
+    }
     folderByRel.delete(f.path);
   }
 
@@ -131,7 +201,7 @@ export async function scanLibrary(): Promise<{ added: number }> {
     folderByRel.set(rel, folder);
     folderIdByRel.set(rel, folder.id);
   }
-  folderIdByRel.set('', -1);
+  folderIdByRel.set('', defaultRootId ?? -1);
 
   // ---------- 3. file reconcile (move / rename / insert) ----------
   const dbPdfs = repository.getPdfs();

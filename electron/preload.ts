@@ -30,6 +30,11 @@ const api: PkmApi = {
   getAppInfo: () => invoke('app:info'),
   getSnapshot: () => invoke('library:snapshot'),
 
+  libraryList: () => invoke('library:list'),
+  createLibrary: (name) => invoke('library:create', name),
+  renameLibrary: (id, name) => invoke('library:rename', id, name),
+  deleteLibrary: (id) => invoke('library:delete', id),
+
   createFolder: (name, parentId) => invoke('folder:create', name, parentId),
   renameFolder: (id, name) => invoke('folder:rename', id, name),
   deleteFolder: (id) => invoke('folder:delete', id),

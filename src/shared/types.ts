@@ -3,13 +3,24 @@
  * 数据库行以下划线命名，对外统一映射为驼峰结构。
  */
 
-/** 文件夹节点（虚拟文件库，不对应真实文件系统目录） */
+/** 知识库：Library 下的一级目录，对应一个根文件夹节点 */
+export interface LibraryRecord {
+  id: number;
+  name: string;
+  /** 知识库根文件夹 id（所有 PDF 最终都挂在某个文件夹上） */
+  rootFolderId: number;
+  createdAt: string;
+}
+
+/** 文件夹节点（与 Library 下的真实目录一一对应） */
 export interface Folder {
   id: number;
   name: string;
   parentId: number | null;
   /** 相对 Library 根目录的路径（如 深度学习/Transformer） */
   path: string;
+  /** 所属知识库（顶层根文件夹必定有值；迁移后所有文件夹都有值） */
+  libraryId: number | null;
   createdTime: string;
 }
 
@@ -101,6 +112,7 @@ export interface AppSettings {
 }
 
 export interface LibrarySnapshot {
+  libraries: LibraryRecord[];
   folders: Folder[];
   pdfs: PdfRecord[];
   tags: Tag[];
@@ -162,6 +174,11 @@ export interface UpdateResult {
 export interface PkmApi {
   getAppInfo(): Promise<AppInfo>;
   getSnapshot(): Promise<LibrarySnapshot>;
+
+  libraryList(): Promise<LibraryRecord[]>;
+  createLibrary(name: string): Promise<LibraryRecord>;
+  renameLibrary(id: number, name: string): Promise<void>;
+  deleteLibrary(id: number): Promise<void>;
 
   createFolder(name: string, parentId: number | null): Promise<Folder>;
   renameFolder(id: number, name: string): Promise<void>;
