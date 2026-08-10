@@ -1,8 +1,8 @@
 {
-  "version": "3.2.0",
-  "publishDate": "2026-08-09",
   "notes": [
-    "v3.2.0 - 修复分屏渲染请求冲突与放大挤压信息面板，新增阅读时自动折叠知识库开关"
+    "v3.2.1 - 优化拖拽导入（文件夹高亮放大、去掉全屏虚化），修复双击 PDF 无法临时打开"
   ],
-  "url": "https://github.com/myp-super/MinePDF/releases/download/v3.2.0/MinePDF.Setup.3.2.0.exe"
+  "url": "https://github.com/myp-super/MinePDF/releases/download/v3.2.1/MinePDF.Setup.3.2.1.exe",
+  "version": "3.2.1",
+  "publishDate": "2026-08-10"
 }
