@@ -595,15 +595,23 @@ async function createMainWindow(): Promise<BrowserWindow> {
                     window.__pkmOpenPdf(pdf.id);
                     await new Promise((r) => setTimeout(r, 1500));
                     const sheet = () => document.querySelector('.pdf-page-sheet');
-                    // 1) 真实窗口 resize：缩小/放大后松手，应自动适配宽度
+                    const sheetW = () => (sheet() ? sheet().getBoundingClientRect().width : 0);
+                    // 1) 3.2.1 宽度自适应策略：
+                    //    缩小窗口且 PDF 被遮挡 → 自动适配；放大窗口 → 保持缩放；
+                    //    缩小但 PDF 未被遮挡 → 保持缩放（不反复重渲染大文件）
+                    const w0 = sheetW();
                     window.resizeTo(1100, 760);
                     await new Promise((r) => setTimeout(r, 900));
-                    const w1 = sheet() ? sheet().getBoundingClientRect().width : 0;
+                    const w1 = sheetW();
                     window.resizeTo(1700, 980);
                     await new Promise((r) => setTimeout(r, 900));
-                    const w2 = sheet() ? sheet().getBoundingClientRect().width : 0;
+                    const w2 = sheetW();
                     window.resizeTo(1440, 900);
                     await new Promise((r) => setTimeout(r, 900));
+                    const w3 = sheetW();
+                    const shrinkClipFit = w1 < w0 - 20;
+                    const growKeeps = Math.abs(w2 - w1) < 1;
+                    const shrinkNoClipKeeps = Math.abs(w3 - w2) < 1;
                     // 2) 工具栏折叠 → 出现“展开工具栏”按钮
                     const collapseBtn = [...document.querySelectorAll('button')].find(
                       (b) => b.title === '折叠工具栏' || b.title === 'Collapse toolbar',
@@ -640,7 +648,19 @@ async function createMainWindow(): Promise<BrowserWindow> {
                     if (await window.pkm.isMaximized()) await window.pkm.toggleMaximize();
                     window.resizeTo(1440, 900);
                     await new Promise((r) => setTimeout(r, 500));
-                    return { w1, w2, autoFitGrew: w2 > w1, collapseBtn: !!collapseBtn, expandBtn: !!expandBtn, collapsedInImmersive, hoverShowsToolbar };
+                    return {
+                      w0,
+                      w1,
+                      w2,
+                      w3,
+                      shrinkClipFit,
+                      growKeeps,
+                      shrinkNoClipKeeps,
+                      collapseBtn: !!collapseBtn,
+                      expandBtn: !!expandBtn,
+                      collapsedInImmersive,
+                      hoverShowsToolbar,
+                    };
                   })()
                 `);
                 console.log('[capture] convenienceDiag', JSON.stringify(convenienceDiag));
@@ -901,10 +921,12 @@ async function createMainWindow(): Promise<BrowserWindow> {
                 const sessionDiag = await win.webContents.executeJavaScript(`
                   (async () => {
                     if (window.__pkmAct) window.__pkmAct('clearScreens');
+                    localStorage.removeItem('pkm.screensSession');
                     await new Promise((r) => setTimeout(r, 200));
                     const snap = await window.pkm.getSnapshot();
                     const pid = snap.pdfs.find((p) => p.filename === 'PID-Tuning-Methods.pdf');
-                    if (!pid) return { pid: false };
+                    const a = snap.pdfs.find((p) => p.filename === 'smoke-test.pdf');
+                    if (!pid || !a) return { pid: !!pid, a: !!a };
                     window.__pkmOpenPdf(pid.id);
                     await new Promise((r) => setTimeout(r, 1500));
                     const p3 = [...document.querySelectorAll('.pdf-page-sheet')].find(
@@ -913,14 +935,27 @@ async function createMainWindow(): Promise<BrowserWindow> {
                     if (p3) p3.scrollIntoView();
                     await new Promise((r) => setTimeout(r, 900));
                     const rec1 = JSON.parse(localStorage.getItem('pkm.lastSession') || 'null');
-                    // 模拟“关闭后重启”：写入上次会话记录并触发恢复
-                    localStorage.setItem(
-                      'pkm.lastSession',
-                      JSON.stringify({ kind: 'library', pdfId: pid.id, page: 3, ts: Date.now() }),
-                    );
+                    // 再开一个标签，模拟多标签阅读场景
+                    window.__pkmAct('openPdfInNewTab', a.id);
+                    await new Promise((r) => setTimeout(r, 400));
+                    const pidTab = window.__pkmStore()
+                      .screens[0].tabs.find((t) => t.pdfId === pid.id);
+                    if (pidTab) window.__pkmAct('activateTab', window.__pkmStore().screens[0].id, pidTab.id);
+                    await new Promise((r) => setTimeout(r, 1200));
+                    const snapSaved = JSON.parse(localStorage.getItem('pkm.screensSession') || 'null');
+                    // 模拟“关闭后重启”：保留关闭前的快照，清空当前状态并触发恢复
+                    const savedSnapshot = localStorage.getItem('pkm.screensSession');
+                    if (window.__pkmAct) window.__pkmAct('clearScreens');
+                    if (savedSnapshot) localStorage.setItem('pkm.screensSession', savedSnapshot);
                     if (window.__pkmRestoreSession) window.__pkmRestoreSession();
-                    await new Promise((r) => setTimeout(r, 1800));
+                    await new Promise((r) => setTimeout(r, 2600));
                     const rec2 = JSON.parse(localStorage.getItem('pkm.lastSession') || 'null');
+                    const st = window.__pkmStore();
+                    const tabsRestored = st.screens.length > 0 && st.screens[0].tabs.length === 2;
+                    const restoredPid = st.activePdfId === pid.id;
+                    const activeTabPdf = st.screens[0]
+                      ? (st.screens[0].tabs.find((t) => t.id === st.screens[0].activeTabId) || {}).pdfId
+                      : null;
                     const sc = document.querySelector('[data-pan-scroll]');
                     const p3b = [...document.querySelectorAll('.pdf-page-sheet')].find(
                       (el) => el.getAttribute('data-page-number') === '3',
@@ -928,20 +963,43 @@ async function createMainWindow(): Promise<BrowserWindow> {
                     const rel = p3b && sc
                       ? Math.abs(p3b.getBoundingClientRect().top - sc.getBoundingClientRect().top)
                       : null;
-                    const st = window.__pkmStore();
-                    const st3 = sc ? sc.scrollTop : -1;
+                    const restoredToPage3 = rel != null && rel < 80;
+                    const jumpOrCurrent3 = st.jumpPage === 3 || st.currentPage === 3;
+                    // 旧格式回退：清除快照后写入单条 lastSession，仍应能恢复
+                    localStorage.removeItem('pkm.screensSession');
+                    localStorage.setItem(
+                      'pkm.lastSession',
+                      JSON.stringify({ kind: 'library', pdfId: pid.id, page: 3, ts: Date.now() }),
+                    );
+                    if (window.__pkmAct) window.__pkmAct('clearScreens');
+                    if (window.__pkmRestoreSession) window.__pkmRestoreSession();
+                    await new Promise((r) => setTimeout(r, 1800));
+                    const stLegacy = window.__pkmStore();
+                    const legacyRestored = stLegacy.activePdfId === pid.id;
+                    const st3 = document.querySelector('[data-pan-scroll]')
+                      ? document.querySelector('[data-pan-scroll]').scrollTop
+                      : -1;
                     // 对照：直接设置 scrollTop 验证容器可滚动性
-                    const scrollable = sc ? sc.scrollHeight > sc.clientHeight : false;
-                    if (sc) sc.scrollTop = 500;
+                    const sc2 = document.querySelector('[data-pan-scroll]');
+                    const scrollable = sc2 ? sc2.scrollHeight > sc2.clientHeight : false;
+                    if (sc2) sc2.scrollTop = 500;
                     await new Promise((r) => setTimeout(r, 150));
-                    const manualScroll = sc ? sc.scrollTop : -1;
-                    if (sc) sc.scrollTop = 0;
+                    const manualScroll = sc2 ? sc2.scrollTop : -1;
+                    if (sc2) sc2.scrollTop = 0;
                     return {
                       rec1Page: rec1 ? rec1.page : null,
                       rec2Page: rec2 ? rec2.page : null,
-                      restoredPdf: st.activePdfId === pid.id,
-                      restoredToPage3: rel != null && rel < 80,
-                      jumpOrCurrent3: st.jumpPage === 3 || st.currentPage === 3,
+                      snapSavedTabs: snapSaved && snapSaved.screens ? snapSaved.screens[0].tabs.length : 0,
+                      snapSavedPage: snapSaved ? snapSaved.page : null,
+                      tabsRestored,
+                      restoredPdf: restoredPid,
+                      activeTabPdf,
+                      jumpPage: st.jumpPage,
+                      currentPage: st.currentPage,
+                      scrollTop: sc ? sc.scrollTop : -1,
+                      restoredToPage3,
+                      jumpOrCurrent3,
+                      legacyRestored,
                       st3,
                       p3Exists: !!p3b,
                       scCount: document.querySelectorAll('[data-pan-scroll]').length,

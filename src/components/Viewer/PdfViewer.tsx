@@ -67,12 +67,6 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
   const outlineCount = useApp((s) => s.outline.length);
   const screenshotMode = useApp((s) => s.screenshotMode);
   const setScreenshotMode = useApp((s) => s.setScreenshotMode);
-  const sidebarWidth = useApp((s) => s.sidebarWidth);
-  const inspectorWidth = useApp((s) => s.inspectorWidth);
-  const sidebarCollapsed = useApp((s) => s.sidebarCollapsed);
-  const inspectorCollapsed = useApp((s) => s.inspectorCollapsed);
-  const splitRatio = useApp((s) => s.splitRatio);
-
   const [doc, setDoc] = useState<PDFDocumentProxy | null>(null);
   const [pdfiumInfo, setPdfiumInfo] = useState<PdfiumOpenResult | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -191,6 +185,13 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
     let loadingTask: ReturnType<typeof pdfjsLib.getDocument> | null = null;
     let owned: PDFDocumentProxy | null = null;
     let finished = false;
+    // 记录该 PDF 上次阅读页码：切标签/重开后恢复（须在 setCurrentPage(1) 重置前读取）
+    const savedPage = useApp.getState().tabPages[pdf.id] ?? 1;
+    const restorePage = () => {
+      if (savedPage > 1 && currentPdfIdRef.current === pdf.id) {
+        useApp.getState().requestJump(savedPage);
+      }
+    };
     // 每次打开 PDF 只应用一次默认面板：有书签默认书签页，无书签默认笔记页
     let outlineTabApplied = false;
     const applyOutline = (tree: Awaited<ReturnType<typeof getOutlineTree>>) => {
@@ -220,6 +221,7 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
     if (cached && !DESTROYED.has(pdf.id)) {
       DESTROYED.delete(pdf.id);
       setDoc(cached);
+      restorePage();
       void window.pkm
         .pdfiumOpen(pdf.id)
         .then((info) => {
@@ -262,6 +264,7 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
         finished = true;
         cacheDoc(pdf.id, owned);
         setDoc(owned);
+        restorePage();
         void getOutlineTree(owned).then((tree) => {
           if (!cancelled) applyOutline(tree);
         });
@@ -318,28 +321,53 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
 
   const pageCount = doc?.numPages ?? 0;
 
-  // 自动适配宽度：打开文档、窗口拖拽松手、最大化/还原、边栏折叠/展开后，
-  // 阅读区宽度变化即自动 fitWidth（250ms 防抖模拟“松手”）；沉浸式保持 121%
-  // 注意：不能监听滚动容器宽度（页面放大产生滚动条会误触发并撤销用户缩放）
+  // 宽度自适应策略（3.2.1）：
+  // - 打开文档时适配一次；
+  // - 标题栏最大化/还原按键：始终自动适配宽度；
+  // - 拖拽窗口边框缩小，且 PDF 被阅读区遮挡（横向溢出）时才自动适配；
+  // - 放大窗口、折叠/展开边栏或信息面板、拖拽分屏分隔线：一律不自动缩放，
+  //   避免大文件反复重渲染（用户可手动缩放或用小手拖拽查看）。
   useEffect(() => {
     if (!doc || !baseW) return;
     let timer: ReturnType<typeof setTimeout> | null = null;
-    const schedule = () => {
+    const fit = () => {
+      if (immersiveRef.current) return;
+      const w = scrollRef.current?.clientWidth ?? 800;
+      setScale(Math.max(0.3, (w - 48) / baseW));
+    };
+    const schedule = (fn: () => void) => {
       if (timer) clearTimeout(timer);
       timer = setTimeout(() => {
         timer = null;
-        if (immersiveRef.current) return;
-        const w = scrollRef.current?.clientWidth ?? 800;
-        setScale(Math.max(0.3, (w - 48) / baseW));
+        fn();
       }, 250);
     };
-    schedule(); // 打开文档即适配一次
-    window.addEventListener('resize', schedule);
+    // PDF 是否被阅读区遮挡：内容宽度超出可视宽度（出现横向滚动/被裁切）
+    const clipped = () => {
+      const el = scrollRef.current;
+      return el ? el.scrollWidth > el.clientWidth + 4 : false;
+    };
+    let lastWinW = window.innerWidth;
+    const onResize = () => {
+      const nextW = window.innerWidth;
+      const shrinking = nextW < lastWinW - 1;
+      lastWinW = nextW;
+      if (!shrinking) return; // 放大窗口：保持当前缩放
+      schedule(() => {
+        if (clipped()) fit(); // 缩小且 PDF 被遮挡才适配
+      });
+    };
+    const onMaxChanged = () => schedule(fit); // 最大化/还原按键始终适配
+    const off = window.pkm.onMaximizedChange?.(onMaxChanged);
+    window.addEventListener('resize', onResize);
+    schedule(fit); // 打开文档适配一次
     return () => {
-      window.removeEventListener('resize', schedule);
+      window.removeEventListener('resize', onResize);
+      off?.();
       if (timer) clearTimeout(timer);
     };
-  }, [doc, baseW, sidebarWidth, inspectorWidth, sidebarCollapsed, inspectorCollapsed, splitRatio]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [doc, baseW]);
 
   // ---------- page tracking ----------
   useEffect(() => {
@@ -393,25 +421,27 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
 
   // ---------- shortcuts ----------
   const scrollToPage = useCallback((n: number) => {
-    const pageEl = pageRefs.current.get(n);
-    if (pageEl) {
-      // 即时跳转（auto）：书签/恢复/翻页应立刻定位，不依赖平滑滚动
-      pageEl.scrollIntoView({ block: 'start' });
-      return;
-    }
-    // 目标页尚未渲染（大 PDF 只渲染视口附近页面）：按估算高度滚动触发渲染，
-    // 渲染完成后轮询精确对齐，保证“跳转”到任意页码都可用
     const el = scrollRef.current;
-    if (!el || !baseH || !scale) return;
-    el.scrollTop = Math.max(0, Math.round((n - 1) * (baseH * scale + 16)));
+    if (!el) return;
+    // 目标页已挂载且尺寸就绪 → 立即定位（不依赖平滑滚动）
+    const tryJump = () => {
+      const p = pageRefs.current.get(n);
+      if (p && p.offsetHeight > 0) {
+        p.scrollIntoView({ block: 'start' });
+        return true;
+      }
+      return false;
+    };
+    if (tryJump()) return;
+    // 目标页尚未就绪（未渲染或尺寸为 0）：先按估算高度滚动触发渲染，
+    // 再持续轮询直到页面尺寸就绪后精确对齐，保证跳转不会丢失
+    if (baseH > 0 && scale > 0) {
+      el.scrollTop = Math.max(0, Math.round((n - 1) * (baseH * scale + 16)));
+    }
     let tries = 0;
     const align = () => {
-      const p = pageRefs.current.get(n);
-      if (p) {
-        p.scrollIntoView({ block: 'start' });
-        return;
-      }
-      if (++tries < 30) requestAnimationFrame(align);
+      if (tryJump()) return;
+      if (++tries < 240) requestAnimationFrame(align); // 最长约 4 秒，等待大 PDF 渲染
     };
     requestAnimationFrame(align);
   }, [baseH, scale]);
@@ -420,6 +450,13 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
   useEffect(() => {
     if (paneActive) setStoreCurrentPage(currentPage);
   }, [currentPage, setStoreCurrentPage, paneActive]);
+
+  // 卸载（切换标签/关闭屏）前把当前页码记入 per-pdf 表，切回该标签时恢复
+  useEffect(() => {
+    return () => {
+      if (currentPage > 1) useApp.getState().rememberTabPage(pdf.id, currentPage);
+    };
+  }, [currentPage, pdf.id]);
 
   // 信息面板书签点击 -> 阅读器跳转
   useEffect(() => {

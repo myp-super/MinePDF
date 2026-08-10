@@ -62,7 +62,10 @@ export default function App() {
 
   // 启动后恢复上次阅读会话（关闭前正在读的 PDF 与页码）
   useEffect(() => {
-    if (ready) useApp.getState().restoreLastSession();
+    // capture 冒烟模式不自动恢复（测试脚本会显式触发验证），保证测试确定性
+    if (ready && !window.location.hash.includes('capture')) {
+      useApp.getState().restoreLastSession();
+    }
   }, [ready]);
 
   useEffect(() => {

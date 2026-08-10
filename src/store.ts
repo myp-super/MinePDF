@@ -19,6 +19,21 @@ export interface LastSession {
   ts: number;
 }
 
+/** 完整会话快照：恢复全部打开的标签页与分屏布局（3.2.1） */
+interface RestoredSession {
+  screens: Array<{
+    tabs: Array<{ kind: 'library' | 'inbox'; pdfId: number }>;
+    activeTabIndex: number;
+  }>;
+  activeScreenIndex: number;
+  splitLayout: SplitLayout;
+  splitRatio: number;
+  /** 当前激活标签的阅读页码 */
+  page: number;
+}
+
+const SESSION_KEY = 'pkm.screensSession';
+
 /** 文档标签：知识库 / 临时区中的一份 PDF */
 export interface DocTab {
   id: string;
@@ -170,6 +185,10 @@ interface AppState {
   requestJump: (page: number) => void;
   consumeJump: () => void;
   setCurrentPage: (page: number) => void;
+  /** 记录某份 PDF 的阅读页码（标签切换/卸载时保留） */
+  rememberTabPage: (pdfId: number, page: number) => void;
+  /** 每份 PDF 上次阅读页码（按 pdfId 记忆，切标签/重开时恢复） */
+  tabPages: Record<number, number>;
   setSidebarWidth: (w: number) => void;
   setInspectorWidth: (w: number) => void;
   toggleSidebarCollapsed: () => void;
@@ -206,6 +225,7 @@ export const useApp = create<AppState>((set, get) => ({
   outlines: {},
   jumpPage: null,
   currentPage: 1,
+  tabPages: {},
   sidebarWidth: Number(localStorage.getItem('pkm.sidebarWidth')) || 268,
   inspectorWidth: Number(localStorage.getItem('pkm.inspectorWidth')) || 320,
   sidebarCollapsed: false,
@@ -253,7 +273,7 @@ export const useApp = create<AppState>((set, get) => ({
         activePdfId: id,
         splitLayout: 'single',
         splitRatio: 0.5,
-        lastSession: saveSession(kind, id, 1),
+        lastSession: saveSession(kind, id, s.tabPages[id] ?? 1),
         inspectorTab: tabInspectorTab(s, pdf),
         ...sidebarPatchOnOpen(s),
       });
@@ -266,7 +286,7 @@ export const useApp = create<AppState>((set, get) => ({
       screens,
       activeScreenId: screen.id,
       activePdfId: id,
-      lastSession: saveSession(kind, id, 1),
+      lastSession: saveSession(kind, id, s.tabPages[id] ?? 1),
       inspectorTab: tabInspectorTab(s, pdf),
       ...sidebarPatchOnOpen(s),
     });
@@ -285,7 +305,7 @@ export const useApp = create<AppState>((set, get) => ({
         activePdfId: id,
         splitLayout: 'single',
         splitRatio: 0.5,
-        lastSession: saveSession(tab.kind, id, 1),
+        lastSession: saveSession(tab.kind, id, s.tabPages[id] ?? 1),
         ...sidebarPatchOnOpen(s),
       });
       return;
@@ -297,7 +317,7 @@ export const useApp = create<AppState>((set, get) => ({
       screens,
       activeScreenId: screen.id,
       activePdfId: id,
-      lastSession: saveSession(tab.kind, id, 1),
+      lastSession: saveSession(tab.kind, id, s.tabPages[id] ?? 1),
       inspectorTab: tabInspectorTab(s, s.pdfs.find((p) => p.id === id) ?? s.inboxPdfs.find((p) => p.id === id)),
       ...sidebarPatchOnOpen(s),
     });
@@ -320,7 +340,7 @@ export const useApp = create<AppState>((set, get) => ({
         activePdfId: pdfId,
         splitLayout: 'split-h',
         splitRatio: 0.5,
-        lastSession: saveSession(tab.kind, pdfId, 1),
+        lastSession: saveSession(tab.kind, pdfId, s.tabPages[pdfId] ?? 1),
         ...sidebarPatchOnOpen(s),
       });
       return;
@@ -332,7 +352,7 @@ export const useApp = create<AppState>((set, get) => ({
       screens,
       activeScreenId: other.id,
       activePdfId: pdfId,
-      lastSession: saveSession(tab.kind, pdfId, 1),
+      lastSession: saveSession(tab.kind, pdfId, s.tabPages[pdfId] ?? 1),
       ...sidebarPatchOnOpen(s),
     });
   },
@@ -347,7 +367,7 @@ export const useApp = create<AppState>((set, get) => ({
       activeScreenId: screenId,
       activePdfId: pdfId,
       // 记录当前阅读页码，关闭后重启可恢复到该页
-      lastSession: saveSession(tab?.kind ?? 'library', pdfId, s.currentPage),
+      lastSession: saveSession(tab?.kind ?? 'library', pdfId, s.tabPages[pdfId] ?? s.currentPage),
     });
   },
   activateTab: (screenId, tabId) => {
@@ -362,7 +382,7 @@ export const useApp = create<AppState>((set, get) => ({
       screens,
       activeScreenId: screenId,
       activePdfId: tab?.pdfId ?? null,
-      lastSession: tab ? saveSession(tab.kind, tab.pdfId, 1) : undefined,
+      lastSession: tab ? saveSession(tab.kind, tab.pdfId, s.tabPages[tab.pdfId] ?? 1) : undefined,
       inspectorTab:
         tab?.pdfId != null
           ? tabInspectorTab(s, s.pdfs.find((p) => p.id === tab.pdfId) ?? s.inboxPdfs.find((p) => p.id === tab.pdfId))
@@ -476,11 +496,64 @@ export const useApp = create<AppState>((set, get) => ({
   },
   setSplitRatio: (r) => set({ splitRatio: Math.min(0.8, Math.max(0.2, r)) }),
   /**
-   * 启动恢复：读取上次会话，若对应 PDF 仍存在则自动打开并跳转到记录页码。
-   * PDF 已被删除时清除记录。
+   * 启动恢复：优先恢复完整会话快照（全部标签页 + 分屏布局 + 当前页码）；
+   * 旧版本只有单条 lastSession 时回退为只恢复最后一个 PDF。
    */
   restoreLastSession: () => {
     const s = get();
+    // 1) 完整会话快照：重建所有屏与标签
+    let rawSnap: string | null = null;
+    try {
+      rawSnap = localStorage.getItem(SESSION_KEY);
+    } catch {
+      rawSnap = null;
+    }
+    if (rawSnap) {
+      try {
+        const snap = JSON.parse(rawSnap) as RestoredSession;
+        const screens: ReaderScreen[] = [];
+        let activeScreenId: string | null = null;
+        (snap.screens ?? []).forEach((sc, idx) => {
+          const tabs: DocTab[] = [];
+          for (const t of sc.tabs ?? []) {
+            const pdf =
+              t.kind === 'inbox'
+                ? s.inboxPdfs.find((p) => p.id === t.pdfId)
+                : s.pdfs.find((p) => p.id === t.pdfId);
+            if (!pdf) continue;
+            tabs.push({ id: nextTabId(), kind: t.kind, pdfId: t.pdfId, title: pdf.title || pdf.filename });
+          }
+          if (!tabs.length) return;
+          const activeTabId =
+            tabs[Math.min(sc.activeTabIndex ?? 0, tabs.length - 1)]?.id ?? tabs[0].id;
+          const sid = nextScreenId();
+          if (idx === (snap.activeScreenIndex ?? 0)) activeScreenId = sid;
+          screens.push({ id: sid, tabs, activeTabId });
+        });
+        if (screens.length > 0) {
+          const activeScreen = screens.find((sc) => sc.id === activeScreenId) ?? screens[0];
+          const activeTab =
+            activeScreen.tabs.find((t) => t.id === activeScreen.activeTabId) ?? activeScreen.tabs[0];
+          const page = Math.max(1, Math.floor(snap.page ?? 1));
+          const splitLayout: SplitLayout = screens.length <= 1 ? 'single' : snap.splitLayout;
+          set({
+            screens,
+            activeScreenId: activeScreen.id,
+            activePdfId: activeTab.pdfId,
+            splitLayout,
+            splitRatio: snap.splitRatio ?? 0.5,
+            lastSession: saveSession(activeTab.kind, activeTab.pdfId, page),
+            ...sidebarPatchOnOpen(s),
+          });
+          if (page > 1) s.requestJump(page);
+          return;
+        }
+      } catch {
+        /* 快照损坏则回退旧逻辑 */
+      }
+    }
+
+    // 2) 旧格式：单条 lastSession
     let raw: string | null = null;
     try {
       raw = localStorage.getItem('pkm.lastSession');
@@ -540,6 +613,8 @@ export const useApp = create<AppState>((set, get) => ({
   consumeJump: () => set({ jumpPage: null }),
   setCurrentPage: (page) => {
     const s = get();
+    const pdfId = s.activePdfId ?? -1;
+    const tabPages = { ...s.tabPages, [pdfId]: page };
     if (s.lastSession) {
       const sess = { ...s.lastSession, page, ts: Date.now() };
       try {
@@ -547,11 +622,13 @@ export const useApp = create<AppState>((set, get) => ({
       } catch {
         /* ignore */
       }
-      set({ currentPage: page, lastSession: sess });
+      set({ currentPage: page, lastSession: sess, tabPages });
     } else {
-      set({ currentPage: page });
+      set({ currentPage: page, tabPages });
     }
   },
+  rememberTabPage: (pdfId, page) =>
+    set((s) => ({ tabPages: { ...s.tabPages, [pdfId]: Math.max(1, page) } })),
   setSidebarWidth: (w) => {
     const v = Math.min(420, Math.max(180, Math.round(w)));
     localStorage.setItem('pkm.sidebarWidth', String(v));
@@ -585,6 +662,40 @@ function openPdfInNewTabInner(
     activePdfId: tab.pdfId,
     splitLayout: 'single',
     splitRatio: 0.5,
-    lastSession: saveSession(tab.kind, tab.pdfId, 1),
+    lastSession: saveSession(tab.kind, tab.pdfId, get().tabPages[tab.pdfId] ?? 1),
   });
 }
+
+// ---------- 会话快照持久化 ----------
+// 标签/分屏/阅读页码发生变化时写入 localStorage，重启后完整恢复。
+useApp.subscribe((s, prev) => {
+  if (
+    s.screens === prev.screens &&
+    s.lastSession === prev.lastSession &&
+    s.splitLayout === prev.splitLayout &&
+    s.splitRatio === prev.splitRatio
+  ) {
+    return;
+  }
+  try {
+    const activeScreenIndex = Math.max(
+      0,
+      s.screens.findIndex((sc) => sc.id === s.activeScreenId),
+    );
+    localStorage.setItem(
+      SESSION_KEY,
+      JSON.stringify({
+        screens: s.screens.map((sc) => ({
+          tabs: sc.tabs.map((t) => ({ kind: t.kind, pdfId: t.pdfId })),
+          activeTabIndex: Math.max(0, sc.tabs.findIndex((t) => t.id === sc.activeTabId)),
+        })),
+        activeScreenIndex,
+        splitLayout: s.splitLayout,
+        splitRatio: s.splitRatio,
+        page: s.lastSession?.page ?? 1,
+      } satisfies RestoredSession),
+    );
+  } catch {
+    /* ignore */
+  }
+});
