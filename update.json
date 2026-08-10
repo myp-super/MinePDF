@@ -1,8 +1,8 @@
 {
-  "url": "https://github.com/myp-super/MinePDF/releases/download/v3.3.1/MinePDF.Setup.3.3.1.exe",
-  "publishDate": "2026-08-10",
-  "version": "3.3.1",
   "notes": [
-    "v3.3.1 - 修复默认PDF关联启动自愈、目录树弹窗折叠选择、知识库折叠键、删除文件后标签清理，文件夹导入恢复整目录导入，新增拖拽排序"
-  ]
+    "v3.3.2 - 修复外部PDF桥接(send/handle不匹配)、目录树弹窗展开/选中被刷新重置，新增排序模式开关"
+  ],
+  "version": "3.3.2",
+  "url": "https://github.com/myp-super/MinePDF/releases/download/v3.3.2/MinePDF.Setup.3.3.2.exe",
+  "publishDate": "2026-08-10"
 }
