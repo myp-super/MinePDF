@@ -15,6 +15,8 @@ const DEFAULTS: AppSettings = {
   pdfDefaultApp: false,
   /** 阅读 PDF 时自动折叠左侧知识库（鼠标移到左边缘临时展开） */
   autoCollapseSidebar: false,
+  /** 右键拖拽平移（默认开启）；关闭后恢复左键拖拽平移 */
+  rightDragPan: true,
   libraryPath: '',
   libraryPdfDir: '',
 };

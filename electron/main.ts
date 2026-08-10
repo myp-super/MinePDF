@@ -871,6 +871,8 @@ async function createMainWindow(): Promise<BrowserWindow> {
                   (async () => {
                     const el = document.querySelector('[data-pan-scroll]');
                     if (!el) return { scroll: false };
+                    const snap0 = await window.pkm.getSnapshot();
+                    const rightDragPan = snap0.settings.rightDragPan !== false;
                     const rect = el.getBoundingClientRect();
                     const cx = rect.left + rect.width / 2;
                     const cy = rect.top + rect.height / 2;
@@ -883,13 +885,13 @@ async function createMainWindow(): Promise<BrowserWindow> {
                     const overflowY = el.scrollHeight > el.clientHeight + 2;
                     const cursorBefore = getComputedStyle(el).cursor;
                     const sl0 = el.scrollLeft, st0 = el.scrollTop;
-                    el.dispatchEvent(new MouseEvent('mousedown', { button: 0, clientX: cx, clientY: cy, bubbles: true, cancelable: true }));
+                    el.dispatchEvent(new MouseEvent('mousedown', { button: rightDragPan ? 2 : 0, buttons: rightDragPan ? 2 : 1, clientX: cx, clientY: cy, bubbles: true, cancelable: true }));
                     await new Promise((r) => setTimeout(r, 80));
                     window.dispatchEvent(new MouseEvent('mousemove', { clientX: cx + 260, clientY: cy + 160, bubbles: true }));
                     const cursorDuring = getComputedStyle(el).cursor;
                     // 拖拽位移经 rAF 节流异步应用，等一帧再松手
                     await new Promise((r) => setTimeout(r, 120));
-                    window.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+                    window.dispatchEvent(new MouseEvent('mouseup', { button: rightDragPan ? 2 : 0, buttons: 0, bubbles: true }));
                     await new Promise((r) => setTimeout(r, 120));
                     const slMoved = el.scrollLeft !== sl0;
                     const stMoved = el.scrollTop !== st0;
@@ -897,7 +899,7 @@ async function createMainWindow(): Promise<BrowserWindow> {
                     await new Promise((r) => setTimeout(r, 80));
                     const page = document.querySelector('.pdf-page-sheet');
                     const leftReachable = page ? page.getBoundingClientRect().left >= rect.left - 2 : null;
-                    return { overflowX, overflowY, cursorBefore, cursorDuring, slMoved, stMoved, leftReachable };
+                    return { rightDragPan, overflowX, overflowY, cursorBefore, cursorDuring, slMoved, stMoved, leftReachable };
                   })()
                 `);
                 console.log('[capture] panDiag', JSON.stringify(panDiag));
@@ -1079,11 +1081,15 @@ async function createMainWindow(): Promise<BrowserWindow> {
                     if (!pid || !a) return { pid: !!pid, a: !!a };
                     window.__pkmOpenPdf(pid.id);
                     await new Promise((r) => setTimeout(r, 1500));
+                    // 虚拟滚动下第 3 页初始不在预载范围，先显式滚动触发挂载再对齐
+                    const sc0 = document.querySelector('[data-pan-scroll]');
+                    if (sc0) sc0.scrollTop = 2600;
+                    await new Promise((r) => setTimeout(r, 900));
                     const p3 = [...document.querySelectorAll('.pdf-page-sheet')].find(
                       (el) => el.getAttribute('data-page-number') === '3',
                     );
                     if (p3) p3.scrollIntoView();
-                    await new Promise((r) => setTimeout(r, 900));
+                    await new Promise((r) => setTimeout(r, 700));
                     const rec1 = JSON.parse(localStorage.getItem('pkm.lastSession') || 'null');
                     // 再开一个标签，模拟多标签阅读场景
                     window.__pkmAct('openPdfInNewTab', a.id);

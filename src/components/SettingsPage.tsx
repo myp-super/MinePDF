@@ -5,6 +5,7 @@ import {
   FileText,
   FolderInput,
   FolderOpen,
+  Hand,
   HardDrive,
   Languages,
   Library,
@@ -181,6 +182,17 @@ export function SettingsPage() {
             <Toggle
               checked={settings.autoCollapseSidebar}
               onChange={(v) => void update({ autoCollapseSidebar: v })}
+            />
+          </div>
+          <div className="mt-3 flex items-center gap-3">
+            <Hand size={13} className="shrink-0 text-app-accent" />
+            <div className="min-w-0 flex-1">
+              <div className="text-[11.5px] text-app-text/90">{t('settings.rightDragPan')}</div>
+              <div className="text-[10.5px] text-app-muted">{t('settings.rightDragPanHint')}</div>
+            </div>
+            <Toggle
+              checked={settings.rightDragPan}
+              onChange={(v) => void update({ rightDragPan: v })}
             />
           </div>
         </section>

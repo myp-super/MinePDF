@@ -105,6 +105,8 @@ export interface AppSettings {
   pdfDefaultApp: boolean;
   /** 阅读 PDF 时自动折叠左侧知识库，鼠标移到左边缘临时展开 */
   autoCollapseSidebar: boolean;
+  /** 右键拖拽平移：开启后 PDF 界面鼠标保持系统箭头，按住右键拖动平移；关闭恢复左键拖拽 */
+  rightDragPan: boolean;
   /** 知识库根目录（Documents/PDFKnowledgeManager） */
   libraryPath: string;
   /** PDF 库文件夹：所有 PDF 的统一存放目录（Obsidian 式） */

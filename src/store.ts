@@ -61,6 +61,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   updateAutoCheck: true,
   pdfDefaultApp: false,
   autoCollapseSidebar: false,
+  rightDragPan: true,
   libraryPath: '',
   libraryPdfDir: '',
 };

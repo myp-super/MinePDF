@@ -68,6 +68,8 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
   const toast = useApp((s) => s.toast);
   const setInspectorTab = useApp((s) => s.setInspectorTab);
   const toggleInspectorCollapsed = useApp((s) => s.toggleInspectorCollapsed);
+  /** 右键拖拽平移开关：开启时鼠标保持系统箭头，按住右键拖动平移（左键留给链接/选词） */
+  const rightDragPan = useApp((s) => s.settings.rightDragPan);
   const setStoreOutline = useApp((s) => s.setOutline);
   const jumpPage = useApp((s) => s.jumpPage);
   const consumeJump = useApp((s) => s.consumeJump);
@@ -156,7 +158,9 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
 
   const onPanMouseDown = (e: React.MouseEvent) => {
     if (screenshotMode || highlightMode || !canPanRef.current) return;
-    if (e.button !== 0) return;
+    // 右键拖拽模式用右键平移；关闭后恢复左键平移
+    const btn = rightDragPan ? 2 : 0;
+    if (e.button !== btn) return;
     const el = scrollRef.current;
     if (!el) return;
     e.preventDefault();
@@ -164,8 +168,12 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
     setPanning(true);
     let raf = 0;
     let lastEv: MouseEvent | null = null;
+    let moved = false;
     // 按下瞬间立即挂监听，保证跟手；mouseup 时移除
     const onMove = (ev: MouseEvent) => {
+      const s0 = panStartRef.current;
+      if (!s0) return;
+      if (!moved && Math.abs(ev.clientX - s0.x) + Math.abs(ev.clientY - s0.y) > 4) moved = true;
       lastEv = ev;
       if (raf) return;
       raf = requestAnimationFrame(() => {
@@ -178,15 +186,21 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
         elc.scrollTop = s.st - (e.clientY - s.y);
       });
     };
+    // 右键拖拽时抑制系统右键菜单（仅真正拖动后），避免平移结束弹出菜单
+    const onCtx = (ev: MouseEvent) => {
+      if (moved) ev.preventDefault();
+    };
     const onUp = () => {
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
+      window.removeEventListener('contextmenu', onCtx, true);
       if (raf) cancelAnimationFrame(raf);
       panStartRef.current = null;
       setPanning(false);
     };
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
+    if (rightDragPan) window.addEventListener('contextmenu', onCtx, true);
   };
 
   // ---------- document load (with LRU cache for fast reopening) ----------
@@ -1066,13 +1080,15 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
             className={`h-full overflow-auto bg-[var(--app-canvas)] ${
               panning
                 ? 'cursor-grabbing select-none'
-                : canPan && !highlightMode && !screenshotMode
+                : !rightDragPan && canPan && !highlightMode && !screenshotMode
                   ? 'cursor-grab'
                   : ''
             }`}
             title={
               canPan && !highlightMode && !screenshotMode && !panning
-                ? t('viewer.dragToPan')
+                ? rightDragPan
+                  ? t('viewer.dragToPanRight')
+                  : t('viewer.dragToPan')
                 : undefined
             }
             onMouseDown={onPanMouseDown}

@@ -247,6 +247,8 @@ const zh: Dict = {
   'settings.languageHint': '界面语言，重启后完全生效',
   'settings.autoCollapseSidebar': '阅读时自动折叠知识库',
   'settings.autoCollapseSidebarHint': '开启后阅读 PDF 时左侧知识库自动收起，鼠标移到左边缘临时展开切换；保留手动折叠按钮',
+  'settings.rightDragPan': '右键拖拽平移',
+  'settings.rightDragPanHint': '开启后 PDF 界面鼠标保持系统箭头，按住鼠标右键拖动平移页面，左键正常点选链接与文字；关闭则恢复左键拖拽平移',
   'settings.importSection': '导入',
   'settings.defaultImportDir': '默认导入目录',
   'settings.notSet': '未设置（使用系统默认位置）',
@@ -337,6 +339,7 @@ const zh: Dict = {
 
   'viewer.loading': '正在加载 PDF…',
   'viewer.dragToPan': '按住拖动平移页面',
+  'viewer.dragToPanRight': '按住鼠标右键拖动平移页面',
   'viewer.renderFailed': '页面渲染失败，请切换其他文档后重试',
 };
 
@@ -583,6 +586,8 @@ const en: Dict = {
   'settings.languageHint': 'Interface language; fully applied after restart',
   'settings.autoCollapseSidebar': 'Auto-collapse library while reading',
   'settings.autoCollapseSidebarHint': 'While reading a PDF, the library auto-collapses; hover the left edge to peek and switch files. Manual collapse stays.',
+  'settings.rightDragPan': 'Right-drag to pan',
+  'settings.rightDragPanHint': 'Keeps the default arrow cursor on the PDF; hold the right mouse button and drag to pan, so left-click works normally for links and text. Turn off to restore left-drag panning.',
   'settings.importSection': 'Import',
   'settings.defaultImportDir': 'Default import directory',
   'settings.notSet': 'Not set (uses system default)',
@@ -673,6 +678,7 @@ const en: Dict = {
 
   'viewer.loading': 'Loading PDF…',
   'viewer.dragToPan': 'Drag to pan the page',
+  'viewer.dragToPanRight': 'Hold right mouse button and drag to pan',
   'viewer.renderFailed': 'Failed to render this page, try switching documents',
 };
 
