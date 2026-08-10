@@ -12,6 +12,14 @@ import {
   type SearchMatch,
   type ViewportLike,
 } from '../../lib/pdf';
+import {
+  getCachedPage,
+  pageCacheKey,
+  putCachedPage,
+  renderBucket,
+  toImageBitmap,
+} from '../../lib/pageImageCache';
+import { pdfiumRenderQueued } from '../../lib/pdfiumBatcher';
 import { useApp } from '../../store';
 import { ContextMenu } from '../ui';
 import { PdfPage, type PdfLinkService } from './PdfPage';
@@ -185,9 +193,12 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
     let loadingTask: ReturnType<typeof pdfjsLib.getDocument> | null = null;
     let owned: PDFDocumentProxy | null = null;
     let finished = false;
+    let restored = false;
     // 记录该 PDF 上次阅读页码：切标签/重开后恢复（须在 setCurrentPage(1) 重置前读取）
     const savedPage = useApp.getState().tabPages[pdf.id] ?? 1;
     const restorePage = () => {
+      if (restored) return;
+      restored = true;
       if (savedPage > 1 && currentPdfIdRef.current === pdf.id) {
         useApp.getState().requestJump(savedPage);
       }
@@ -238,10 +249,9 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
 
     void (async () => {
       try {
-        // PDFium 与 PDF.js 并行打开：PDFium 打开 ~1ms，可提前拿到页数/尺寸
+        // PDFium 与 PDF.js 并行打开。重点：不等 readPdf（大文件整份经 IPC 传输耗时），
+        // PDFium 打开 ~1ms 先把页数/尺寸落地，页面即可用 PDFium 位图开始渲染（秒出首帧）。
         const pdfiumPromise = window.pkm.pdfiumOpen(pdf.id).catch(() => null);
-        const buf = await window.pkm.readPdf(pdf.id);
-        if (cancelled) return;
         const pdfiumInfoRes = await pdfiumPromise;
         if (cancelled) return;
         if (pdfiumInfoRes) {
@@ -250,6 +260,10 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
           setBaseH(pdfiumInfoRes.height);
           void window.pkm.updatePdfPageCount(pdf.id, pdfiumInfoRes.pageCount).catch(() => undefined);
         }
+        // 位图布局已就绪，提前恢复上次阅读页码，不必等 pdf.js 解析完
+        restorePage();
+        const buf = await window.pkm.readPdf(pdf.id);
+        if (cancelled) return;
         loadingTask = pdfjsLib.getDocument({
           data: new Uint8Array(buf),
           cMapUrl: './cmaps/',
@@ -319,7 +333,8 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
     }
   };
 
-  const pageCount = doc?.numPages ?? 0;
+  // PDFium 打开即给出页数：pdf.js 文档就绪前也能先渲染页面（秒出首帧）
+  const pageCount = doc?.numPages ?? pdfiumInfo?.pageCount ?? 0;
 
   // 宽度自适应策略（3.2.1）：
   // - 打开文档时适配一次；
@@ -328,7 +343,7 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
   // - 放大窗口、折叠/展开边栏或信息面板、拖拽分屏分隔线：一律不自动缩放，
   //   避免大文件反复重渲染（用户可手动缩放或用小手拖拽查看）。
   useEffect(() => {
-    if (!doc || !baseW) return;
+    if (!baseW) return;
     let timer: ReturnType<typeof setTimeout> | null = null;
     const fit = () => {
       if (immersiveRef.current) return;
@@ -391,6 +406,28 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
       cancelAnimationFrame(raf);
     };
   }, [doc, mode, pageCount, scale]);
+
+  // ---------- 相邻页预渲染（SumatraPDF 式） ----------
+  // 当前页变化/缩放后，提前把下一页（双页模式预取下一行两页）的 PDFium 位图渲染进缓存，
+  // 翻页时直接命中缓存秒开，避免滚动到目标页才发起渲染的等待。仅活动屏预取，控制 IPC 负载。
+  useEffect(() => {
+    if (!paneActive || !pdfiumInfo || pageCount <= 1) return;
+    const dpr = window.devicePixelRatio || 1;
+    const bucket = renderBucket(scale * dpr);
+    const prefetch = (n: number) => {
+      if (n < 1 || n > pageCount) return;
+      const key = pageCacheKey(pdf.id, n, bucket);
+      if (getCachedPage(key)) return;
+      pdfiumRenderQueued(paneId, pdf.id, n, bucket)
+        .then(async (res) => {
+          const bmp = await toImageBitmap(res);
+          putCachedPage(key, bmp, res.w, res.h);
+        })
+        .catch(() => undefined);
+    };
+    prefetch(currentPage + 1);
+    if (mode === 'double') prefetch(currentPage + 2);
+  }, [currentPage, scale, mode, pageCount, pdf.id, paneId, paneActive, pdfiumInfo]);
 
   // ---------- Ctrl + wheel zoom（只作用于本屏自己的滚动容器，锚定光标） ----------
   // 监听挂在每个屏独立的滚动容器上：分屏时各屏独立缩放，
@@ -755,12 +792,14 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
   const renderPage = (n: number) => (
     <PdfPage
       key={`${pdf.id}-${n}`}
-      doc={doc!}
+      doc={doc}
       pdfId={pdf.id}
       paneId={paneId}
       pageNumber={n}
       scale={scale}
       renderer={pdfiumInfo ? 'pdfium' : 'pdfjs'}
+      fallbackW={pdfiumInfo?.width ?? null}
+      fallbackH={pdfiumInfo?.height ?? null}
       annotations={annotationsByPage.get(n) ?? []}
       searchMatches={searchByPage.get(n) ?? []}
       selectedAnnotationId={selectedAnnotationId}
@@ -900,7 +939,7 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
           />
         )}
 
-        {doc ? (
+        {doc || pdfiumInfo ? (
           <div
             ref={scrollRef}
             data-pan-scroll

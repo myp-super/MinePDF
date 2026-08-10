@@ -5,7 +5,7 @@ import {
   getCachedPage,
   pageCacheKey,
   putCachedPage,
-  scaleBucket,
+  renderBucket,
   toImageBitmap,
 } from '../../lib/pageImageCache';
 import { pdfiumRenderQueued } from '../../lib/pdfiumBatcher';
@@ -22,7 +22,8 @@ export interface PdfLinkService {
 }
 
 interface PdfPageProps {
-  doc: PDFDocumentProxy;
+  /** pdf.js 文档代理；首次渲染时可能尚未就绪（先由 PDFium 出像素） */
+  doc: PDFDocumentProxy | null;
   pdfId: number;
   /** 阅读屏唯一标识（分屏渲染请求隔离） */
   paneId: string;
@@ -34,6 +35,9 @@ interface PdfPageProps {
   searchMatches: SearchMatch[];
   selectedAnnotationId: number | null;
   linkService: PdfLinkService;
+  /** PDFium 已给出的页面物理尺寸（doc 未就绪时用于占位布局） */
+  fallbackW: number | null;
+  fallbackH: number | null;
   onAnnotationClick: (a: AnnotationRecord) => void;
   onAnnotationContextMenu: (a: AnnotationRecord, x: number, y: number) => void;
   registerPage: (n: number, el: HTMLDivElement | null) => void;
@@ -69,6 +73,8 @@ export function PdfPage({
   searchMatches,
   selectedAnnotationId,
   linkService,
+  fallbackW,
+  fallbackH,
   onAnnotationClick,
   onAnnotationContextMenu,
   registerPage,
@@ -111,9 +117,20 @@ export function PdfPage({
     let cancelled = false;
     void (async () => {
       try {
-        const page = await doc.getPage(pageNumber);
-        if (cancelled) return;
-        const vp = page.getViewport({ scale });
+        let vp: PageViewport | null = null;
+        if (doc) {
+          const page = await doc.getPage(pageNumber);
+          if (cancelled) return;
+          vp = page.getViewport({ scale });
+        } else if (fallbackW != null && fallbackH != null) {
+          // PDFium 已给出页面尺寸：先用它布局占位，等 pdf.js 就绪后换真实 viewport
+          vp = {
+            width: fallbackW * scale,
+            height: fallbackH * scale,
+            scale,
+          } as PageViewport;
+        }
+        if (!vp) return;
         setViewport(vp);
         registerViewport(pageNumber, vp);
       } catch {
@@ -124,7 +141,7 @@ export function PdfPage({
       cancelled = true;
       registerViewport(pageNumber, null);
     };
-  }, [doc, pageNumber, scale, visible, registerViewport]);
+  }, [doc, pageNumber, scale, visible, registerViewport, fallbackW, fallbackH]);
 
   // Layout + high-res render scheduling
   useEffect(() => {
@@ -164,7 +181,7 @@ export function PdfPage({
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [viewport, renderer]);
+  }, [viewport, renderer, doc]);
 
   /** 把位图按 CSS 尺寸绘制到页面 canvas */
   function paintBitmap(bitmap: ImageBitmap, cssW: number, cssH: number): void {
@@ -183,6 +200,7 @@ export function PdfPage({
 
   /** 文本层 + 链接层（PDF.js，两套渲染路径共用） */
   async function renderTextAndAnnots(vp: PageViewport, seq: number): Promise<void> {
+    if (!doc) return; // pdf.js 文档尚未就绪：先保持纯 PDFium 位图，就绪后本 effect 会重跑
     const page = await doc.getPage(pageNumber);
     if (seq !== renderSeqRef.current) return;
     const text = textRef.current;
@@ -226,30 +244,30 @@ export function PdfPage({
     const cssW = Math.floor(vp.width);
     const cssH = Math.floor(vp.height);
     const deviceScale = vp.scale * dpr;
-    // 渲染期间显示动态加载动画，避免大文件黑屏
-    setPending(true);
+    // 仅首次渲染显示加载动画；缩放/切回时的再渲染直接复用旧位图拉伸过渡
+    setPending(!hasRenderedRef.current);
 
-    // 1) 同质量（同缩放桶）缓存直接复用
-    const bucket = scaleBucket(deviceScale);
+    // 1) 同渲染桶缓存直接复用（渲染倍率 ≥ 显示倍率，只会缩小显示，不发虚）
+    const bucket = renderBucket(deviceScale);
     const hiKey = pageCacheKey(pdfId, pageNumber, bucket);
     const hi = getCachedPage(hiKey);
     if (hi) {
+      setPending(false);
       paintBitmap(hi, cssW, cssH);
       hasRenderedRef.current = true;
-      setPending(false);
       // 位图命中缓存时仍需渲染文本层/链接层（选词、高亮、交叉引用）
       await renderTextAndAnnots(vp, seq);
       return;
     }
 
-    // 2) 高清直接渲染（PDFium 单页 ~10ms）：首次立即，缩放时 60ms 防抖，
+    // 2) 高清直接渲染（PDFium 单页 ~10ms）：首次立即，缩放时 120ms 防抖，
     //    过渡期由浏览器把旧位图拉伸到新尺寸（自然、不跳变）
     if (timerRef.current) clearTimeout(timerRef.current);
     timerRef.current = setTimeout(async () => {
       timerRef.current = null;
       const seq2 = renderSeqRef.current;
       try {
-        const res = await pdfiumRenderQueued(paneId, pdfId, pageNumber, deviceScale);
+        const res = await pdfiumRenderQueued(paneId, pdfId, pageNumber, bucket);
         if (seq2 !== renderSeqRef.current) return;
         const bmp = await toImageBitmap(res);
         putCachedPage(hiKey, bmp, res.w, res.h);
@@ -270,6 +288,7 @@ export function PdfPage({
 
   /** PDF.js 回退路径：原有渲染逻辑 */
   async function renderWithPdfjs(vp: PageViewport): Promise<void> {
+    if (!doc) return;
     const seq = ++renderSeqRef.current;
     setPending(true);
     try {

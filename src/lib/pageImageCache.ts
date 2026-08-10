@@ -22,6 +22,14 @@ export function scaleBucket(scale: number): number {
   return Math.max(0.5, Math.round(scale * 2) / 2);
 }
 
+/**
+ * 渲染倍率桶：向上取整到 0.25 级，保证“显示倍率 ≤ 渲染倍率”，
+ * 位图永远只做缩小显示，任何缩放级别都不会把低清图放大（发虚）。
+ */
+export function renderBucket(scale: number): number {
+  return Math.max(0.5, Math.ceil(scale * 4) / 4);
+}
+
 export function pageCacheKey(pdfId: number, page: number, bucket: number): string {
   return `${pdfId}:${page}:${bucket}`;
 }
