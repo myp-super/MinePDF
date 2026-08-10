@@ -193,6 +193,43 @@ export function pdfiumOpen(pdfId: number): PdfiumOpenResult | null {
   }
 }
 
+/** 一次性返回所有页面的物理尺寸（pt，已含页面旋转），供虚拟滚动精确布局。
+ *  超大文件会分块让出事件循环，避免阻塞其它渲染 IPC。 */
+export async function pdfiumPageSizes(pdfId: number): Promise<{ w: number; h: number }[]> {
+  const api = ensureLib();
+  if (!api) throw new Error('PDFIUM_UNAVAILABLE');
+  const filepath = getPdfPath(pdfId);
+  const doc = api.loadDoc(filepath, null);
+  if (!doc) throw new Error('ERR_PDF_OPEN_FAILED:PDFium cannot open the file');
+  try {
+    const count = api.pageCount(doc);
+    const out: { w: number; h: number }[] = [];
+    const sizePtr = koffi.alloc(FS_SIZEF, 1);
+    try {
+      for (let i = 0; i < count; i++) {
+        if (i > 0 && i % 64 === 0) {
+          await new Promise((resolve) => setImmediate(resolve));
+        }
+        if (api.pageSize(doc, i, sizePtr)) {
+          const s = koffi.decode(sizePtr, 'FS_SIZEF') as { width: number; height: number };
+          out.push({ w: Math.max(1, s.width), h: Math.max(1, s.height) });
+        } else {
+          out.push({ w: 0, h: 0 });
+        }
+      }
+    } finally {
+      koffi.free(sizePtr);
+    }
+    return out;
+  } finally {
+    try {
+      api.closeDoc(doc);
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
 /**
  * 渲染指定页为 RGBA 位图。
  * page 从 1 开始；scale 为 100% 对应的倍数（CSS 像素/PDF pt），

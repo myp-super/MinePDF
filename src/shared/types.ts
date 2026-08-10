@@ -213,6 +213,8 @@ export interface PkmApi {
   readPdf(id: number): Promise<ArrayBuffer>;
   pdfiumAvailable(): Promise<boolean>;
   pdfiumOpen(pdfId: number): Promise<PdfiumOpenResult | null>;
+  /** 一次性返回所有页面的物理尺寸（pt，已含旋转），供虚拟滚动精确布局 */
+  pdfiumPageSizes(pdfId: number): Promise<{ w: number; h: number }[]>;
   pdfiumRender(pdfId: number, page: number, scale: number): Promise<PdfiumRenderResult>;
   pdfiumRenderBatch(pdfId: number, pages: number[], scale: number): Promise<PdfiumRenderResult[]>;
   pdfiumClose(pdfId: number): Promise<void>;

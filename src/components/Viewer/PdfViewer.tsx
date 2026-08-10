@@ -93,6 +93,8 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
   const [selectedAnnotationId, setSelectedAnnotationId] = useState<number | null>(null);
   const [baseW, setBaseW] = useState(0);
   const [baseH, setBaseH] = useState(0);
+  /** 所有页的真实物理尺寸（pt）：虚拟滚动精确布局用；PDFium 一次性返回 */
+  const [pageSizes, setPageSizes] = useState<{ w: number; h: number }[] | null>(null);
   const [annMenu, setAnnMenu] = useState<{
     a: AnnotationRecord;
     x: number;
@@ -220,6 +222,7 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
     setupPdfjs();
     setDoc(null);
     setPdfiumInfo(null);
+    setPageSizes(null);
     setLoadError(null);
     setAnnotations([]);
     setSelectedAnnotationId(null);
@@ -236,7 +239,18 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
       void window.pkm
         .pdfiumOpen(pdf.id)
         .then((info) => {
-          if (currentPdfIdRef.current === pdf.id && info) setPdfiumInfo(info);
+          if (currentPdfIdRef.current === pdf.id && info) {
+            setPdfiumInfo(info);
+            setPageSizes(
+              Array.from({ length: info.pageCount }, () => ({ w: info.width, h: info.height })),
+            );
+            void window.pkm
+              .pdfiumPageSizes(pdf.id)
+              .then((sizes) => {
+                if (currentPdfIdRef.current === pdf.id && sizes.length) setPageSizes(sizes);
+              })
+              .catch(() => undefined);
+          }
         })
         .catch(() => undefined);
       void setAnnotationsFromCache(cached, pdf);
@@ -258,7 +272,20 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
           setPdfiumInfo(pdfiumInfoRes);
           setBaseW(pdfiumInfoRes.width);
           setBaseH(pdfiumInfoRes.height);
+          // 先用第 1 页尺寸估算全部页，等真实尺寸 IPC 返回后替换，首帧不必等
+          setPageSizes(
+            Array.from(
+              { length: pdfiumInfoRes.pageCount },
+              () => ({ w: pdfiumInfoRes.width, h: pdfiumInfoRes.height }),
+            ),
+          );
           void window.pkm.updatePdfPageCount(pdf.id, pdfiumInfoRes.pageCount).catch(() => undefined);
+          void window.pkm
+            .pdfiumPageSizes(pdf.id)
+            .then((sizes) => {
+              if (currentPdfIdRef.current === pdf.id && sizes.length) setPageSizes(sizes);
+            })
+            .catch(() => undefined);
         }
         // 位图布局已就绪，提前恢复上次阅读页码，不必等 pdf.js 解析完
         restorePage();
@@ -336,6 +363,98 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
   // PDFium 打开即给出页数：pdf.js 文档就绪前也能先渲染页面（秒出首帧）
   const pageCount = doc?.numPages ?? pdfiumInfo?.pageCount ?? 0;
 
+  // ---------- 虚拟滚动布局（SumatraPDF 式：只挂载可视区附近的行） ----------
+  // 大文件不再为每一页创建 DOM，只渲染视口 ± 预载行，打开/滚动/缩放都保持轻量。
+  interface PageLayout {
+    rows: number[][];
+    tops: number[];
+    rowHs: number[];
+    totalH: number;
+    contentW: number;
+  }
+  const layout = useMemo<PageLayout>(() => {
+    const sizes = pageSizes;
+    const rowCount = mode === 'double' ? Math.ceil(pageCount / 2) : pageCount;
+    const rows: number[][] = [];
+    const tops: number[] = [];
+    const rowHs: number[] = [];
+    const GAP = 8;
+    const PAD_TOP = 12;
+    const PAD_BOT = 12;
+    const PAD_X = 16;
+    let y = PAD_TOP;
+    let maxW = 0;
+    for (let r = 0; r < rowCount; r++) {
+      const row = mode === 'double' ? [r * 2 + 1, r * 2 + 2].filter((n) => n <= pageCount) : [r + 1];
+      let rowH = 0;
+      let rowW = 0;
+      for (const n of row) {
+        const s = sizes?.[n - 1];
+        const w = (s && s.w > 0 ? s.w : baseW) * scale;
+        const h = (s && s.h > 0 ? s.h : baseH) * scale;
+        rowW += w;
+        rowH = Math.max(rowH, h);
+      }
+      rowW += (row.length - 1) * 6;
+      maxW = Math.max(maxW, rowW);
+      tops.push(y);
+      rows.push(row);
+      rowHs.push(rowH);
+      y += rowH + GAP;
+    }
+    return {
+      rows,
+      tops,
+      rowHs,
+      totalH: Math.max(1, y - GAP + PAD_BOT),
+      contentW: Math.max(1, maxW + PAD_X * 2),
+    };
+  }, [pageCount, pageSizes, mode, scale, baseW, baseH]);
+
+  const layoutRef = useRef(layout);
+  layoutRef.current = layout;
+  const [virtualRange, setVirtualRange] = useState<{ start: number; end: number } | null>(null);
+  const rangeRef = useRef<{ start: number; end: number } | null>(null);
+  const updateVirtual = useCallback(() => {
+    const el = scrollRef.current;
+    const L = layoutRef.current;
+    if (!el || !L.rows.length) {
+      rangeRef.current = null;
+      setVirtualRange(null);
+      return;
+    }
+    const viewH = Math.max(el.clientHeight, 1);
+    const preload = Math.max(viewH * 1.2, 700);
+    const top = el.scrollTop - preload;
+    const bottom = el.scrollTop + viewH + preload;
+    let lo = 0;
+    let hi = L.rows.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (L.tops[mid] + L.rowHs[mid] < top) lo = mid + 1;
+      else hi = mid;
+    }
+    const start = lo;
+    lo = 0;
+    hi = L.rows.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (L.tops[mid] <= bottom) lo = mid + 1;
+      else hi = mid;
+    }
+    const end = Math.max(lo, start + 1);
+    const cur = rangeRef.current;
+    if (!cur || cur.start !== start || cur.end !== end) {
+      rangeRef.current = { start, end };
+      setVirtualRange({ start, end });
+    }
+  }, []);
+
+  // 布局（页数/尺寸/缩放/模式）变化后重算可视窗口
+  useEffect(() => {
+    updateVirtual();
+  }, [updateVirtual, layout]);
+
   // 宽度自适应策略（3.2.1）：
   // - 打开文档时适配一次；
   // - 标题栏最大化/还原按键：始终自动适配宽度；
@@ -392,6 +511,7 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
     const onScroll = () => {
       cancelAnimationFrame(raf);
       raf = requestAnimationFrame(() => {
+        updateVirtual();
         let cur = 1;
         for (const [n, pageEl] of pageRefs.current) {
           const top = pageEl.getBoundingClientRect().top - el.getBoundingClientRect().top;
@@ -405,7 +525,7 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
       el.removeEventListener('scroll', onScroll);
       cancelAnimationFrame(raf);
     };
-  }, [doc, mode, pageCount, scale]);
+  }, [doc, mode, pageCount, scale, updateVirtual]);
 
   // ---------- 相邻页预渲染（SumatraPDF 式） ----------
   // 当前页变化/缩放后，提前把下一页（双页模式预取下一行两页）的 PDFium 位图渲染进缓存，
@@ -470,9 +590,13 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
       return false;
     };
     if (tryJump()) return;
-    // 目标页尚未就绪（未渲染或尺寸为 0）：先按估算高度滚动触发渲染，
+    // 目标页尚未挂载：用虚拟布局的精确行顶位置直接滚动（触发可视窗口挂载），
     // 再持续轮询直到页面尺寸就绪后精确对齐，保证跳转不会丢失
-    if (baseH > 0 && scale > 0) {
+    const L = layoutRef.current;
+    const rowIdx = L.rows.findIndex((r) => r.includes(n));
+    if (rowIdx >= 0) {
+      el.scrollTop = Math.max(0, L.tops[rowIdx]);
+    } else if (baseH > 0 && scale > 0) {
       el.scrollTop = Math.max(0, Math.round((n - 1) * (baseH * scale + 16)));
     }
     let tries = 0;
@@ -481,7 +605,7 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
       if (++tries < 240) requestAnimationFrame(align); // 最长约 4 秒，等待大 PDF 渲染
     };
     requestAnimationFrame(align);
-  }, [baseH, scale]);
+  }, [baseH, scale, layout]);
 
   // 同步当前页到全局（信息面板书签高亮）
   useEffect(() => {
@@ -785,10 +909,6 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
     }
   };
 
-  const pages: number[] = Array.from({ length: pageCount }, (_, i) => i + 1);
-  const pageRows: number[][] = [];
-  for (let i = 0; i < pages.length; i += 2) pageRows.push(pages.slice(i, i + 2));
-
   const renderPage = (n: number) => (
     <PdfPage
       key={`${pdf.id}-${n}`}
@@ -943,7 +1063,7 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
           <div
             ref={scrollRef}
             data-pan-scroll
-            className={`flex h-full overflow-auto bg-[var(--app-canvas)] ${
+            className={`h-full overflow-auto bg-[var(--app-canvas)] ${
               panning
                 ? 'cursor-grabbing select-none'
                 : canPan && !highlightMode && !screenshotMode
@@ -958,18 +1078,26 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
             onMouseDown={onPanMouseDown}
             onMouseUp={handleMouseUp}
           >
-            {/* m-auto：内容小于视口时居中；超出视口时自动贴左贴顶，保证四边都能滚动到 */}
+            {/* 虚拟滚动：容器总高度 = 全部行高之和，只挂载可视区 ± 预载行，
+                m-auto：内容小于视口时居中；超出时自动贴左贴顶，保证四边都能滚动到 */}
             <div
               ref={contentRef}
-              className="m-auto flex w-max max-w-full flex-col gap-2 px-4 py-3"
+              className="relative mx-auto"
+              style={{ width: layout.contentW, height: layout.totalH }}
             >
-              {mode === 'single'
-                ? pages.map((n) => <div key={n} className="mx-auto">{renderPage(n)}</div>)
-                : pageRows.map((row, i) => (
-                    <div key={i} className="mx-auto flex items-start justify-center gap-1.5">
+              {virtualRange &&
+                layout.rows.slice(virtualRange.start, virtualRange.end).map((row, idx) => {
+                  const absIdx = virtualRange.start + idx;
+                  return (
+                    <div
+                      key={absIdx}
+                      className="absolute flex items-start justify-center gap-1.5"
+                      style={{ top: layout.tops[absIdx], left: 0, width: '100%' }}
+                    >
                       {row.map(renderPage)}
                     </div>
-                  ))}
+                  );
+                })}
             </div>
           </div>
         ) : (

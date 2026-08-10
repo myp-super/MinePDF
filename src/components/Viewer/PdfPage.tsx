@@ -113,7 +113,6 @@ export function PdfPage({
 
   // Viewport: re-derive on scale change (cheap), then layout + schedule render
   useEffect(() => {
-    if (!visible) return;
     let cancelled = false;
     void (async () => {
       try {
@@ -141,7 +140,7 @@ export function PdfPage({
       cancelled = true;
       registerViewport(pageNumber, null);
     };
-  }, [doc, pageNumber, scale, visible, registerViewport, fallbackW, fallbackH]);
+  }, [doc, pageNumber, scale, registerViewport, fallbackW, fallbackH]);
 
   // Layout + high-res render scheduling
   useEffect(() => {
@@ -260,7 +259,7 @@ export function PdfPage({
       return;
     }
 
-    // 2) 高清直接渲染（PDFium 单页 ~10ms）：首次立即，缩放时 120ms 防抖，
+    // 2) 高清直接渲染（PDFium 单页 ~10ms）：首次立即，缩放时 180ms 防抖，
     //    过渡期由浏览器把旧位图拉伸到新尺寸（自然、不跳变）
     if (timerRef.current) clearTimeout(timerRef.current);
     timerRef.current = setTimeout(async () => {
@@ -283,7 +282,7 @@ export function PdfPage({
           await renderWithPdfjs(vp);
         }
       }
-    }, hasRenderedRef.current ? 60 : 0);
+    }, hasRenderedRef.current ? 180 : 0);
   }
 
   /** PDF.js 回退路径：原有渲染逻辑 */

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, shell } from 'electron';
+import { app, BrowserWindow, screen, shell } from 'electron';
 import fs from 'fs';
 import path from 'path';
 import { pathToFileURL } from 'url';
@@ -253,28 +253,27 @@ async function createMainWindow(): Promise<BrowserWindow> {
 
   // 无边框窗口（frame:false）在 Windows 上最大化/还原/拖动缩放后，
   // 偶发“内容整体上移、顶部标题栏被吞”的错位问题。
-  // 这里在状态切换与缩放结束后强制重排并向渲染进程发重排信号兜底修复。
+  // 根因：还原瞬间用过渡中的 bounds 调用 setBounds 会把窗口钉到屏幕外；
+  // 这里不再触碰窗口位置，只通知渲染进程重排（CSS 布局由 resize 事件自动跟随）。
   let layoutTimer: NodeJS.Timeout | null = null;
   const reassertLayout = (delay = 120) => {
     if (layoutTimer) clearTimeout(layoutTimer);
     layoutTimer = setTimeout(() => {
       layoutTimer = null;
-      if (win.isDestroyed() || win.isFullScreen() || win.isMaximized()) {
-        win.webContents.send('window:relayout');
-        return;
-      }
-      try {
-        // 用当前 bounds 重设一次，强制 Windows 重同步无边框窗口客户区
-        const b = win.getBounds();
-        win.setBounds(b);
-      } catch {
-        /* ignore */
-      }
+      if (win.isDestroyed()) return;
       win.webContents.send('window:relayout');
     }, delay);
   };
   win.on('maximize', () => {
     win.webContents.send('window:maximized-changed', true);
+    // Windows 无边框窗口最大化时会带一圈不可见缩放边框，内容可能被顶出屏幕；
+    // 显式钳制到显示器工作区，保证标题栏始终完整可见。
+    try {
+      const display = screen.getDisplayMatching(win.getBounds());
+      win.setBounds(display.workArea);
+    } catch {
+      /* ignore */
+    }
     reassertLayout();
   });
   win.on('unmaximize', () => {

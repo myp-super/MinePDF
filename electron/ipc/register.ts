@@ -26,6 +26,7 @@ import {
   isPdfiumAvailable,
   pdfiumClose,
   pdfiumOpen,
+  pdfiumPageSizes,
   pdfiumRender,
   pdfiumRenderBatch,
   pdfiumShutdown,
@@ -431,6 +432,7 @@ export function registerIpc(): void {
   // ---------- PDFium 原生渲染（2.0.0 混合架构） ----------
   handle<boolean>('pdfium:available', () => isPdfiumAvailable());
   handle<PdfiumOpenResult | null>('pdfium:open', (id: number) => pdfiumOpen(id));
+  handle<{ w: number; h: number }[]>('pdfium:page-sizes', (id: number) => pdfiumPageSizes(id));
   handle<PdfiumRenderResult>('pdfium:render', (id: number, page: number, scale: number) =>
     pdfiumRender(id, page, scale),
   );

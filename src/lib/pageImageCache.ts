@@ -86,9 +86,7 @@ export function clearPdfCache(pdfId: number): void {
 /** 把 PDFium RGBA 结果转成可绘制的 ImageBitmap */
 export async function toImageBitmap(res: PdfiumRenderResult): Promise<ImageBitmap> {
   const img = new ImageData(new Uint8ClampedArray(res.data), res.w, res.h);
-  const oc = new OffscreenCanvas(res.w, res.h);
-  const octx = oc.getContext('2d');
-  if (!octx) throw new Error('offscreen canvas unavailable');
-  octx.putImageData(img, 0, 0);
-  return oc.transferToImageBitmap();
+  // createImageBitmap 走 Chromium 原生快路径（内部异步解码），
+  // 比 OffscreenCanvas.putImageData + transferToImageBitmap 更省主线程时间。
+  return createImageBitmap(img);
 }
