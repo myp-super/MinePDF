@@ -130,6 +130,14 @@ export default function App() {
     return window.pkm.onLibraryChanged(() => void refresh());
   }, [refresh]);
 
+  // 无边框窗口缩放/最大化后由主进程通知重排，强制刷新 CSS 布局避免标题栏错位
+  useEffect(() => {
+    const off = window.pkm.onWindowRelayout(() => {
+      window.dispatchEvent(new Event('resize'));
+    });
+    return off;
+  }, []);
+
   // 系统用 MinePDF 打开 PDF（双击 / 打开方式）→ 复制进临时区并预览
   useEffect(() => {
     const off = window.pkm.onExternalPdf((filePath) => {

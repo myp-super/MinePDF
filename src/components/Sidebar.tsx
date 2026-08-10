@@ -357,7 +357,8 @@ export function Sidebar() {
   const removeInboxPdf = async (id: number) => {
     try {
       await window.pkm.inboxRemove(id);
-      setInboxPdfs(inboxPdfs.filter((p) => p.id !== id));
+      // refresh 会同步临时区并清理指向已删除文件的标签页
+      await refresh();
       toast('success', t('inbox.removed'));
     } catch (err) {
       toast('error', terr(err instanceof Error ? err.message : String(err)));
@@ -373,7 +374,7 @@ export function Sidebar() {
       action: async () => {
         try {
           await window.pkm.inboxClear();
-          setInboxPdfs([]);
+          await refresh();
           toast('success', t('inbox.cleared'));
         } catch (err) {
           toast('error', terr(err instanceof Error ? err.message : String(err)));

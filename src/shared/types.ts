@@ -267,6 +267,8 @@ export interface PkmApi {
   isMaximized(): Promise<boolean>;
   onFullScreenChange(cb: (v: boolean) => void): () => void;
   onMaximizedChange(cb: (v: boolean) => void): () => void;
+  /** 主进程通知窗口布局需重排（无边框窗口缩放/最大化后） */
+  onWindowRelayout(cb: () => void): () => void;
   onLibraryChanged(cb: () => void): () => void;
   onUpdateAvailable(cb: (r: UpdateResult) => void): () => void;
 

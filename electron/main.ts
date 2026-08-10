@@ -251,10 +251,42 @@ async function createMainWindow(): Promise<BrowserWindow> {
     if (smokeTest) console.log(`[renderer:${level}] ${message}`);
   });
 
-  win.on('maximize', () => win.webContents.send('window:maximized-changed', true));
-  win.on('unmaximize', () => win.webContents.send('window:maximized-changed', false));
+  // 无边框窗口（frame:false）在 Windows 上最大化/还原/拖动缩放后，
+  // 偶发“内容整体上移、顶部标题栏被吞”的错位问题。
+  // 这里在状态切换与缩放结束后强制重排并向渲染进程发重排信号兜底修复。
+  let layoutTimer: NodeJS.Timeout | null = null;
+  const reassertLayout = (delay = 120) => {
+    if (layoutTimer) clearTimeout(layoutTimer);
+    layoutTimer = setTimeout(() => {
+      layoutTimer = null;
+      if (win.isDestroyed() || win.isFullScreen() || win.isMaximized()) {
+        win.webContents.send('window:relayout');
+        return;
+      }
+      try {
+        // 用当前 bounds 重设一次，强制 Windows 重同步无边框窗口客户区
+        const b = win.getBounds();
+        win.setBounds(b);
+      } catch {
+        /* ignore */
+      }
+      win.webContents.send('window:relayout');
+    }, delay);
+  };
+  win.on('maximize', () => {
+    win.webContents.send('window:maximized-changed', true);
+    reassertLayout();
+  });
+  win.on('unmaximize', () => {
+    win.webContents.send('window:maximized-changed', false);
+    reassertLayout();
+  });
   win.on('enter-full-screen', () => win.webContents.send('window:fullscreen-changed', true));
-  win.on('leave-full-screen', () => win.webContents.send('window:fullscreen-changed', false));
+  win.on('leave-full-screen', () => {
+    win.webContents.send('window:fullscreen-changed', false);
+    reassertLayout();
+  });
+  win.on('resize', () => reassertLayout(300));
 
   // 先启动加载、后 await：ready-to-show 可能在 loadURL 期间就已触发，
   // 因此必须在下方监听器注册完成后才等待加载结束，避免事件被错过。
@@ -1661,6 +1693,27 @@ async function createMainWindow(): Promise<BrowserWindow> {
                   })()
                 `);
                 console.log('[capture] deleteTabDiag', JSON.stringify(deleteTabDiag));
+                // 临时区删除：inboxRemove 后 refresh 应清理指向该文件的标签页
+                const inboxTabDiag = await win.webContents.executeJavaScript(`
+                  (async () => {
+                    const testPath = ${JSON.stringify(testPdfPath)};
+                    await window.pkm.importPdfs([testPath], null);
+                    const snap = await window.pkm.getSnapshot();
+                    const a = snap.pdfs.find((p) => p.filename === 'smoke-test.pdf');
+                    if (!a) return { pdf: false };
+                    const inboxItem = await window.pkm.inboxAdd(a.filepath);
+                    if (typeof window.__pkmAct === 'function') window.__pkmAct('clearScreens');
+                    window.__pkmOpenPdf(inboxItem.id);
+                    await new Promise((r) => setTimeout(r, 300));
+                    await window.pkm.inboxRemove(inboxItem.id);
+                    if (typeof window.__pkmRefresh === 'function') await window.__pkmRefresh();
+                    await new Promise((r) => setTimeout(r, 300));
+                    const st = window.__pkmStore();
+                    const gone = !st.screens.some((sc) => sc.tabs.some((t) => t.pdfId === inboxItem.id));
+                    return { pdf: true, inbox: !!inboxItem, gone, screensLeft: st.screens.length };
+                  })()
+                `);
+                console.log('[capture] inboxTabDiag', JSON.stringify(inboxTabDiag));
                 // 外部 PDF 桥：主进程发送 app:external-pdf，渲染进程应复制进临时区
                 win.webContents.send('app:external-pdf', testPdfPath);
                 await new Promise((r) => setTimeout(r, 2500));
