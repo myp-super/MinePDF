@@ -996,6 +996,19 @@ async function createMainWindow(): Promise<BrowserWindow> {
                 fs.mkdirSync(outDir, { recursive: true });
                 fs.writeFileSync(path.join(outDir, 'app-screenshot.png'), image.toPNG());
                 console.log('[capture] main window saved to docs/app-screenshot.png');
+                // README 配图 1：主界面（切换到真实论文 PDF 再拍，三栏布局完整可见）
+                const picDir = path.join(process.cwd(), 'pic');
+                fs.mkdirSync(picDir, { recursive: true });
+                await win.webContents.executeJavaScript(`(async () => {
+                  const snap = await window.pkm.getSnapshot();
+                  const pid = snap.pdfs.find((p) => p.filename === 'PID-Tuning-Methods.pdf');
+                  if (pid) window.__pkmOpenPdf(pid.id);
+                  return true;
+                })()`);
+                await new Promise((r) => setTimeout(r, 1600));
+                const shotMain = await win.webContents.capturePage();
+                fs.writeFileSync(path.join(picDir, 'shot-main.png'), shotMain.toPNG());
+                console.log('[capture] saved pic/shot-main.png');
                 // 文档切换验证：A -> B -> A，每步都应有实际渲染内容
                 try {
                   fs.mkdirSync(path.dirname(autoScanPdfPath), { recursive: true });
@@ -1318,6 +1331,11 @@ async function createMainWindow(): Promise<BrowserWindow> {
                   })()
                 `);
                 console.log('[capture] paneDiag', JSON.stringify(paneDiag));
+                // README 配图 2：分屏阅读（两个独立阅读屏 + 信息面板）
+                await new Promise((r) => setTimeout(r, 400));
+                const shotSplit = await win.webContents.capturePage();
+                fs.writeFileSync(path.join(picDir, 'shot-split.png'), shotSplit.toPNG());
+                console.log('[capture] saved pic/shot-split.png');
                 // 单屏放大：验证 PDF 放大不会挤压信息面板，且信息面板上 Ctrl+滚轮不触发缩放
                 const zoomDiag = await win.webContents.executeJavaScript(`
                   (async () => {
@@ -1560,6 +1578,11 @@ async function createMainWindow(): Promise<BrowserWindow> {
                   })()
                 `);
                 console.log('[capture] shotDiag', JSON.stringify(shotDiag));
+                // README 配图 3：图文笔记（笔记面板 + 截图插入 + LaTeX）
+                await new Promise((r) => setTimeout(r, 400));
+                const shotNotes = await win.webContents.capturePage();
+                fs.writeFileSync(path.join(picDir, 'shot-notes.png'), shotNotes.toPNG());
+                console.log('[capture] saved pic/shot-notes.png');
                 // 知识库自动折叠开关：开启后打开 PDF 自动收起，悬停左边缘临时展开，移出自动收起
                 const autoHideDiag = await win.webContents.executeJavaScript(`
                   (async () => {
