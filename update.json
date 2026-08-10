@@ -1,8 +1,8 @@
 {
-  "url": "https://github.com/myp-super/MinePDF/releases/download/v3.3.9/MinePDF.Setup.3.3.9.exe",
-  "publishDate": "2026-08-10",
-  "version": "3.3.9",
+  "version": "3.4.0",
+  "url": "https://github.com/myp-super/MinePDF/releases/download/v3.4.0/MinePDF.Setup.3.4.0.exe",
   "notes": [
-    "v3.3.9 - PDF界面默认系统箭头，按住右键小手拖拽平移（设置可切换回左键拖拽），左键正常点选链接/文字；修复虚拟滚动下会话恢复页码测试"
-  ]
+    "v3.4.0 - PDFium原生链接层：链接随首帧位图即时出现（不等pdf.js解析），手型光标+悬停高亮，页内跳转/外链/邮箱均可点击；修复占位viewport缺少坐标转换方法"
+  ],
+  "publishDate": "2026-08-10"
 }
