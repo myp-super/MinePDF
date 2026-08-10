@@ -1,8 +1,8 @@
 {
-  "url": "https://github.com/myp-super/MinePDF/releases/download/v3.3.8/MinePDF.Setup.3.3.8.exe",
+  "url": "https://github.com/myp-super/MinePDF/releases/download/v3.3.9/MinePDF.Setup.3.3.9.exe",
   "publishDate": "2026-08-10",
+  "version": "3.3.9",
   "notes": [
-    "v3.3.8 - 渲染提速：Sumatra式虚拟滚动（大文件只挂载可视区页面，瞬时打开/滚动），Ctrl滚轮缩放180ms防抖+旧位图拉伸过渡不再卡顿，页面尺寸一次性IPC精确布局，修复无边框窗口最大化后标题栏被吞错位"
-  ],
-  "version": "3.3.8"
+    "v3.3.9 - PDF界面默认系统箭头，按住右键小手拖拽平移（设置可切换回左键拖拽），左键正常点选链接/文字；修复虚拟滚动下会话恢复页码测试"
+  ]
 }
