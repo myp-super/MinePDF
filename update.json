@@ -1,8 +1,8 @@
 {
   "notes": [
-    "v3.3.2 - 修复外部PDF桥接(send/handle不匹配)、目录树弹窗展开/选中被刷新重置，新增排序模式开关"
+    "v3.3.4 - 排序模式支持向下移动（落点上下半区排前/排后），拖拽自动滚动"
   ],
-  "version": "3.3.2",
-  "url": "https://github.com/myp-super/MinePDF/releases/download/v3.3.2/MinePDF.Setup.3.3.2.exe",
-  "publishDate": "2026-08-10"
+  "publishDate": "2026-08-10",
+  "url": "https://github.com/myp-super/MinePDF/releases/download/v3.3.4/MinePDF.Setup.3.3.4.exe",
+  "version": "3.3.4"
 }
