@@ -1,8 +1,8 @@
 {
-  "notes": [
-    "v3.3.4 - 排序模式支持向下移动（落点上下半区排前/排后），拖拽自动滚动"
-  ],
   "publishDate": "2026-08-10",
-  "url": "https://github.com/myp-super/MinePDF/releases/download/v3.3.4/MinePDF.Setup.3.3.4.exe",
-  "version": "3.3.4"
+  "version": "3.3.5",
+  "notes": [
+    "v3.3.5 - 修复双击PDF首次进入临时区不渲染（启动就绪后再派发外部文件+兜底重试），支持拖拽PDF到临时区"
+  ],
+  "url": "https://github.com/myp-super/MinePDF/releases/download/v3.3.5/MinePDF.Setup.3.3.5.exe"
 }
