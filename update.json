@@ -1,8 +1,8 @@
 {
-  "notes": [
-    "v3.2.2 - 优化宽度自适应（仅最大化与缩小被遮挡时适配），完整恢复多标签会话与阅读页码"
-  ],
-  "version": "3.2.2",
+  "url": "https://github.com/myp-super/MinePDF/releases/download/v3.3.0/MinePDF.Setup.3.3.0.exe",
   "publishDate": "2026-08-10",
-  "url": "https://github.com/myp-super/MinePDF/releases/download/v3.2.2/MinePDF.Setup.3.2.2.exe"
+  "notes": [
+    "v3.3.0 - 多知识库支持与严格双向同步，修复默认 PDF 关联设置"
+  ],
+  "version": "3.3.0"
 }
