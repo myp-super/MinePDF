@@ -1085,13 +1085,6 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
                   ? 'cursor-grab'
                   : ''
             }`}
-            title={
-              canPan && !highlightMode && !screenshotMode && !panning
-                ? rightDragPan
-                  ? t('viewer.dragToPanRight')
-                  : t('viewer.dragToPan')
-                : undefined
-            }
             onMouseDown={onPanMouseDown}
             onMouseUp={handleMouseUp}
           >

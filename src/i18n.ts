@@ -338,8 +338,6 @@ const zh: Dict = {
   'app.relocated': '文件已重新定位',
 
   'viewer.loading': '正在加载 PDF…',
-  'viewer.dragToPan': '按住拖动平移页面',
-  'viewer.dragToPanRight': '按住鼠标右键拖动平移页面',
   'viewer.renderFailed': '页面渲染失败，请切换其他文档后重试',
 };
 
@@ -677,8 +675,6 @@ const en: Dict = {
   'app.relocated': 'File relocated',
 
   'viewer.loading': 'Loading PDF…',
-  'viewer.dragToPan': 'Drag to pan the page',
-  'viewer.dragToPanRight': 'Hold right mouse button and drag to pan',
   'viewer.renderFailed': 'Failed to render this page, try switching documents',
 };
 
