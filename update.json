@@ -1,8 +1,8 @@
 {
   "notes": [
-    "v3.2.1 - 优化拖拽导入（文件夹高亮放大、去掉全屏虚化），修复双击 PDF 无法临时打开"
+    "v3.2.2 - 优化宽度自适应（仅最大化与缩小被遮挡时适配），完整恢复多标签会话与阅读页码"
   ],
-  "url": "https://github.com/myp-super/MinePDF/releases/download/v3.2.1/MinePDF.Setup.3.2.1.exe",
-  "version": "3.2.1",
-  "publishDate": "2026-08-10"
+  "version": "3.2.2",
+  "publishDate": "2026-08-10",
+  "url": "https://github.com/myp-super/MinePDF/releases/download/v3.2.2/MinePDF.Setup.3.2.2.exe"
 }
