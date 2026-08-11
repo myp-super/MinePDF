@@ -1,8 +1,8 @@
 {
-  "version": "3.5.7",
   "notes": [
-    "v3.5.7 - 修复无边框窗口最大化后整体上移/标题栏被挤压：移除最大化时setBounds，还原与显示器变化时位置兜底"
+    "v3.5.8 - 修复选词/高亮起点多选前一个字符（去掉横向容差+起点严格命中）"
   ],
-  "url": "https://github.com/myp-super/MinePDF/releases/download/v3.5.7/MinePDF.Setup.3.5.7.exe",
+  "version": "3.5.8",
+  "url": "https://github.com/myp-super/MinePDF/releases/download/v3.5.8/MinePDF.Setup.3.5.8.exe",
   "publishDate": "2026-08-11"
 }
