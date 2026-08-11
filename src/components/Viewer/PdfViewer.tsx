@@ -23,7 +23,6 @@ import { pdfiumRenderQueued } from '../../lib/pdfiumBatcher';
 import {
   getPageTextIndex,
   mergeSelectionItems,
-  nearestTextIndex,
   type PageTextIndex,
   type TextItemQuad,
 } from '../../lib/textIndex';
@@ -97,8 +96,8 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
   /** 拖拽高亮实时预览：页码 -> 合并后的连续色块（PDF 坐标） */
   const [liveSel, setLiveSel] = useState<Record<number, Quad[]>>({});
   const hlDragRef = useRef(false);
-  const hlStartRef = useRef<{ page: number; idx: number } | null>(null);
-  const hlCurRef = useRef<{ page: number; idx: number } | null>(null);
+  /** 高亮拖拽起点/当前点（客户端坐标）：选词 = 扫过的矩形区域 */
+  const hlStartPtRef = useRef<{ x: number; y: number } | null>(null);
   const hlLastMoveRef = useRef<{ x: number; y: number } | null>(null);
   const hlRafRef = useRef(0);
   /** 已就绪的页文本索引（读序项 + 行带），供拖拽期间同步命中测试 */
@@ -179,7 +178,6 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
     if (e.button !== btn) return;
     const el = scrollRef.current;
     if (!el) return;
-    e.preventDefault();
     panStartRef.current = { x: e.clientX, y: e.clientY, sl: el.scrollLeft, st: el.scrollTop };
     setPanning(true);
     let raf = 0;
@@ -791,79 +789,78 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
     [searchMatches, searchCurrent, scrollToPage],
   );
 
-  // ---------- text selection -> highlight（Edge 式：文本项连续选词，按行合并） ----------
-  const pageAtPoint = (x: number, y: number): number | null => {
-    for (const [n, el] of pageRefs.current) {
-      const r = el.getBoundingClientRect();
-      if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return n;
-    }
-    return null;
-  };
-
-  const textIndexAt = (page: number, x: number, y: number): number => {
+  // ---------- text selection -> highlight（涂过式：拖拽扫过的矩形区域，按行合并） ----------
+  /** 取出与 PDF 矩形相交的文本项（含空格/标点项，整行整块不再断） */
+  const selectItemsInPdfRect = (
+    page: number,
+    r: { x1: number; y1: number; x2: number; y2: number },
+  ): TextItemQuad[] => {
     const index = textIndexRef.current.get(page);
-    if (!index || !index.items.length) return -1;
-    const el = pageRefs.current.get(page);
-    const vp = viewportsRef.current.get(page);
-    if (!el || !vp) return -1;
-    const r = el.getBoundingClientRect();
-    const [px, py] = vp.convertToPdfPoint(x - r.left, y - r.top);
-    return nearestTextIndex(index.items, index.lines, px, py);
+    if (!index) return [];
+    const minX = Math.min(r.x1, r.x2);
+    const maxX = Math.max(r.x1, r.x2);
+    const minY = Math.min(r.y1, r.y2);
+    const maxY = Math.max(r.y1, r.y2);
+    const TOL = 0.5;
+    const hit = index.items.filter(
+      (it) =>
+        it.x < maxX + TOL &&
+        it.x + it.w > minX - TOL &&
+        it.y < maxY + TOL &&
+        it.y + it.h > minY - TOL,
+    );
+    return hit;
   };
 
-  /** 计算起点到当前点的逐页选中文本项（支持跨页与反向拖动） */
-  const computeSelection = (
-    start: { page: number; idx: number },
-    endPage: number,
-    endIdx: number,
+  /** 按“扫过矩形”逐页取选中文本项（支持跨页） */
+  const computeRectSelection = (
+    sx: number,
+    sy: number,
+    cx: number,
+    cy: number,
   ): { page: number; items: TextItemQuad[]; lines: PageTextIndex['lines'] }[] => {
-    const p0 = start.page;
-    const p1 = endPage;
-    const lo = Math.min(p0, p1);
-    const hi = Math.max(p0, p1);
+    // 拖拽矩形加 ±6px 容差：纯水平拖拽也有竖向覆盖，不会因 0 高矩形跳过
+    const x1 = Math.min(sx, cx) - 6;
+    const x2 = Math.max(sx, cx) + 6;
+    const y1 = Math.min(sy, cy) - 6;
+    const y2 = Math.max(sy, cy) + 6;
     const out: { page: number; items: TextItemQuad[]; lines: PageTextIndex['lines'] }[] = [];
-    for (let p = lo; p <= hi; p++) {
-      const index = textIndexRef.current.get(p);
-      const items = index?.items;
-      if (!index || !items || !items.length) continue;
-      let a: number;
-      let b: number;
-      if (p0 <= p1) {
-        a = p === p0 ? start.idx : 0;
-        b = p === p1 ? endIdx : items.length - 1;
-      } else {
-        a = p === p1 ? endIdx : 0;
-        b = p === p0 ? start.idx : items.length - 1;
-      }
-      a = Math.max(0, Math.min(a, items.length - 1));
-      b = Math.max(0, Math.min(b, items.length - 1));
-      const sel = items.slice(Math.min(a, b), Math.max(a, b) + 1);
-      if (sel.length) out.push({ page: p, items: sel, lines: index.lines });
+    for (const [page, el] of pageRefs.current) {
+      const r = el.getBoundingClientRect();
+      const ix = Math.max(x1, r.left);
+      const iy = Math.max(y1, r.top);
+      const ix2 = Math.min(x2, r.right);
+      const iy2 = Math.min(y2, r.bottom);
+      if (ix2 <= ix || iy2 <= iy) continue;
+      const vp = viewportsRef.current.get(page);
+      const index = textIndexRef.current.get(page);
+      if (!vp || !index) continue;
+      const [px1, py1] = vp.convertToPdfPoint(ix - r.left, iy - r.top);
+      const [px2, py2] = vp.convertToPdfPoint(ix2 - r.left, iy2 - r.top);
+      const items = selectItemsInPdfRect(page, { x1: px1, y1: py1, x2: px2, y2: py2 });
+      if (items.length) out.push({ page, items, lines: index.lines });
     }
     return out;
   };
 
   const updateHlSelection = () => {
-    const start = hlStartRef.current;
+    const start = hlStartPtRef.current;
     const last = hlLastMoveRef.current;
     if (!start || !last) return;
-    const curPage = pageAtPoint(last.x, last.y);
-    if (curPage == null) return;
-    const curIdx = textIndexAt(curPage, last.x, last.y);
-    if (curIdx < 0) return;
-    hlCurRef.current = { page: curPage, idx: curIdx };
-    const sel = computeSelection(start, curPage, curIdx);
+    const sel = computeRectSelection(start.x, start.y, last.x, last.y);
     const next: Record<number, Quad[]> = {};
     for (const { page, items, lines } of sel) next[page] = mergeSelectionItems(items, lines);
     setLiveSel(next);
   };
 
   const commitHlSelection = async () => {
-    const start = hlStartRef.current;
-    const cur = hlCurRef.current;
+    const start = hlStartPtRef.current;
+    const last = hlLastMoveRef.current;
     setLiveSel({});
-    if (!start || !cur) return;
-    const pages = computeSelection(start, cur.page, cur.idx);
+    if (!start || !last) return;
+    // 单击（几乎没移动）不生成高亮
+    if (Math.abs(last.x - start.x) + Math.abs(last.y - start.y) < 8) return;
+    const pages = computeRectSelection(start.x, start.y, last.x, last.y);
     if (!pages.length) return;
     try {
       for (const { page, items, lines } of pages) {
@@ -894,36 +891,16 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
   const hlMouseDown = (e: React.MouseEvent) => {
     if (!highlightMode || !doc) return;
     if (e.button !== 0) return;
-    const page = pageAtPoint(e.clientX, e.clientY);
-    if (page == null) return;
     // 同步阻止浏览器原生选区，避免与预览色块叠加
     e.preventDefault();
-    const cached = textIndexRef.current.get(page);
-    if (cached) {
-      startHlDrag(e, page, cached);
-      return;
-    }
-    void getPageTextIndex(doc, pdf.id, page)
-      .then((index) => {
-        textIndexRef.current.set(page, index);
-        if (!hlStartRef.current) startHlDrag(e, page, index);
-      })
-      .catch(() => undefined);
-  };
-
-  const startHlDrag = (e: React.MouseEvent, page: number, index: PageTextIndex) => {
-    const [px, py] = pdfPointAt(e.clientX, e.clientY, page);
-    const idx = nearestTextIndex(index.items, index.lines, px, py);
-    if (idx < 0) return;
     try {
       window.getSelection()?.removeAllRanges();
     } catch {
       /* ignore */
     }
-    hlStartRef.current = { page, idx };
-    hlCurRef.current = { page, idx };
-    hlDragRef.current = true;
+    hlStartPtRef.current = { x: e.clientX, y: e.clientY };
     hlLastMoveRef.current = null;
+    hlDragRef.current = true;
     const onMove = (ev: MouseEvent) => {
       hlLastMoveRef.current = { x: ev.clientX, y: ev.clientY };
       if (hlRafRef.current) return;
@@ -932,7 +909,7 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
         updateHlSelection();
       });
     };
-    const onUp = () => {
+    const onUp = (ev: MouseEvent) => {
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
       if (hlRafRef.current) {
@@ -940,19 +917,12 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
         hlRafRef.current = 0;
       }
       hlDragRef.current = false;
+      // 没有 mousemove（单击）时用 mouseup 位置提交，交给移动阈值拦截
+      if (!hlLastMoveRef.current) hlLastMoveRef.current = { x: ev.clientX, y: ev.clientY };
       void commitHlSelection();
     };
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
-  };
-
-  const pdfPointAt = (x: number, y: number, page: number): [number, number] => {
-    const el = pageRefs.current.get(page);
-    const vp = viewportsRef.current.get(page);
-    if (!el || !vp) return [0, 0];
-    const r = el.getBoundingClientRect();
-    const [cx, cy] = vp.convertToPdfPoint(x - r.left, y - r.top);
-    return [cx, cy];
   };
 
   const handleMouseDown = (e: React.MouseEvent) => {
@@ -977,6 +947,26 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
       toast('error', terr(err instanceof Error ? err.message : String(err)));
     }
   };
+
+  // Delete/Backspace 删除选中的高亮
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (selectedAnnotationId == null) return;
+      const target = e.target as HTMLElement;
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
+        return;
+      }
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        const ann = annotations.find((a) => a.id === selectedAnnotationId);
+        if (ann) {
+          e.preventDefault();
+          void deleteAnnotation(ann);
+        }
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [selectedAnnotationId, annotations, deleteAnnotation]);
 
   // ---------- data grouping ----------
   const annotationsByPage = useMemo(() => {
@@ -1224,6 +1214,11 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
                   : ''
             }`}
             onMouseDown={handleMouseDown}
+            onClick={(e) => {
+              // 点击空白处取消高亮选中（点在高亮色块上时保持选中）
+              const t = e.target as HTMLElement;
+              if (!t.closest('.annotation-hl')) setSelectedAnnotationId(null);
+            }}
           >
             {/* 虚拟滚动：容器总高度 = 全部行高之和，只挂载可视区 ± 预载行，
                 m-auto：内容小于视口时居中；超出时自动贴左贴顶，保证四边都能滚动到 */}

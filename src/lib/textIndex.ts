@@ -58,7 +58,9 @@ export async function getPageTextQuads(
     const h = typeof it.height === 'number' && it.height > 0 ? it.height : 1;
     const tx = it.transform[4];
     const ty = it.transform[5];
-    items.push({ x: tx, y: ty - h, w, h, baseline: ty, str: it.str });
+    // 字形包围盒：基线下方约 0.2h（下行部），上方约 0.8h（主体+上行部）。
+    // 之前用 baseline-h 把整段文字放到了基线下方，导致选中/色块整体偏移。
+    items.push({ x: tx, y: ty - h * 0.2, w, h, baseline: ty, str: it.str });
   }
   items.sort((a, b) => b.baseline - a.baseline || a.x - b.x);
   textCache.set(key, items);
@@ -198,7 +200,8 @@ export function mergeSelectionItems(selected: TextItemQuad[], _lines: LineBand[]
       i++;
     }
     if (!full) continue;
-    out.push({ x: full.x, y: full.y, w: full.w, h: full.h * 1.2 });
+    // 轻微下扩，覆盖标点/下行字母边缘
+    out.push({ x: full.x, y: full.y, w: full.w, h: full.h * 1.15 });
   }
   return out;
 }

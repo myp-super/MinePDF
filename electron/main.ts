@@ -1840,6 +1840,62 @@ async function createMainWindow(): Promise<BrowserWindow> {
                   `);
                   console.log('[capture] cjkHlDiag', JSON.stringify(cjkHlDiag));
                 }
+                // 交互修复验证：单击不生成高亮；选中高亮后 Delete 可删除
+                if (process.env.PKM_TEST_PDF) {
+                  const hlFixDiag = await win.webContents.executeJavaScript(`
+                    (async () => {
+                      const p = ${JSON.stringify(process.env.PKM_TEST_PDF)};
+                      if (window.__pkmAct) window.__pkmAct('clearScreens');
+                      await new Promise((r) => setTimeout(r, 200));
+                      await window.pkm.importPdfs([p], null);
+                      const snap = await window.pkm.getSnapshot();
+                      const pdf = snap.pdfs.find((x) => x.filepath.includes('Submission') || x.filepath.includes('感受野') || x.filepath.includes('英语'));
+                      if (!pdf) return { pdf: false };
+                      window.__pkmOpenPdf(pdf.id);
+                      await new Promise((r) => setTimeout(r, 2500));
+                      const hlBtn = [...document.querySelectorAll('button')].find((b) => (b.getAttribute('title') || '').includes('高亮模式'));
+                      if (!hlBtn) return { hlBtn: false };
+                      hlBtn.click();
+                      await new Promise((r) => setTimeout(r, 200));
+                      const sc = document.querySelector('[data-pan-scroll]');
+                      const span = [...document.querySelectorAll('.textLayer span')].find((s) => (s.textContent || '').trim());
+                      const sr = span.getBoundingClientRect();
+                      const before = await window.pkm.listAnnotations(pdf.id);
+                      // 1) 单击（无移动）不应生成高亮
+                      sc.dispatchEvent(new MouseEvent('mousedown', { button: 0, buttons: 1, clientX: sr.left + 4, clientY: sr.top + sr.height / 2, bubbles: true, cancelable: true }));
+                      await new Promise((r) => setTimeout(r, 100));
+                      window.dispatchEvent(new MouseEvent('mouseup', { button: 0, buttons: 0, clientX: sr.left + 4, clientY: sr.top + sr.height / 2, bubbles: true }));
+                      await new Promise((r) => setTimeout(r, 700));
+                      const afterClick = await window.pkm.listAnnotations(pdf.id);
+                      const clickAdded = afterClick.filter((x) => !before.some((y) => y.id === x.id)).length;
+                      // 2) 拖拽一行生成高亮
+                      sc.dispatchEvent(new MouseEvent('mousedown', { button: 0, buttons: 1, clientX: sr.left + 2, clientY: sr.top + sr.height / 2, bubbles: true, cancelable: true }));
+                      await new Promise((r) => setTimeout(r, 100));
+                      window.dispatchEvent(new MouseEvent('mousemove', { clientX: sr.left + 180, clientY: sr.top + sr.height / 2, bubbles: true }));
+                      await new Promise((r) => setTimeout(r, 200));
+                      window.dispatchEvent(new MouseEvent('mouseup', { button: 0, buttons: 0, clientX: sr.left + 180, clientY: sr.top + sr.height / 2, bubbles: true }));
+                      await new Promise((r) => setTimeout(r, 900));
+                      const afterDrag = await window.pkm.listAnnotations(pdf.id);
+                      const dragAdded = afterDrag.filter((x) => !afterClick.some((y) => y.id === x.id));
+                      // 3) 点击色块选中，Delete 删除
+                      let deleted = false;
+                      if (dragAdded.length === 1) {
+                        const hl = document.querySelector('.annotation-hl');
+                        if (hl) {
+                          hl.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+                          await new Promise((r) => setTimeout(r, 200));
+                          const selBefore = !!document.querySelector('.annotation-hl.selected');
+                          window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', bubbles: true }));
+                          await new Promise((r) => setTimeout(r, 700));
+                          const afterDel = await window.pkm.listAnnotations(pdf.id);
+                          deleted = selBefore && !afterDel.some((x) => x.id === dragAdded[0].id);
+                        }
+                      }
+                      return { pdf: true, clickAdded, dragAdded: dragAdded.length, deleted };
+                    })()
+                  `);
+                  console.log('[capture] hlFixDiag', JSON.stringify(hlFixDiag));
+                }
                 // 删除 PDF 后，已打开的标签页应被自动清理（含分屏）
                 const deleteTabDiag = await win.webContents.executeJavaScript(`
                   (async () => {
