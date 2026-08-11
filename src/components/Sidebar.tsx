@@ -641,7 +641,7 @@ export function Sidebar() {
       {/* 完整面板层：折叠时淡出并被外层裁切 */}
       <div
         data-sidebar-panel
-        className={`h-full transition-opacity duration-200 ${
+        className={`flex h-full flex-col transition-opacity duration-200 ${
           sidebarCollapsed ? 'pointer-events-none opacity-0' : 'opacity-100'
         }`}
         style={{ width: sidebarWidth }}
