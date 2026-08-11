@@ -155,6 +155,15 @@ export interface PdfiumLink {
   destPage?: number;
 }
 
+/** PDFium 引擎提取的单个字符（y-up PDF 坐标，字形精确包围盒） */
+export interface PdfiumChar {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  str: string;
+}
+
 export interface SearchResult {
   pdfs: PdfRecord[];
   notes: Array<{ pdf: PdfRecord; snippet: string }>;
@@ -231,6 +240,8 @@ export interface PkmApi {
   pdfiumPageSizes(pdfId: number): Promise<{ w: number; h: number }[]>;
   /** 原生提取指定页的链接矩形（首帧即可用，不依赖 pdf.js 解析） */
   pdfiumLinks(pdfId: number, page: number): Promise<PdfiumLink[]>;
+  /** 原生提取指定页每个字符的精确字形框（选词/高亮引擎级几何，含空格标点） */
+  pdfiumTextChars(pdfId: number, page: number): Promise<PdfiumChar[]>;
   pdfiumRender(pdfId: number, page: number, scale: number): Promise<PdfiumRenderResult>;
   pdfiumRenderBatch(pdfId: number, pages: number[], scale: number): Promise<PdfiumRenderResult[]>;
   pdfiumClose(pdfId: number): Promise<void>;

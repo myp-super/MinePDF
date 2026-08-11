@@ -1,4 +1,3 @@
-import type { PDFDocumentProxy } from 'pdfjs-dist';
 import type { Quad } from '../shared/types';
 
 /**
@@ -39,28 +38,24 @@ const textCache = new Map<string, TextItemQuad[]>();
 const lineCache = new Map<string, LineBand[]>();
 const TEXT_CACHE_MAX = 512;
 
-/** 取一页文本项四边形，按读序排序（从上到下、从左到右）；结果缓存 */
+/**
+ * 取一页引擎级字符四边形（PDFium FPDFText_GetLooseCharBox，y-up 精确字形框），
+ * 按读序排序（从上到下、从左到右）；结果缓存。不依赖 pdf.js，首帧即可用。
+ */
 export async function getPageTextQuads(
-  doc: PDFDocumentProxy,
   pdfId: number,
   pageNumber: number,
 ): Promise<TextItemQuad[]> {
   const key = `${pdfId}:${pageNumber}`;
   const hit = textCache.get(key);
   if (hit) return hit;
-  const page = await doc.getPage(pageNumber);
-  const tc = await page.getTextContent();
   const items: TextItemQuad[] = [];
-  for (const it of tc.items) {
-    if (!('str' in it) || !Array.isArray(it.transform) || it.transform.length < 6) continue;
-    const w = typeof it.width === 'number' && it.width > 0 ? it.width : 0;
+  const chars = await window.pkm.pdfiumTextChars(pdfId, pageNumber);
+  for (const c of chars) {
+    const w = c.w;
     if (w < 0.01) continue;
-    const h = typeof it.height === 'number' && it.height > 0 ? it.height : 1;
-    const tx = it.transform[4];
-    const ty = it.transform[5];
-    // 字形包围盒：基线下方约 0.2h（下行部），上方约 0.8h（主体+上行部）。
-    // 之前用 baseline-h 把整段文字放到了基线下方，导致选中/色块整体偏移。
-    items.push({ x: tx, y: ty - h * 0.2, w, h, baseline: ty, str: it.str });
+    const h = c.h > 0 ? c.h : 1;
+    items.push({ x: c.x, y: c.y, w, h, baseline: c.y + h, str: c.str });
   }
   items.sort((a, b) => b.baseline - a.baseline || a.x - b.x);
   textCache.set(key, items);
@@ -101,11 +96,10 @@ export function buildPageLines(items: TextItemQuad[]): LineBand[] {
 
 /** 取整页文本索引（读序项 + 行带），缓存 */
 export async function getPageTextIndex(
-  doc: PDFDocumentProxy,
   pdfId: number,
   pageNumber: number,
 ): Promise<PageTextIndex> {
-  const items = await getPageTextQuads(doc, pdfId, pageNumber);
+  const items = await getPageTextQuads(pdfId, pageNumber);
   const key = `${pdfId}:${pageNumber}`;
   let lines = lineCache.get(key);
   if (!lines) {

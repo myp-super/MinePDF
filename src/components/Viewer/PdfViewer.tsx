@@ -485,18 +485,16 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
 
   // 高亮选词文本项预热：虚拟窗口内的页提前取好文本四边形，拖拽选词零等待
   useEffect(() => {
-    if (!doc || !virtualRange) return;
+    if (!pdfiumInfo || !virtualRange) return;
     const L = layoutRef.current;
     for (let r = virtualRange.start; r < virtualRange.end; r++) {
       for (const n of L.rows[r] ?? []) {
-        void getPageTextIndex(doc, pdf.id, n)
-          .then((index) => {
-            if (docRef.current === doc) textIndexRef.current.set(n, index);
-          })
+        void getPageTextIndex(pdf.id, n)
+          .then((index) => textIndexRef.current.set(n, index))
           .catch(() => undefined);
       }
     }
-  }, [doc, virtualRange, pdf.id, layout]);
+  }, [pdfiumInfo, virtualRange, pdf.id, layout]);
 
   // 宽度自适应策略（3.2.1）：
   // - 打开文档时适配一次；
@@ -889,7 +887,7 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
   };
 
   const hlMouseDown = (e: React.MouseEvent) => {
-    if (!highlightMode || !doc) return;
+    if (!highlightMode) return;
     if (e.button !== 0) return;
     // 同步阻止浏览器原生选区，避免与预览色块叠加
     e.preventDefault();

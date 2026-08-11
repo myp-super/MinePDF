@@ -16,7 +16,7 @@ import fs from 'fs';
 import path from 'path';
 import koffi from 'koffi';
 import { repository } from '../db/repository';
-import type { PdfiumLink } from '../../src/shared/types';
+import type { PdfiumChar, PdfiumLink } from '../../src/shared/types';
 
 export interface PdfiumOpenResult {
   /** PDF 页数（1 起） */
@@ -70,6 +70,11 @@ interface PdfiumApi {
   linkAction: (link: unknown) => unknown;
   actionType: (action: unknown) => number;
   actionURI: (doc: unknown, action: unknown, buffer: unknown, buflen: number) => number;
+  textLoad: (page: unknown) => unknown;
+  textClose: (tp: unknown) => void;
+  textCount: (tp: unknown) => number;
+  textCharBox: (tp: unknown, index: number, rect: unknown) => number;
+  textUnicode: (tp: unknown, index: number) => number;
 }
 
 // ---------- PDFium 位图格式 / 渲染标志（fpdfview.h） ----------
@@ -165,6 +170,11 @@ function ensureLib(): PdfiumApi | null {
       linkAction: k.func('void *FPDFLink_GetAction(void *link)'),
       actionType: k.func('int FPDFAction_GetType(void *action)'),
       actionURI: k.func('int FPDFAction_GetURIPath(void *doc, void *action, char *buffer, int buflen)'),
+      textLoad: k.func('void *FPDFText_LoadPage(void *page)'),
+      textClose: k.func('void FPDFText_ClosePage(void *text)'),
+      textCount: k.func('int FPDFText_CountChars(void *text)'),
+      textCharBox: k.func('int FPDFText_GetLooseCharBox(void *text, int index, FS_RECTF *rect)'),
+      textUnicode: k.func('unsigned int FPDFText_GetUnicode(void *text, int index)'),
     };
     lib.init();
     dllVersion = readVersion();
@@ -338,6 +348,80 @@ export function pdfiumLinks(pdfId: number, pageNumber: number): PdfiumLink[] {
     const oldestKey = linksCache.keys().next().value as string | undefined;
     if (oldestKey == null) break;
     linksCache.delete(oldestKey);
+  }
+  return out;
+}
+
+// ---------- 引擎级字符框（选词/高亮几何，不依赖 pdf.js） ----------
+const CHARS_CACHE_MAX = 512;
+const charsCache = new Map<string, PdfiumChar[]>();
+
+/**
+ * 用 FPDFText_GetLooseCharBox 提取一页每个字符的精确字形框（y-up PDF 坐标），
+ * 空格/标点/中文/英文全部包含；无 unicode 映射的字返回占位。
+ */
+export function pdfiumTextChars(pdfId: number, pageNumber: number): PdfiumChar[] {
+  const key = `${pdfId}:${pageNumber}`;
+  const hit = charsCache.get(key);
+  if (hit) return hit;
+  const api = ensureLib();
+  if (!api) throw new Error('PDFIUM_UNAVAILABLE');
+  const filepath = getPdfPath(pdfId);
+  const doc = api.loadDoc(filepath, null);
+  if (!doc) throw new Error('ERR_PDF_OPEN_FAILED:PDFium cannot open the file');
+  const out: PdfiumChar[] = [];
+  try {
+    const page = api.loadPage(doc, Math.max(0, pageNumber - 1));
+    if (!page) return out;
+    const tp = api.textLoad(page);
+    if (!tp) {
+      api.closePage(page);
+      return out;
+    }
+    try {
+      const count = api.textCount(tp);
+      const boxPtr = koffi.alloc(FS_RECTF, 1);
+      try {
+        for (let i = 0; i < count; i++) {
+          if (api.textCharBox(tp, i, boxPtr)) {
+            const b = koffi.decode(boxPtr, 'FS_RECTF') as {
+              left: number;
+              top: number;
+              right: number;
+              bottom: number;
+            };
+            const w = Math.max(0, b.right - b.left);
+            const h = Math.max(0, b.top - b.bottom);
+            if (w < 0.01 || h < 0.01) continue; // 换行/空框
+            const u = api.textUnicode(tp, i);
+            out.push({
+              x: b.left,
+              y: b.bottom,
+              w,
+              h,
+              str: u ? String.fromCodePoint(u) : '',
+            });
+          }
+        }
+      } finally {
+        koffi.free(boxPtr);
+      }
+    } finally {
+      api.textClose(tp);
+      api.closePage(page);
+    }
+  } finally {
+    try {
+      api.closeDoc(doc);
+    } catch {
+      /* ignore */
+    }
+  }
+  charsCache.set(key, out);
+  while (charsCache.size > CHARS_CACHE_MAX) {
+    const oldestKey = charsCache.keys().next().value as string | undefined;
+    if (oldestKey == null) break;
+    charsCache.delete(oldestKey);
   }
   return out;
 }

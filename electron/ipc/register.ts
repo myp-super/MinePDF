@@ -12,6 +12,7 @@ import type {
   NewAnnotation,
   PdfRecord,
   PdfiumLink,
+  PdfiumChar,
   PdfiumOpenResult,
   PdfiumRenderResult,
   SearchResult,
@@ -32,6 +33,7 @@ import {
   pdfiumRender,
   pdfiumRenderBatch,
   pdfiumShutdown,
+  pdfiumTextChars,
 } from '../services/pdfium';
 
 interface InvokeResult<T> {
@@ -436,6 +438,9 @@ export function registerIpc(): void {
   handle<PdfiumOpenResult | null>('pdfium:open', (id: number) => pdfiumOpen(id));
   handle<{ w: number; h: number }[]>('pdfium:page-sizes', (id: number) => pdfiumPageSizes(id));
   handle<PdfiumLink[]>('pdfium:links', (id: number, page: number) => pdfiumLinks(id, page));
+  handle<PdfiumChar[]>('pdfium:text-chars', (id: number, page: number) =>
+    pdfiumTextChars(id, page),
+  );
   handle<PdfiumRenderResult>('pdfium:render', (id: number, page: number, scale: number) =>
     pdfiumRender(id, page, scale),
   );

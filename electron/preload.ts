@@ -74,6 +74,7 @@ const api: PkmApi = {
   pdfiumOpen: (id) => invoke('pdfium:open', id),
   pdfiumPageSizes: (id) => invoke('pdfium:page-sizes', id),
   pdfiumLinks: (id, page) => invoke('pdfium:links', id, page),
+  pdfiumTextChars: (id, page) => invoke('pdfium:text-chars', id, page),
   pdfiumRender: (id, page, scale) => invoke('pdfium:render', id, page, scale),
   pdfiumRenderBatch: (id, pages, scale) => invoke('pdfium:render-batch', id, pages, scale),
   // 端口在 preload 内创建并直接发给主进程；port1 经 contextBridge.postMessage
