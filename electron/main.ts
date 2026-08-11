@@ -1892,6 +1892,28 @@ async function createMainWindow(): Promise<BrowserWindow> {
                           try { crossQuads = JSON.parse(added2[0].position); } catch { crossQuads = null; }
                         }
                       }
+                      // 起始字符精确性：从第 2 个字符拖到第 4 个，不应包含第 1 个字符
+                      let startExact = null;
+                      const firstRowSpans = rowsArr.length ? rowsArr[0] : null;
+                      if (firstRowSpans && firstRowSpans.length >= 4) {
+                        const s1 = firstRowSpans[1].getBoundingClientRect();
+                        const s3 = firstRowSpans[3].getBoundingClientRect();
+                        const before3 = await window.pkm.listAnnotations(pdf.id);
+                        sc.dispatchEvent(new MouseEvent('mousedown', { button: 0, buttons: 1, clientX: s1.left + 1, clientY: s1.top + s1.height / 2, bubbles: true, cancelable: true }));
+                        await new Promise((r) => setTimeout(r, 120));
+                        window.dispatchEvent(new MouseEvent('mousemove', { clientX: s3.left + 2, clientY: s3.top + s3.height / 2, bubbles: true }));
+                        await new Promise((r) => setTimeout(r, 200));
+                        window.dispatchEvent(new MouseEvent('mouseup', { button: 0, buttons: 0, bubbles: true }));
+                        await new Promise((r) => setTimeout(r, 900));
+                        const after3 = await window.pkm.listAnnotations(pdf.id);
+                        const added3 = after3.filter((x) => !before3.some((y) => y.id === x.id));
+                        if (added3.length === 1) {
+                          const content = added3[0].content || '';
+                          const firstChar = (firstRowSpans[0].textContent || '').trim();
+                          const secondChar = (firstRowSpans[1].textContent || '').trim();
+                          startExact = content.length > 0 && !content.startsWith(firstChar) && content.startsWith(secondChar);
+                        }
+                      }
                       return {
                         pdf: true,
                         spans: spans.length,
@@ -1900,6 +1922,7 @@ async function createMainWindow(): Promise<BrowserWindow> {
                         oneLineOneBlock: !!quads && quads.length === 1,
                         quadWidths: quads ? quads.map((q) => Math.round(q.w)) : null,
                         crossLines: crossQuads ? crossQuads.length : null,
+                        startExact,
                       };
                     })()
                   `);

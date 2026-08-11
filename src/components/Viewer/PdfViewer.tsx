@@ -834,7 +834,8 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
     const hit = index.items.filter(
       (it) =>
         it.x < maxX + TOL &&
-        it.x + it.w > minX - TOL &&
+        // 起点严格：右边缘恰好贴着起点的前一个字符不再误选
+        it.x + it.w > minX &&
         it.y < maxY + TOL &&
         it.y + it.h > minY - TOL,
     );
@@ -848,9 +849,10 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
     cx: number,
     cy: number,
   ): { page: number; items: TextItemQuad[]; lines: PageTextIndex['lines'] }[] => {
-    // 拖拽矩形加 ±6px 容差：纯水平拖拽也有竖向覆盖，不会因 0 高矩形跳过
-    const x1 = Math.min(sx, cx) - 6;
-    const x2 = Math.max(sx, cx) + 6;
+    // 只保留纵向 ±6px 容差（纯水平拖拽也有竖向覆盖，不会因 0 高矩形跳过）；
+    // 横向不加容差，否则起点会向左多框进前一个字符
+    const x1 = Math.min(sx, cx);
+    const x2 = Math.max(sx, cx);
     const y1 = Math.min(sy, cy) - 6;
     const y2 = Math.max(sy, cy) + 6;
     const out: { page: number; items: TextItemQuad[]; lines: PageTextIndex['lines'] }[] = [];
