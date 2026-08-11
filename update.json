@@ -1,8 +1,8 @@
 {
-  "version": "3.5.0",
+  "version": "3.5.1",
   "publishDate": "2026-08-11",
-  "url": "https://github.com/myp-super/MinePDF/releases/download/v3.5.0/MinePDF.Setup.3.5.0.exe",
   "notes": [
-    "v3.5.0 - 沉浸式阅读：工具栏+标签栏联动折叠，悬停顶部带动画滑出；标注系统重构：移除信息面板标注，右键高亮添加标注（弹窗×/⋮/保存），有标注的高亮首字上方同色圆点悬停显示标注"
-  ]
+    "v3.5.1 - 修复普通选词后蓝色选区立即消失：拖拽结束的自动click被抑制，选区保持直到点击空白才清除"
+  ],
+  "url": "https://github.com/myp-super/MinePDF/releases/download/v3.5.1/MinePDF.Setup.3.5.1.exe"
 }
