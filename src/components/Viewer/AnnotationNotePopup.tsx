@@ -1,32 +1,34 @@
-import { MoreVertical, X } from 'lucide-react';
+import { X } from 'lucide-react';
 import React, { useEffect, useRef, useState } from 'react';
 import { useT } from '../../i18n';
-import type { AnnotationRecord } from '../../shared/types';
-import { ContextMenu } from '../ui';
+import type { Quad } from '../../shared/types';
+
+/** 标注目标：已有高亮 / 从选区新建高亮 */
+export type NoteTarget =
+  | { kind: 'existing'; id: number }
+  | { kind: 'new'; pages: { page: number; quads: Quad[] }[]; content: string; color: string };
 
 /**
- * 高亮标注弹窗：在高亮旁弹出，可写入/编辑标注。
- * 右上角 × 关闭、⋮（编辑/删除标注）；底部「保存」写入。
+ * 高亮标注弹窗：在高亮旁弹出，直接进入编辑。
+ * 右上角 × 关闭；底部「保存」写入。删除/删除标注走右键菜单。
  */
 export function AnnotationNotePopup({
-  a,
+  target,
+  initialNote,
   x,
   y,
   onClose,
   onSaved,
-  onDelete,
 }: {
-  a: AnnotationRecord;
+  target: NoteTarget;
+  initialNote?: string;
   x: number;
   y: number;
   onClose: () => void;
-  onSaved: (a: AnnotationRecord, note: string) => void;
-  onDelete: (a: AnnotationRecord) => void;
+  onSaved: (target: NoteTarget, note: string) => void;
 }) {
   const t = useT();
-  const [note, setNote] = useState(a.note ?? '');
-  const [editing, setEditing] = useState(!(a.note && a.note.trim()));
-  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  const [note, setNote] = useState(initialNote ?? '');
   const ref = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
 
@@ -46,10 +48,10 @@ export function AnnotationNotePopup({
     };
   }, [onClose]);
 
-  // 编辑模式自动聚焦
+  // 打开即聚焦编辑
   useEffect(() => {
-    if (editing) taRef.current?.focus();
-  }, [editing]);
+    taRef.current?.focus();
+  }, []);
 
   const W = 264;
   const H = 196;
@@ -67,75 +69,34 @@ export function AnnotationNotePopup({
     >
       <div className="flex items-center justify-between border-b border-app-border px-3 py-1.5">
         <span className="text-[11px] font-semibold text-app-text/90">{t('viewer.noteTitle')}</span>
-        <div className="flex items-center gap-0.5">
-          <button
-            className="flex h-6 w-6 items-center justify-center rounded-md text-app-muted transition-colors hover:bg-app-panel2 hover:text-app-text"
-            onClick={(e) => {
-              e.stopPropagation();
-              const r = e.currentTarget.getBoundingClientRect();
-              setMenu({ x: r.left, y: r.bottom + 4 });
-            }}
-            title={t('viewer.edit')}
-            aria-label={t('viewer.edit')}
-          >
-            <MoreVertical size={13} />
-          </button>
-          <button
-            className="flex h-6 w-6 items-center justify-center rounded-md text-app-muted transition-colors hover:bg-app-panel2 hover:text-app-text"
-            onClick={onClose}
-            title="×"
-            aria-label="×"
-          >
-            <X size={14} />
-          </button>
-        </div>
+        <button
+          className="flex h-6 w-6 items-center justify-center rounded-md text-app-muted transition-colors hover:bg-app-panel2 hover:text-app-text"
+          onClick={onClose}
+          title="×"
+          aria-label="×"
+        >
+          <X size={14} />
+        </button>
       </div>
       <div className="p-3">
         <textarea
           ref={taRef}
           className="h-24 w-full resize-none rounded-lg border border-app-border bg-app-base px-2.5 py-2 text-[12px] leading-relaxed outline-none placeholder:text-app-muted/50 focus:border-app-accent/60 disabled:opacity-70"
           value={note}
-          readOnly={!editing}
           placeholder={t('viewer.notePlaceholder')}
           onChange={(e) => setNote(e.target.value)}
         />
         <div className="mt-2 flex items-center justify-end">
           <button
             className="rounded-md bg-app-accent px-3 py-1 text-[11px] font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
-            disabled={!editing}
             onClick={() => {
-              setEditing(false);
-              onSaved(a, note.trim());
+              onSaved(target, note.trim());
             }}
           >
             {t('viewer.save')}
           </button>
         </div>
       </div>
-      {menu && (
-        <ContextMenu
-          x={menu.x}
-          y={menu.y}
-          onClose={() => setMenu(null)}
-          items={[
-            {
-              label: t('viewer.edit'),
-              onClick: () => {
-                setEditing(true);
-                setMenu(null);
-              },
-            },
-            {
-              label: t('viewer.deleteNote'),
-              danger: true,
-              onClick: () => {
-                setMenu(null);
-                onDelete(a);
-              },
-            },
-          ]}
-        />
-      )}
     </div>
   );
 }

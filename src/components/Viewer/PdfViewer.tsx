@@ -28,7 +28,7 @@ import {
 } from '../../lib/textIndex';
 import { useApp } from '../../store';
 import { ContextMenu } from '../ui';
-import { AnnotationNotePopup } from './AnnotationNotePopup';
+import { AnnotationNotePopup, type NoteTarget } from './AnnotationNotePopup';
 import { PdfPage, type PdfLinkService } from './PdfPage';
 import { PdfSearchBar } from './PdfSearchBar';
 import { PdfToolbar } from './PdfToolbar';
@@ -130,12 +130,24 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
     x: number;
     y: number;
   } | null>(null);
-  /** 高亮标注弹窗（右键添加标注 / 点击圆点） */
+  /** 标注弹窗（编辑已有高亮标注 / 从选区新建标注） */
   const [notePopup, setNotePopup] = useState<{
-    a: AnnotationRecord;
+    target: NoteTarget;
+    initialNote?: string;
     x: number;
     y: number;
   } | null>(null);
+  /** 颜色选择弹窗（高亮换色 / 选区新建高亮） */
+  const [colorPopup, setColorPopup] = useState<{
+    x: number;
+    y: number;
+    mode: 'edit' | 'create';
+    a?: AnnotationRecord;
+    pages?: { page: number; quads: Quad[] }[];
+    content?: string;
+  } | null>(null);
+  /** 普通选词右键菜单 */
+  const [selMenu, setSelMenu] = useState<{ x: number; y: number } | null>(null);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const pageRefs = useRef<Map<number, HTMLDivElement>>(new Map());
@@ -982,14 +994,75 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
     setSelectedAnnotationId(a.id);
   };
 
-  const saveAnnotationNote = async (a: AnnotationRecord, note: string) => {
+  const saveAnnotationNote = async (target: NoteTarget, note: string) => {
     try {
-      await window.pkm.updateAnnotation(a.id, { note });
+      if (target.kind === 'existing') {
+        await window.pkm.updateAnnotation(target.id, { note });
+      } else {
+        for (const { page, quads } of target.pages) {
+          await window.pkm.createAnnotation({
+            pdfId: pdf.id,
+            page,
+            content: target.content,
+            note,
+            position: JSON.stringify(quads),
+            color: target.color,
+          });
+        }
+      }
       setAnnotations(await window.pkm.listAnnotations(pdf.id));
       setNotePopup(null);
     } catch (err) {
       toast('error', terr(err instanceof Error ? err.message : String(err)));
     }
+  };
+
+  const clearAnnotationNote = async (a: AnnotationRecord) => {
+    try {
+      await window.pkm.updateAnnotation(a.id, { note: '' });
+      setAnnotations(await window.pkm.listAnnotations(pdf.id));
+    } catch (err) {
+      toast('error', terr(err instanceof Error ? err.message : String(err)));
+    }
+  };
+
+  const applyHighlightColor = async (color: string) => {
+    const cp = colorPopup;
+    setColorPopup(null);
+    if (!cp) return;
+    try {
+      if (cp.mode === 'edit' && cp.a) {
+        await window.pkm.updateAnnotation(cp.a.id, { color });
+      } else if (cp.mode === 'create' && cp.pages) {
+        for (const { page, quads } of cp.pages) {
+          await window.pkm.createAnnotation({
+            pdfId: pdf.id,
+            page,
+            content: cp.content ?? '',
+            note: '',
+            position: JSON.stringify(quads),
+            color,
+          });
+        }
+      }
+      setAnnotations(await window.pkm.listAnnotations(pdf.id));
+    } catch (err) {
+      toast('error', terr(err instanceof Error ? err.message : String(err)));
+    }
+  };
+
+  const copySelectionText = () => {
+    if (!selection) return;
+    void navigator.clipboard
+      .writeText(selection.text)
+      .catch(() => {
+        const ta = document.createElement('textarea');
+        ta.value = selection.text;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        ta.remove();
+      });
   };
 
   // ---------- annotation right-click menu ----------
@@ -1149,7 +1222,7 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
       onAnnotationClick={handleAnnotationClick}
       onAnnotationNote={(a, x, y) => {
         setSelectedAnnotationId(a.id);
-        setNotePopup({ a, x, y });
+        setNotePopup({ target: { kind: 'existing', id: a.id }, initialNote: a.note, x, y });
       }}
       onAnnotationContextMenu={(a, x, y) => setAnnMenu({ a, x, y })}
       onJumpToPage={gotoPage}
@@ -1304,6 +1377,14 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
                   : ''
             }`}
             onMouseDown={handleMouseDown}
+            onContextMenu={(e) => {
+              const t = e.target as HTMLElement;
+              if (t.closest('.annotation-hl')) return; // 高亮色块有自己的右键菜单
+              if (selection) {
+                e.preventDefault();
+                setSelMenu({ x: e.clientX, y: e.clientY });
+              }
+            }}
             onClick={(e) => {
               // 点击空白处取消高亮选中与普通选区（点在高亮色块上时保持选中）
               if (suppressNextClickRef.current) {
@@ -1373,9 +1454,29 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
           onClose={() => setAnnMenu(null)}
           items={[
             {
-              label: annMenu.a.note ? t('viewer.editNote') : t('viewer.addNote'),
+              label: t('viewer.editNote'),
               onClick: () => {
-                setNotePopup({ a: annMenu.a, x: annMenu.x, y: annMenu.y });
+                setNotePopup({
+                  target: { kind: 'existing', id: annMenu.a.id },
+                  initialNote: annMenu.a.note,
+                  x: annMenu.x,
+                  y: annMenu.y,
+                });
+                setAnnMenu(null);
+              },
+            },
+            {
+              label: t('viewer.deleteNote'),
+              disabled: !annMenu.a.note,
+              onClick: () => {
+                void clearAnnotationNote(annMenu.a);
+                setAnnMenu(null);
+              },
+            },
+            {
+              label: t('viewer.highlight'),
+              onClick: () => {
+                setColorPopup({ x: annMenu.x, y: annMenu.y, mode: 'edit', a: annMenu.a });
                 setAnnMenu(null);
               },
             },
@@ -1387,17 +1488,94 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
           ]}
         />
       )}
+      {selMenu && (
+        <ContextMenu
+          x={selMenu.x}
+          y={selMenu.y}
+          onClose={() => setSelMenu(null)}
+          items={[
+            {
+              label: t('viewer.copy'),
+              onClick: () => {
+                copySelectionText();
+                setSelMenu(null);
+              },
+            },
+            {
+              label: t('viewer.highlight'),
+              onClick: () => {
+                const pages = selection
+                  ? Object.entries(selection.quads).map(([p, quads]) => ({
+                      page: Number(p),
+                      quads,
+                    }))
+                  : [];
+                setColorPopup({
+                  x: selMenu.x,
+                  y: selMenu.y,
+                  mode: 'create',
+                  pages,
+                  content: selection?.text ?? '',
+                });
+                setSelMenu(null);
+              },
+            },
+            {
+              label: t('viewer.addNote'),
+              onClick: () => {
+                const pages = selection
+                  ? Object.entries(selection.quads).map(([p, quads]) => ({
+                      page: Number(p),
+                      quads,
+                    }))
+                  : [];
+                setNotePopup({
+                  target: {
+                    kind: 'new',
+                    pages,
+                    content: selection?.text ?? '',
+                    color: '#fde047',
+                  },
+                  x: selMenu.x,
+                  y: selMenu.y,
+                });
+                setSelMenu(null);
+              },
+            },
+          ]}
+        />
+      )}
+      {colorPopup && (
+        <>
+          <div className="fixed inset-0 z-[79]" onClick={() => setColorPopup(null)} />
+          <div
+            className="fixed z-[80] flex gap-1.5 rounded-xl border border-app-border bg-app-panel p-2 shadow-2xl"
+            style={{
+              left: Math.max(8, Math.min(colorPopup.x, window.innerWidth - 176)),
+              top: Math.max(8, Math.min(colorPopup.y, window.innerHeight - 48)),
+            }}
+          >
+            {['#fde047', '#86efac', '#93c5fd', '#f9a8d4', '#fdba74', '#c4b5fd'].map((c) => (
+              <button
+                key={c}
+                className="h-6 w-6 rounded-full border border-black/20 transition-transform hover:scale-110"
+                style={{ background: c }}
+                title={c}
+                aria-label={c}
+                onClick={() => void applyHighlightColor(c)}
+              />
+            ))}
+          </div>
+        </>
+      )}
       {notePopup && (
         <AnnotationNotePopup
-          a={notePopup.a}
+          target={notePopup.target}
+          initialNote={notePopup.initialNote}
           x={notePopup.x}
           y={notePopup.y}
           onClose={() => setNotePopup(null)}
-          onSaved={(a, note) => void saveAnnotationNote(a, note)}
-          onDelete={(a) => {
-            setNotePopup(null);
-            void deleteAnnotation(a);
-          }}
+          onSaved={(target, note) => void saveAnnotationNote(target, note)}
         />
       )}
     </main>

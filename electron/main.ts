@@ -1944,7 +1944,38 @@ async function createMainWindow(): Promise<BrowserWindow> {
                       sc.dispatchEvent(new MouseEvent('click', { clientX: scRect.left + 10, clientY: scRect.top + 10, bubbles: true, cancelable: true }));
                       await new Promise((r) => setTimeout(r, 300));
                       const afterClear = document.querySelectorAll('.selection-highlight').length;
-                      return { pdf: true, hlActive, selCount, selAfterDragClick, afterClear };
+                      // 重新选中一段文字，右键 -> 添加标注 -> 保存 -> 默认黄色高亮+圆点
+                      sc.dispatchEvent(new MouseEvent('mousedown', { button: 0, buttons: 1, clientX: sr.left + 2, clientY: sr.top + sr.height / 2, bubbles: true, cancelable: true }));
+                      await new Promise((r) => setTimeout(r, 120));
+                      window.dispatchEvent(new MouseEvent('mousemove', { clientX: sr.left + 120, clientY: sr.top + sr.height / 2, bubbles: true }));
+                      await new Promise((r) => setTimeout(r, 200));
+                      window.dispatchEvent(new MouseEvent('mouseup', { button: 0, buttons: 0, clientX: sr.left + 120, clientY: sr.top + sr.height / 2, bubbles: true }));
+                      await new Promise((r) => setTimeout(r, 400));
+                      sc.dispatchEvent(new MouseEvent('contextmenu', { clientX: sr.left + 60, clientY: sr.top + sr.height / 2, bubbles: true, cancelable: true }));
+                      await new Promise((r) => setTimeout(r, 300));
+                      const selMenuButtons = [...document.querySelectorAll('button')].filter((b) => ['复制', '突出显示', '添加标注'].includes((b.textContent || '').trim())).length;
+                      const selAddBtn = [...document.querySelectorAll('button')].find((b) => (b.textContent || '').trim() === '添加标注');
+                      let selNoteCreated = false;
+                      if (selAddBtn) {
+                        selAddBtn.click();
+                        await new Promise((r) => setTimeout(r, 300));
+                        const popup = [...document.querySelectorAll('div')].find((d) => String(d.className || '').includes('z-[80]'));
+                        if (popup) {
+                          const ta = popup.querySelector('textarea');
+                          if (ta) {
+                            const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
+                            setter.call(ta, '快速标注');
+                            ta.dispatchEvent(new Event('input', { bubbles: true }));
+                          }
+                          const saveBtn = [...popup.querySelectorAll('button')].find((b) => (b.textContent || '').trim() === '保存');
+                          if (saveBtn) { saveBtn.click(); await new Promise((r) => setTimeout(r, 900)); }
+                          const all = await window.pkm.listAnnotations(pdf.id);
+                          const created = all.filter((x) => (x.note || '').includes('快速标注'));
+                          selNoteCreated = created.length === 1 && (created[0].color || '').toLowerCase() === '#fde047';
+                        }
+                      }
+                      const selDot = document.querySelector('.annotation-dot');
+                      return { pdf: true, hlActive, selCount, selAfterDragClick, afterClear, selMenuButtons, selNoteCreated, selDot: !!selDot };
                     })()
                   `);
                   console.log('[capture] selDiag', JSON.stringify(selDiag));
@@ -1982,7 +2013,7 @@ async function createMainWindow(): Promise<BrowserWindow> {
                       const hr = hl.getBoundingClientRect();
                       hl.dispatchEvent(new MouseEvent('contextmenu', { clientX: hr.left + 10, clientY: hr.top + 10, bubbles: true, cancelable: true }));
                       await new Promise((r) => setTimeout(r, 300));
-                      const addBtn = [...document.querySelectorAll('button')].find((b) => (b.textContent || '').trim() === '添加标注');
+                      const addBtn = [...document.querySelectorAll('button')].find((b) => (b.textContent || '').trim() === '编辑标注');
                       let popupOpened = false;
                       if (addBtn) { addBtn.click(); await new Promise((r) => setTimeout(r, 300)); }
                       const popup = [...document.querySelectorAll('div')].find((d) => String(d.className || '').includes('z-[80]'));
