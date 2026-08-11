@@ -170,6 +170,17 @@ export function Sidebar() {
   const autoHide = settings.autoCollapseSidebar && activePdfId != null;
   const dblClickToggle = settings.dblClickTogglePanels;
   const autoHideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** 折叠/展开时短暂启用宽度过渡（手动拖拽调宽不启用，避免跟手卡顿） */
+  const [animateWidth, setAnimateWidth] = useState(false);
+  const animTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    setAnimateWidth(true);
+    if (animTimerRef.current) clearTimeout(animTimerRef.current);
+    animTimerRef.current = setTimeout(() => setAnimateWidth(false), 320);
+    return () => {
+      if (animTimerRef.current) clearTimeout(animTimerRef.current);
+    };
+  }, [sidebarCollapsed]);
 
   useEffect(() => {
     return () => {
@@ -591,10 +602,23 @@ export function Sidebar() {
     },
   ];
 
-  if (sidebarCollapsed) {
-    return (
-      <aside
-        className="flex w-11 shrink-0 flex-col items-center border-r border-app-border bg-app-panel py-2"
+  return (
+    <aside
+      data-panel="sidebar"
+      className="relative shrink-0 overflow-hidden border-r border-app-border bg-app-panel"
+      style={{
+        width: sidebarCollapsed ? 44 : sidebarWidth,
+        transition: animateWidth ? 'width 260ms cubic-bezier(0.4, 0, 0.2, 1)' : 'none',
+      }}
+      onMouseEnter={cancelAutoHide}
+      onMouseLeave={scheduleAutoHide}
+    >
+      {/* 折叠窄条层：展开时淡出 */}
+      <div
+        data-sidebar-rail
+        className={`absolute inset-y-0 left-0 flex w-11 flex-col items-center py-2 transition-opacity duration-200 ${
+          sidebarCollapsed ? 'opacity-100' : 'pointer-events-none opacity-0'
+        }`}
         onDoubleClick={() => {
           if (dblClickToggle) setSidebarCollapsed(false);
         }}
@@ -613,24 +637,21 @@ export function Sidebar() {
         <IconButton title={t('sidebar.settings')} onClick={() => setView('settings')}>
           <Settings size={14} />
         </IconButton>
-      </aside>
-    );
-  }
-
-  return (
-    <aside
-      className="flex shrink-0 flex-col border-r border-app-border bg-app-panel"
-      style={{ width: sidebarWidth }}
-      data-panel="sidebar"
-      onDoubleClick={(e) => {
-        if (!dblClickToggle) return;
-        const t = e.target as HTMLElement;
-        if (t.closest('button, a, input, textarea') || t.closest('[class*="cursor-pointer"]')) return;
-        setSidebarCollapsed(true);
-      }}
-      onMouseEnter={cancelAutoHide}
-      onMouseLeave={scheduleAutoHide}
-    >
+      </div>
+      {/* 完整面板层：折叠时淡出并被外层裁切 */}
+      <div
+        data-sidebar-panel
+        className={`h-full transition-opacity duration-200 ${
+          sidebarCollapsed ? 'pointer-events-none opacity-0' : 'opacity-100'
+        }`}
+        style={{ width: sidebarWidth }}
+        onDoubleClick={(e) => {
+          if (!dblClickToggle) return;
+          const t = e.target as HTMLElement;
+          if (t.closest('button, a, input, textarea') || t.closest('[class*="cursor-pointer"]')) return;
+          setSidebarCollapsed(true);
+        }}
+      >
       <div className="flex items-center justify-between gap-1 px-3 pt-3 pb-2">
         <div className="flex min-w-0 items-center gap-1.5 text-xs font-semibold">
           <BookMarked size={14} className="shrink-0 text-app-accent" />
@@ -1027,6 +1048,7 @@ export function Sidebar() {
           onClose={() => setPicker(null)}
         />
       )}
+      </div>
     </aside>
   );
 }

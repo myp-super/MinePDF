@@ -987,29 +987,29 @@ async function createMainWindow(): Promise<BrowserWindow> {
                     if (!collapseBtn) return { collapseBtn: false };
                     const before = document.querySelector('aside').getBoundingClientRect().width;
                     collapseBtn.click();
-                    await new Promise((r) => setTimeout(r, 150));
+                    await new Promise((r) => setTimeout(r, 450));
                     const collapsedW = document.querySelector('aside').getBoundingClientRect().width;
                     // 双击折叠窄条空白区 -> 快速展开
                     let dblExpand = false;
-                    const rail = document.querySelector('aside');
+                    const rail = document.querySelector('[data-sidebar-rail]');
                     if (rail && collapsedW < 60) {
                       const rr = rail.getBoundingClientRect();
                       rail.dispatchEvent(new MouseEvent('dblclick', { clientX: rr.left + 20, clientY: rr.top + 60, bubbles: true, cancelable: true }));
-                      await new Promise((r) => setTimeout(r, 150));
+                      await new Promise((r) => setTimeout(r, 450));
                       dblExpand = document.querySelector('aside').getBoundingClientRect().width > 60;
                     }
                     // 双击展开面板空白区 -> 快速收起
                     let dblCollapse = false;
-                    const panel = document.querySelector('aside');
+                    const panel = document.querySelector('[data-sidebar-panel]');
                     if (panel) {
                       const pr = panel.getBoundingClientRect();
                       panel.dispatchEvent(new MouseEvent('dblclick', { clientX: pr.left + 40, clientY: pr.top + 18, bubbles: true, cancelable: true }));
-                      await new Promise((r) => setTimeout(r, 150));
+                      await new Promise((r) => setTimeout(r, 450));
                       dblCollapse = document.querySelector('aside').getBoundingClientRect().width < 60;
                     }
                     const expandBtn = [...document.querySelectorAll('button')].find(b => (b.getAttribute('title') || '').includes('展开侧边栏'));
                     if (expandBtn) expandBtn.click();
-                    await new Promise((r) => setTimeout(r, 150));
+                    await new Promise((r) => setTimeout(r, 450));
                     const restoredW = document.querySelector('aside').getBoundingClientRect().width;
                     return { collapseBtn: true, before: Math.round(before), collapsedW: Math.round(collapsedW), restoredW: Math.round(restoredW), restored: Math.abs(restoredW - before) < 5, dblExpand, dblCollapse };
                   })()
@@ -1686,9 +1686,7 @@ async function createMainWindow(): Promise<BrowserWindow> {
                     const collapsedAfterOpen = window.__pkmStore().sidebarCollapsed;
                     // 悬停左侧折叠栏 → 临时展开
                     let hoverExpands = false;
-                    const rail = [...document.querySelectorAll('aside')].find(
-                      (as) => (as.className || '').includes('w-11') && (as.className || '').includes('shrink-0'),
-                    );
+                    const rail = document.querySelector('[data-sidebar-rail]');
                     if (rail) {
                       rail.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, relatedTarget: null }));
                       await new Promise((r) => setTimeout(r, 350));
