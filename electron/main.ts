@@ -1764,6 +1764,62 @@ async function createMainWindow(): Promise<BrowserWindow> {
                   })()
                 `);
                 console.log('[capture] hlMergeDiag', JSON.stringify(hlMergeDiag));
+                // 临时诊断：中英混排 PDF 整行拖选是否只出一个连续色块
+                if (process.env.PKM_TEST_PDF) {
+                  const cjkHlDiag = await win.webContents.executeJavaScript(`
+                    (async () => {
+                      const p = ${JSON.stringify(process.env.PKM_TEST_PDF)};
+                      if (window.__pkmAct) window.__pkmAct('clearScreens');
+                      await new Promise((r) => setTimeout(r, 200));
+                      await window.pkm.importPdfs([p], null);
+                      const snap = await window.pkm.getSnapshot();
+                      const pdf = snap.pdfs.find((x) => x.filepath.includes('Submission') || x.filepath.includes('感受野') || x.filepath.includes('英语'));
+                      if (!pdf) return { pdf: false };
+                      window.__pkmOpenPdf(pdf.id);
+                      await new Promise((r) => setTimeout(r, 2500));
+                      const hlBtn = [...document.querySelectorAll('button')].find((b) => (b.getAttribute('title') || '').includes('高亮模式'));
+                      if (!hlBtn) return { hlBtn: false };
+                      hlBtn.click();
+                      await new Promise((r) => setTimeout(r, 200));
+                      const sc = document.querySelector('[data-pan-scroll]');
+                      const sheet = document.querySelector('.pdf-page-sheet');
+                      const spans = [...sheet.querySelectorAll('.textLayer span')].filter((s) => (s.textContent || '').trim());
+                      const rows = new Map();
+                      for (const s of spans) {
+                        const r = s.getBoundingClientRect();
+                        const key = Math.round(r.top);
+                        if (!rows.has(key)) rows.set(key, []);
+                        rows.get(key).push(s);
+                      }
+                      const firstRow = [...rows.values()].find((arr) => arr.length >= 2);
+                      if (!firstRow) return { spans: spans.length, rows: rows.size };
+                      const rA = firstRow[0].getBoundingClientRect();
+                      const rB = firstRow[firstRow.length - 1].getBoundingClientRect();
+                      const before = await window.pkm.listAnnotations(pdf.id);
+                      sc.dispatchEvent(new MouseEvent('mousedown', { button: 0, buttons: 1, clientX: rA.left + 1, clientY: rA.top + rA.height / 2, bubbles: true, cancelable: true }));
+                      await new Promise((r) => setTimeout(r, 120));
+                      window.dispatchEvent(new MouseEvent('mousemove', { clientX: rB.right - 1, clientY: rB.top + rB.height / 2, bubbles: true }));
+                      await new Promise((r) => setTimeout(r, 200));
+                      window.dispatchEvent(new MouseEvent('mouseup', { button: 0, buttons: 0, bubbles: true }));
+                      await new Promise((r) => setTimeout(r, 900));
+                      const after = await window.pkm.listAnnotations(pdf.id);
+                      const added = after.filter((x) => !before.some((y) => y.id === x.id));
+                      let quads = null;
+                      if (added.length === 1) {
+                        try { quads = JSON.parse(added[0].position); } catch { quads = null; }
+                      }
+                      return {
+                        pdf: true,
+                        spans: spans.length,
+                        rows: rows.size,
+                        added: added.length,
+                        oneLineOneBlock: !!quads && quads.length === 1,
+                        quadWidths: quads ? quads.map((q) => Math.round(q.w)) : null,
+                      };
+                    })()
+                  `);
+                  console.log('[capture] cjkHlDiag', JSON.stringify(cjkHlDiag));
+                }
                 // 删除 PDF 后，已打开的标签页应被自动清理（含分屏）
                 const deleteTabDiag = await win.webContents.executeJavaScript(`
                   (async () => {

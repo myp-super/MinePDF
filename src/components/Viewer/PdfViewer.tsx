@@ -21,9 +21,10 @@ import {
 } from '../../lib/pageImageCache';
 import { pdfiumRenderQueued } from '../../lib/pdfiumBatcher';
 import {
-  getPageTextQuads,
+  getPageTextIndex,
   mergeSelectionItems,
   nearestTextIndex,
+  type PageTextIndex,
   type TextItemQuad,
 } from '../../lib/textIndex';
 import { useApp } from '../../store';
@@ -100,8 +101,8 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
   const hlCurRef = useRef<{ page: number; idx: number } | null>(null);
   const hlLastMoveRef = useRef<{ x: number; y: number } | null>(null);
   const hlRafRef = useRef(0);
-  /** 已就绪的页文本项索引（读序），供拖拽期间同步命中测试 */
-  const textQuadsRef = useRef<Map<number, TextItemQuad[]>>(new Map());
+  /** 已就绪的页文本索引（读序项 + 行带），供拖拽期间同步命中测试 */
+  const textIndexRef = useRef<Map<number, PageTextIndex>>(new Map());
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchMatches, setSearchMatches] = useState<SearchMatch[]>([]);
@@ -490,9 +491,9 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
     const L = layoutRef.current;
     for (let r = virtualRange.start; r < virtualRange.end; r++) {
       for (const n of L.rows[r] ?? []) {
-        void getPageTextQuads(doc, pdf.id, n)
-          .then((its) => {
-            if (docRef.current === doc) textQuadsRef.current.set(n, its);
+        void getPageTextIndex(doc, pdf.id, n)
+          .then((index) => {
+            if (docRef.current === doc) textIndexRef.current.set(n, index);
           })
           .catch(() => undefined);
       }
@@ -800,14 +801,14 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
   };
 
   const textIndexAt = (page: number, x: number, y: number): number => {
-    const items = textQuadsRef.current.get(page);
-    if (!items || !items.length) return -1;
+    const index = textIndexRef.current.get(page);
+    if (!index || !index.items.length) return -1;
     const el = pageRefs.current.get(page);
     const vp = viewportsRef.current.get(page);
     if (!el || !vp) return -1;
     const r = el.getBoundingClientRect();
     const [px, py] = vp.convertToPdfPoint(x - r.left, y - r.top);
-    return nearestTextIndex(items, px, py);
+    return nearestTextIndex(index.items, index.lines, px, py);
   };
 
   /** 计算起点到当前点的逐页选中文本项（支持跨页与反向拖动） */
@@ -815,15 +816,16 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
     start: { page: number; idx: number },
     endPage: number,
     endIdx: number,
-  ): { page: number; items: TextItemQuad[] }[] => {
+  ): { page: number; items: TextItemQuad[]; lines: PageTextIndex['lines'] }[] => {
     const p0 = start.page;
     const p1 = endPage;
     const lo = Math.min(p0, p1);
     const hi = Math.max(p0, p1);
-    const out: { page: number; items: TextItemQuad[] }[] = [];
+    const out: { page: number; items: TextItemQuad[]; lines: PageTextIndex['lines'] }[] = [];
     for (let p = lo; p <= hi; p++) {
-      const items = textQuadsRef.current.get(p);
-      if (!items || !items.length) continue;
+      const index = textIndexRef.current.get(p);
+      const items = index?.items;
+      if (!index || !items || !items.length) continue;
       let a: number;
       let b: number;
       if (p0 <= p1) {
@@ -836,7 +838,7 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
       a = Math.max(0, Math.min(a, items.length - 1));
       b = Math.max(0, Math.min(b, items.length - 1));
       const sel = items.slice(Math.min(a, b), Math.max(a, b) + 1);
-      if (sel.length) out.push({ page: p, items: sel });
+      if (sel.length) out.push({ page: p, items: sel, lines: index.lines });
     }
     return out;
   };
@@ -852,7 +854,7 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
     hlCurRef.current = { page: curPage, idx: curIdx };
     const sel = computeSelection(start, curPage, curIdx);
     const next: Record<number, Quad[]> = {};
-    for (const { page, items } of sel) next[page] = mergeSelectionItems(items);
+    for (const { page, items, lines } of sel) next[page] = mergeSelectionItems(items, lines);
     setLiveSel(next);
   };
 
@@ -864,8 +866,8 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
     const pages = computeSelection(start, cur.page, cur.idx);
     if (!pages.length) return;
     try {
-      for (const { page, items } of pages) {
-        const quads = mergeSelectionItems(items);
+      for (const { page, items, lines } of pages) {
+        const quads = mergeSelectionItems(items, lines);
         if (!quads.length) continue;
         await window.pkm.createAnnotation({
           pdfId: pdf.id,
@@ -896,22 +898,22 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
     if (page == null) return;
     // 同步阻止浏览器原生选区，避免与预览色块叠加
     e.preventDefault();
-    const cached = textQuadsRef.current.get(page);
+    const cached = textIndexRef.current.get(page);
     if (cached) {
       startHlDrag(e, page, cached);
       return;
     }
-    void getPageTextQuads(doc, pdf.id, page)
-      .then((items) => {
-        textQuadsRef.current.set(page, items);
-        if (!hlStartRef.current) startHlDrag(e, page, items);
+    void getPageTextIndex(doc, pdf.id, page)
+      .then((index) => {
+        textIndexRef.current.set(page, index);
+        if (!hlStartRef.current) startHlDrag(e, page, index);
       })
       .catch(() => undefined);
   };
 
-  const startHlDrag = (e: React.MouseEvent, page: number, items: TextItemQuad[]) => {
+  const startHlDrag = (e: React.MouseEvent, page: number, index: PageTextIndex) => {
     const [px, py] = pdfPointAt(e.clientX, e.clientY, page);
-    const idx = nearestTextIndex(items, px, py);
+    const idx = nearestTextIndex(index.items, index.lines, px, py);
     if (idx < 0) return;
     try {
       window.getSelection()?.removeAllRanges();
