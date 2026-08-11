@@ -1,8 +1,8 @@
 {
-  "version": "3.5.5",
-  "publishDate": "2026-08-11",
   "notes": [
-    "v3.5.5 - 左侧知识库折叠/展开平滑动画；修复标签右键菜单被裁剪不可见（折叠动画容器去掉transform）；新增标签右键菜单回归测试"
+    "v3.5.6 - 修复左边栏动画重构导致的面板布局丢失（知识库/临时区分隔线无法拖拽、底部按钮区空白）"
   ],
-  "url": "https://github.com/myp-super/MinePDF/releases/download/v3.5.5/MinePDF.Setup.3.5.5.exe"
+  "publishDate": "2026-08-11",
+  "url": "https://github.com/myp-super/MinePDF/releases/download/v3.5.6/MinePDF.Setup.3.5.6.exe",
+  "version": "3.5.6"
 }
