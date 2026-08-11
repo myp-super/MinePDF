@@ -1927,12 +1927,16 @@ async function createMainWindow(): Promise<BrowserWindow> {
                       window.dispatchEvent(new MouseEvent('mouseup', { button: 0, buttons: 0, clientX: sr.left + 180, clientY: sr.top + sr.height / 2, bubbles: true }));
                       await new Promise((r) => setTimeout(r, 400));
                       const selCount = document.querySelectorAll('.selection-highlight').length;
+                      // 模拟真实拖拽结束后的自动 click：不应清掉刚选中的选区
+                      sc.dispatchEvent(new MouseEvent('click', { clientX: sr.left + 90, clientY: sr.top + sr.height / 2, bubbles: true, cancelable: true }));
+                      await new Promise((r) => setTimeout(r, 300));
+                      const selAfterDragClick = document.querySelectorAll('.selection-highlight').length;
                       // 点空白清除选区
                       const scRect = sc.getBoundingClientRect();
                       sc.dispatchEvent(new MouseEvent('click', { clientX: scRect.left + 10, clientY: scRect.top + 10, bubbles: true, cancelable: true }));
                       await new Promise((r) => setTimeout(r, 300));
                       const afterClear = document.querySelectorAll('.selection-highlight').length;
-                      return { pdf: true, hlActive, selCount, afterClear };
+                      return { pdf: true, hlActive, selCount, selAfterDragClick, afterClear };
                     })()
                   `);
                   console.log('[capture] selDiag', JSON.stringify(selDiag));

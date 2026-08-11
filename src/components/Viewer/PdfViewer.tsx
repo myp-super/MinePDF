@@ -111,6 +111,8 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
   const hlStartPtRef = useRef<{ x: number; y: number } | null>(null);
   const hlLastMoveRef = useRef<{ x: number; y: number } | null>(null);
   const hlRafRef = useRef(0);
+  /** 拖拽结束后会跟随一次 click：抑制它，避免刚选完就被“点空白清除”逻辑清掉 */
+  const suppressNextClickRef = useRef(false);
   /** 已就绪的页文本索引（读序项 + 行带），供拖拽期间同步命中测试 */
   const textIndexRef = useRef<Map<number, PageTextIndex>>(new Map());
   const [searchOpen, setSearchOpen] = useState(false);
@@ -920,6 +922,7 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
       parts.push(items.map((i) => i.str).join(''));
     }
     setSelection({ quads, text: parts.join('\n') });
+    suppressNextClickRef.current = true;
   };
 
   const startSelectDrag = (e: React.MouseEvent, mode: 'highlight' | 'select') => {
@@ -1308,6 +1311,10 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
             onMouseDown={handleMouseDown}
             onClick={(e) => {
               // 点击空白处取消高亮选中与普通选区（点在高亮色块上时保持选中）
+              if (suppressNextClickRef.current) {
+                suppressNextClickRef.current = false;
+                return;
+              }
               const t = e.target as HTMLElement;
               if (!t.closest('.annotation-hl')) {
                 setSelectedAnnotationId(null);
