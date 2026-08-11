@@ -266,18 +266,18 @@ async function createMainWindow(): Promise<BrowserWindow> {
   };
   win.on('maximize', () => {
     win.webContents.send('window:maximized-changed', true);
-    // Windows 无边框窗口最大化时会带一圈不可见缩放边框，内容可能被顶出屏幕；
-    // 显式钳制到显示器工作区，保证标题栏始终完整可见。
-    try {
-      const display = screen.getDisplayMatching(win.getBounds());
-      win.setBounds(display.workArea);
-    } catch {
-      /* ignore */
-    }
     reassertLayout();
   });
   win.on('unmaximize', () => {
     win.webContents.send('window:maximized-changed', false);
+    // 兜底：还原后若窗口顶边被顶出显示器工作区（无边框最大化的历史错位），纠正回可见位置
+    try {
+      const b = win.getBounds();
+      const wa = screen.getDisplayMatching(b).workArea;
+      if (b.y < wa.y - 4) win.setPosition(b.x, wa.y);
+    } catch {
+      /* ignore */
+    }
     reassertLayout();
   });
   win.on('enter-full-screen', () => win.webContents.send('window:fullscreen-changed', true));
@@ -286,6 +286,21 @@ async function createMainWindow(): Promise<BrowserWindow> {
     reassertLayout();
   });
   win.on('resize', () => reassertLayout(300));
+  // 加固：显示器拔插 / DPI 变化后，若窗口被移到工作区外，纠正回可见位置
+  screen.on('display-metrics-changed', () => {
+    if (win.isDestroyed() || win.isMaximized() || win.isFullScreen()) return;
+    try {
+      const b = win.getBounds();
+      const wa = screen.getDisplayMatching(b).workArea;
+      let x = b.x;
+      let y = b.y;
+      if (b.y < wa.y - 4) y = wa.y;
+      if (b.x < wa.x - 4) x = wa.x;
+      if (x !== b.x || y !== b.y) win.setPosition(x, y);
+    } catch {
+      /* ignore */
+    }
+  });
 
   // 先启动加载、后 await：ready-to-show 可能在 loadURL 期间就已触发，
   // 因此必须在下方监听器注册完成后才等待加载结束，避免事件被错过。
