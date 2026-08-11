@@ -1,8 +1,8 @@
 {
+  "version": "3.5.7",
   "notes": [
-    "v3.5.6 - 修复左边栏动画重构导致的面板布局丢失（知识库/临时区分隔线无法拖拽、底部按钮区空白）"
+    "v3.5.7 - 修复无边框窗口最大化后整体上移/标题栏被挤压：移除最大化时setBounds，还原与显示器变化时位置兜底"
   ],
-  "publishDate": "2026-08-11",
-  "url": "https://github.com/myp-super/MinePDF/releases/download/v3.5.6/MinePDF.Setup.3.5.6.exe",
-  "version": "3.5.6"
+  "url": "https://github.com/myp-super/MinePDF/releases/download/v3.5.7/MinePDF.Setup.3.5.7.exe",
+  "publishDate": "2026-08-11"
 }
