@@ -1,8 +1,8 @@
 {
-  "version": "3.5.3",
   "notes": [
-    "v3.5.3 - 标注菜单重构：高亮右键（编辑标注/删除标注/突出显示换色/删除高亮），选词右键（复制/突出显示选色/添加标注→默认黄色高亮+圆点），标注框只有×和保存直接编辑"
+    "v3.5.4 - 标注气泡只显示标注（移除高亮原生title避免冒出选中文字）；新增设置开关：双击左右边栏空白区快速折叠/展开"
   ],
-  "url": "https://github.com/myp-super/MinePDF/releases/download/v3.5.3/MinePDF.Setup.3.5.3.exe",
-  "publishDate": "2026-08-11"
+  "publishDate": "2026-08-11",
+  "version": "3.5.4",
+  "url": "https://github.com/myp-super/MinePDF/releases/download/v3.5.4/MinePDF.Setup.3.5.4.exe"
 }
