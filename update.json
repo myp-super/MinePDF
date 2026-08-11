@@ -1,8 +1,8 @@
 {
-  "url": "https://github.com/myp-super/MinePDF/releases/download/v3.4.5/MinePDF.Setup.3.4.5.exe",
-  "publishDate": "2026-08-11",
+  "url": "https://github.com/myp-super/MinePDF/releases/download/v3.4.6/MinePDF.Setup.3.4.6.exe",
   "notes": [
-    "v3.4.5 - 高亮交互全面修复：修正文本项字形包围盒坐标（基线下方0.2h），拖拽扫过矩形区域选词不再丢字/跳选；单击不生成高亮；点击空白取消选中；Delete/Backspace删除选中高亮；修复右键菜单被平移抢占"
+    "v3.4.6 - 选词/高亮改用PDFium引擎字符框（FPDFText_GetLooseCharBox）：精确字形几何、空格标点中文英文全含、无缺字，不依赖pdf.js解析；首帧即可选词；保留矩形扫选+Sumatra行合并"
   ],
-  "version": "3.4.5"
+  "publishDate": "2026-08-11",
+  "version": "3.4.6"
 }
