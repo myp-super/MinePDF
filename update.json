@@ -1,8 +1,8 @@
 {
+  "version": "3.5.0",
   "publishDate": "2026-08-11",
+  "url": "https://github.com/myp-super/MinePDF/releases/download/v3.5.0/MinePDF.Setup.3.5.0.exe",
   "notes": [
-    "v3.4.7 - 普通模式拖选升级为连续蓝色选区（与高亮同一套PDFium引擎字符框+行合并），Ctrl+C复制选中文字，点空白清除，链接点击不受影响；修复右键平移路由回归"
-  ],
-  "version": "3.4.7",
-  "url": "https://github.com/myp-super/MinePDF/releases/download/v3.4.7/MinePDF.Setup.3.4.7.exe"
+    "v3.5.0 - 沉浸式阅读：工具栏+标签栏联动折叠，悬停顶部带动画滑出；标注系统重构：移除信息面板标注，右键高亮添加标注（弹窗×/⋮/保存），有标注的高亮首字上方同色圆点悬停显示标注"
+  ]
 }
