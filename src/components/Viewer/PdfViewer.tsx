@@ -28,6 +28,7 @@ import {
 } from '../../lib/textIndex';
 import { useApp } from '../../store';
 import { ContextMenu } from '../ui';
+import { AnnotationNotePopup } from './AnnotationNotePopup';
 import { PdfPage, type PdfLinkService } from './PdfPage';
 import { PdfSearchBar } from './PdfSearchBar';
 import { PdfToolbar } from './PdfToolbar';
@@ -89,7 +90,10 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
   const [scale, setScale] = useState(1);
   const [mode, setMode] = useState<'single' | 'double'>('single');
   const [currentPage, setCurrentPage] = useState(1);
-  const [immersive, setImmersive] = useState(false);
+  const immersive = useApp((s) => s.immersive);
+  const setImmersive = useApp((s) => s.setImmersive);
+  const immersiveTopOpen = useApp((s) => s.immersiveTopOpen);
+  const setImmersiveTopOpen = useApp((s) => s.setImmersiveTopOpen);
   const [toolbarCollapsed, setToolbarCollapsed] = useState(false);
   const [highlightMode, setHighlightMode] = useState(false);
   const [highlightColor, setHighlightColor] = useState('#fde047');
@@ -120,6 +124,12 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
   /** 所有页的真实物理尺寸（pt）：虚拟滚动精确布局用；PDFium 一次性返回 */
   const [pageSizes, setPageSizes] = useState<{ w: number; h: number }[] | null>(null);
   const [annMenu, setAnnMenu] = useState<{
+    a: AnnotationRecord;
+    x: number;
+    y: number;
+  } | null>(null);
+  /** 高亮标注弹窗（右键添加标注 / 点击圆点） */
+  const [notePopup, setNotePopup] = useState<{
     a: AnnotationRecord;
     x: number;
     y: number;
@@ -881,7 +891,6 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
         });
       }
       setAnnotations(await window.pkm.listAnnotations(pdf.id));
-      setInspectorTab('annotations');
       toast(
         'success',
         pages.length > 1
@@ -968,8 +977,17 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
 
   const handleAnnotationClick = (a: AnnotationRecord) => {
     setSelectedAnnotationId(a.id);
-    setInspectorTab('annotations');
     scrollToPage(a.page);
+  };
+
+  const saveAnnotationNote = async (a: AnnotationRecord, note: string) => {
+    try {
+      await window.pkm.updateAnnotation(a.id, { note });
+      setAnnotations(await window.pkm.listAnnotations(pdf.id));
+      setNotePopup(null);
+    } catch (err) {
+      toast('error', terr(err instanceof Error ? err.message : String(err)));
+    }
   };
 
   // ---------- annotation right-click menu ----------
@@ -978,7 +996,6 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
       await window.pkm.deleteAnnotation(a.id);
       setAnnotations(await window.pkm.listAnnotations(pdf.id));
       if (selectedAnnotationId === a.id) setSelectedAnnotationId(null);
-      toast('success', t('inspector.annotationDeleted'));
     } catch (err) {
       toast('error', terr(err instanceof Error ? err.message : String(err)));
     }
@@ -1089,15 +1106,15 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
       if (!wasMax) await window.pkm.toggleMaximize();
       if (!s.sidebarCollapsed) s.setSidebarCollapsed(true);
       if (!s.inspectorCollapsed) s.setInspectorCollapsed(true);
-      setToolbarCollapsed(true);
+      setImmersiveTopOpen(false);
       setImmersive(true);
       setScale(1.21);
     } else {
       const prev = immersivePrevRef.current;
       setImmersive(false);
+      setImmersiveTopOpen(false);
       if (prev) {
         setScale(prev.scale);
-        setToolbarCollapsed(prev.toolbarCollapsed);
         if (prev.sidebar !== s.sidebarCollapsed) s.setSidebarCollapsed(prev.sidebar);
         if (prev.inspector !== s.inspectorCollapsed) s.setInspectorCollapsed(prev.inspector);
         if (!prev.maximized) {
@@ -1128,6 +1145,10 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
       liveHighlightsColor={highlightMode ? highlightColor : '#3b82f6'}
       selectionQuads={selection?.quads[n]}
       onAnnotationClick={handleAnnotationClick}
+      onAnnotationNote={(a, x, y) => {
+        setSelectedAnnotationId(a.id);
+        setNotePopup({ a, x, y });
+      }}
       onAnnotationContextMenu={(a, x, y) => setAnnMenu({ a, x, y })}
       onJumpToPage={gotoPage}
       registerPage={registerPage}
@@ -1206,12 +1227,20 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
         {immersive && (
           <div
             className="absolute inset-x-0 top-0 z-30"
-            onMouseEnter={() => setToolbarCollapsed(false)}
-            onMouseLeave={() => setToolbarCollapsed(true)}
+            onMouseEnter={() => setImmersiveTopOpen(true)}
+            onMouseLeave={() => setImmersiveTopOpen(false)}
           >
-            {toolbarCollapsed ? (
-              <div className="h-5" />
-            ) : (
+            {/* 折叠时的顶部热区：光标移入展开 */}
+            <div className={immersiveTopOpen ? 'h-0' : 'h-5'} />
+            {/* 工具栏滑出动画（不突然出现） */}
+            <div
+              data-immersive-toolbar
+              className={`overflow-hidden transition-[max-height,opacity,transform] duration-300 ease-out ${
+                immersiveTopOpen
+                  ? 'max-h-16 translate-y-0 opacity-100'
+                  : 'max-h-0 -translate-y-2 opacity-0'
+              }`}
+            >
               <PdfToolbar
                 pdf={pdf}
                 pageCount={pageCount}
@@ -1246,7 +1275,7 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
                   )
                 }
               />
-            )}
+            </div>
           </div>
         )}
         {searchOpen && (
@@ -1342,8 +1371,11 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
           onClose={() => setAnnMenu(null)}
           items={[
             {
-              label: t('inspector.annotationEdit'),
-              onClick: () => handleAnnotationClick(annMenu.a),
+              label: annMenu.a.note ? t('viewer.editNote') : t('viewer.addNote'),
+              onClick: () => {
+                setNotePopup({ a: annMenu.a, x: annMenu.x, y: annMenu.y });
+                setAnnMenu(null);
+              },
             },
             {
               label: t('inspector.annotationDelete'),
@@ -1351,6 +1383,19 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
               onClick: () => void deleteAnnotation(annMenu.a),
             },
           ]}
+        />
+      )}
+      {notePopup && (
+        <AnnotationNotePopup
+          a={notePopup.a}
+          x={notePopup.x}
+          y={notePopup.y}
+          onClose={() => setNotePopup(null)}
+          onSaved={(a, note) => void saveAnnotationNote(a, note)}
+          onDelete={(a) => {
+            setNotePopup(null);
+            void deleteAnnotation(a);
+          }}
         />
       )}
     </main>

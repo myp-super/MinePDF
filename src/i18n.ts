@@ -339,6 +339,13 @@ const zh: Dict = {
 
   'viewer.loading': '正在加载 PDF…',
   'viewer.renderFailed': '页面渲染失败，请切换其他文档后重试',
+  'viewer.addNote': '添加标注',
+  'viewer.editNote': '编辑标注',
+  'viewer.noteTitle': '标注',
+  'viewer.save': '保存',
+  'viewer.edit': '编辑',
+  'viewer.deleteNote': '删除标注',
+  'viewer.notePlaceholder': '输入标注内容…',
 };
 
 const en: Dict = {
@@ -676,6 +683,13 @@ const en: Dict = {
 
   'viewer.loading': 'Loading PDF…',
   'viewer.renderFailed': 'Failed to render this page, try switching documents',
+  'viewer.addNote': 'Add note',
+  'viewer.editNote': 'Edit note',
+  'viewer.noteTitle': 'Note',
+  'viewer.save': 'Save',
+  'viewer.edit': 'Edit',
+  'viewer.deleteNote': 'Delete note',
+  'viewer.notePlaceholder': 'Type a note…',
 };
 
 const DICTS: Record<Lang, Dict> = { 'zh-CN': zh, 'en-US': en };

@@ -47,6 +47,8 @@ interface PdfPageProps {
   fallbackH: number | null;
   onAnnotationClick: (a: AnnotationRecord) => void;
   onAnnotationContextMenu: (a: AnnotationRecord, x: number, y: number) => void;
+  /** 点击高亮上的标注圆点 -> 打开标注弹窗 */
+  onAnnotationNote?: (a: AnnotationRecord, x: number, y: number) => void;
   /** 点击页内链接时跳转到目标页（1 起） */
   onJumpToPage?: (n: number) => void;
   registerPage: (n: number, el: HTMLDivElement | null) => void;
@@ -90,6 +92,7 @@ export function PdfPage({
   fallbackH,
   onAnnotationClick,
   onAnnotationContextMenu,
+  onAnnotationNote,
   onJumpToPage,
   registerPage,
   registerViewport,
@@ -449,7 +452,20 @@ export function PdfPage({
                   onAnnotationContextMenu(a, e.clientX, e.clientY);
                 }}
                 title={a.content || `Page ${pageNumber} highlight`}
-              />
+              >
+                {/* 有标注的高亮：首字上方同色圆点，悬停显示标注 */}
+                {i === 0 && a.note ? (
+                  <span
+                    className="annotation-dot"
+                    style={{ background: a.color }}
+                    title={a.note}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onAnnotationNote?.(a, e.clientX, e.clientY);
+                    }}
+                  />
+                ) : null}
+              </div>
             );
           }),
         )}

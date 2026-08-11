@@ -21,6 +21,8 @@ export function ScreenViewer({
   onMissing: (p: PdfRecord) => void;
 }) {
   const activateScreen = useApp((s) => s.activateScreen);
+  const immersive = useApp((s) => s.immersive);
+  const immersiveTopOpen = useApp((s) => s.immersiveTopOpen);
   const pdfs = useApp((s) => s.pdfs);
   const inboxPdfs = useApp((s) => s.inboxPdfs);
   const activeTab = screen.tabs.find((t) => t.id === screen.activeTabId) ?? screen.tabs[0];
@@ -35,7 +37,16 @@ export function ScreenViewer({
       className="flex min-h-0 min-w-0 flex-1 flex-col"
       onClick={() => activateScreen(screen.id)}
     >
-      <TabBar screen={screen} active={active} />
+      {/* 沉浸式：标签栏与工具栏联动折叠，悬停顶部一起滑出 */}
+      <div
+        className={`overflow-hidden transition-[max-height,opacity,transform] duration-300 ease-out ${
+          immersive && !immersiveTopOpen
+            ? 'max-h-0 -translate-y-2 opacity-0'
+            : 'max-h-8 translate-y-0 opacity-100'
+        }`}
+      >
+        <TabBar screen={screen} active={active} />
+      </div>
       {pdf ? (
         <PdfViewer pdf={pdf} paneId={screen.id} onMissing={onMissing} paneActive={active} />
       ) : (

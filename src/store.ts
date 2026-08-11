@@ -135,6 +135,10 @@ interface AppState {
   splitLayout: SplitLayout;
   /** 分屏时主屏占比（0.2~0.8），分隔线拖拽调整 */
   splitRatio: number;
+  /** 沉浸式阅读（全局）：工具栏+标签栏联动折叠，悬停顶部展开 */
+  immersive: boolean;
+  /** 沉浸式顶部栏是否展开（悬停显示） */
+  immersiveTopOpen: boolean;
   lastSession: LastSession | null;
   selectedFolderId: number | null;
   selectedPdfIds: number[];
@@ -168,6 +172,8 @@ interface AppState {
   splitScreen: (layout: 'split-h' | 'split-v') => void;
   unsplitScreen: () => void;
   setSplitRatio: (r: number) => void;
+  setImmersive: (v: boolean) => void;
+  setImmersiveTopOpen: (v: boolean) => void;
   restoreLastSession: () => void;
   setSelectedFolder: (id: number | null) => void;
   setInboxPdfs: (items: PdfRecord[]) => void;
@@ -214,6 +220,8 @@ export const useApp = create<AppState>((set, get) => ({
   activeScreenId: null,
   splitLayout: 'single',
   splitRatio: 0.5,
+  immersive: false,
+  immersiveTopOpen: false,
   lastSession: null,
   selectedFolderId: null,
   selectedPdfIds: [],
@@ -531,6 +539,8 @@ export const useApp = create<AppState>((set, get) => ({
     });
   },
   setSplitRatio: (r) => set({ splitRatio: Math.min(0.8, Math.max(0.2, r)) }),
+  setImmersive: (v) => set({ immersive: v }),
+  setImmersiveTopOpen: (v) => set({ immersiveTopOpen: v }),
   /**
    * 启动恢复：优先恢复完整会话快照（全部标签页 + 分屏布局 + 当前页码）；
    * 旧版本只有单条 lastSession 时回退为只恢复最后一个 PDF。

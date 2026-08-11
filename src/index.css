@@ -243,6 +243,21 @@ body {
 .annotation-hl.selected {
   outline: 2px solid var(--app-accent2);
 }
+/* 有标注的高亮：首字上方同色圆点（悬停 title 显示标注） */
+.annotation-dot {
+  position: absolute;
+  top: -5px;
+  left: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 9999px;
+  border: 1px solid rgba(0, 0, 0, 0.3);
+  cursor: pointer;
+  z-index: 25;
+}
+.annotation-dot:hover {
+  transform: scale(1.25);
+}
 /* 拖拽高亮实时预览：荧光笔涂过效果（不拦截鼠标事件） */
 .live-highlight {
   position: absolute;

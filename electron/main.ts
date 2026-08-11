@@ -745,7 +745,7 @@ async function createMainWindow(): Promise<BrowserWindow> {
                     const inspector = document.querySelector('[data-panel="inspector"]');
                     const sidebar = document.querySelector('[data-panel="sidebar"]');
                     if (!inspector || !sidebar) return { inspector: !!inspector, sidebar: !!sidebar };
-                    const labels = ['信息', '书签', '笔记', '标注'];
+                    const labels = ['信息', '书签', '笔记'];
                     inspector.style.width = '180px';
                     sidebar.style.width = '170px';
                     await new Promise((r) => setTimeout(r, 150));
@@ -815,7 +815,12 @@ async function createMainWindow(): Promise<BrowserWindow> {
                     if (immersiveBtn) immersiveBtn.click();
                     await new Promise((r) => setTimeout(r, 800));
                     const wrap = document.querySelector('.absolute.inset-x-0.top-0.z-30');
-                    const collapsedInImmersive = !!wrap && !wrap.querySelector('button');
+                    const tbWrap = wrap ? wrap.querySelector('[data-immersive-toolbar]') : null;
+                    const collapsedInImmersive =
+                      !!wrap &&
+                      (!tbWrap ||
+                        getComputedStyle(tbWrap).maxHeight === '0px' ||
+                        tbWrap.getBoundingClientRect().height === 0);
                     if (wrap) {
                       wrap.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, relatedTarget: null }));
                       await new Promise((r) => setTimeout(r, 250));
@@ -1525,7 +1530,7 @@ async function createMainWindow(): Promise<BrowserWindow> {
                     if (inboxRow) inboxRow.click();
                     await new Promise((r) => setTimeout(r, 2000));
                     const c = document.querySelector('.pdf-page-sheet canvas');
-                    const tabLabels = ['书签', '笔记', '标注'];
+                    const tabLabels = ['书签', '笔记'];
                     const tabs = tabLabels.map((label) =>
                       [...document.querySelectorAll('button')].some((b) => (b.textContent || '').trim() === label),
                     );
@@ -1931,6 +1936,71 @@ async function createMainWindow(): Promise<BrowserWindow> {
                     })()
                   `);
                   console.log('[capture] selDiag', JSON.stringify(selDiag));
+                }
+                // 标注流程验证：右键添加标注 -> 保存 -> 圆点出现 -> 点击圆点弹窗
+                if (process.env.PKM_TEST_PDF) {
+                  const noteDiag = await win.webContents.executeJavaScript(`
+                    (async () => {
+                      const p = ${JSON.stringify(process.env.PKM_TEST_PDF)};
+                      if (window.__pkmAct) window.__pkmAct('clearScreens');
+                      await new Promise((r) => setTimeout(r, 200));
+                      await window.pkm.importPdfs([p], null);
+                      const snap = await window.pkm.getSnapshot();
+                      const pdf = snap.pdfs.find((x) => x.filepath.includes('Submission') || x.filepath.includes('感受野') || x.filepath.includes('英语'));
+                      if (!pdf) return { pdf: false };
+                      window.__pkmOpenPdf(pdf.id);
+                      await new Promise((r) => setTimeout(r, 2500));
+                      const hlBtn = [...document.querySelectorAll('button')].find((b) => (b.getAttribute('title') || '').includes('高亮模式'));
+                      if (!hlBtn) return { hlBtn: false };
+                      hlBtn.click();
+                      await new Promise((r) => setTimeout(r, 200));
+                      const sc = document.querySelector('[data-pan-scroll]');
+                      const span = [...document.querySelectorAll('.textLayer span')].find((s) => (s.textContent || '').trim());
+                      const sr = span.getBoundingClientRect();
+                      // 拖一行生成高亮
+                      sc.dispatchEvent(new MouseEvent('mousedown', { button: 0, buttons: 1, clientX: sr.left + 2, clientY: sr.top + sr.height / 2, bubbles: true, cancelable: true }));
+                      await new Promise((r) => setTimeout(r, 120));
+                      window.dispatchEvent(new MouseEvent('mousemove', { clientX: sr.left + 180, clientY: sr.top + sr.height / 2, bubbles: true }));
+                      await new Promise((r) => setTimeout(r, 200));
+                      window.dispatchEvent(new MouseEvent('mouseup', { button: 0, buttons: 0, clientX: sr.left + 180, clientY: sr.top + sr.height / 2, bubbles: true }));
+                      await new Promise((r) => setTimeout(r, 900));
+                      const hl = document.querySelector('.annotation-hl');
+                      if (!hl) return { hl: false };
+                      // 右键 -> 添加标注
+                      const hr = hl.getBoundingClientRect();
+                      hl.dispatchEvent(new MouseEvent('contextmenu', { clientX: hr.left + 10, clientY: hr.top + 10, bubbles: true, cancelable: true }));
+                      await new Promise((r) => setTimeout(r, 300));
+                      const addBtn = [...document.querySelectorAll('button')].find((b) => (b.textContent || '').trim() === '添加标注');
+                      let popupOpened = false;
+                      if (addBtn) { addBtn.click(); await new Promise((r) => setTimeout(r, 300)); }
+                      const popup = [...document.querySelectorAll('div')].find((d) => String(d.className || '').includes('z-[80]'));
+                      popupOpened = !!popup;
+                      let saved = false;
+                      if (popup) {
+                        const ta = popup.querySelector('textarea');
+                        if (ta) {
+                          const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
+                          setter.call(ta, '测试标注内容');
+                          ta.dispatchEvent(new Event('input', { bubbles: true }));
+                        }
+                        const saveBtn = [...popup.querySelectorAll('button')].find((b) => (b.textContent || '').trim() === '保存');
+                        if (saveBtn) { saveBtn.click(); await new Promise((r) => setTimeout(r, 900)); }
+                        const after = await window.pkm.listAnnotations(pdf.id);
+                        saved = after.some((x) => (x.note || '').includes('测试标注'));
+                      }
+                      const dot = document.querySelector('.annotation-dot');
+                      const dotTitle = dot ? dot.getAttribute('title') : null;
+                      let dotOpensPopup = false;
+                      if (dot) {
+                        const dr = dot.getBoundingClientRect();
+                        dot.dispatchEvent(new MouseEvent('click', { clientX: dr.left + 2, clientY: dr.top + 2, bubbles: true, cancelable: true }));
+                        await new Promise((r) => setTimeout(r, 300));
+                        dotOpensPopup = [...document.querySelectorAll('div')].some((d) => String(d.className || '').includes('z-[80]'));
+                      }
+                      return { pdf: true, popupOpened, saved, dot: !!dot, dotTitle, dotOpensPopup };
+                    })()
+                  `);
+                  console.log('[capture] noteDiag', JSON.stringify(noteDiag));
                 }
                 // 删除 PDF 后，已打开的标签页应被自动清理（含分屏）
                 const deleteTabDiag = await win.webContents.executeJavaScript(`

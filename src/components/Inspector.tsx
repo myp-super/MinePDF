@@ -80,7 +80,6 @@ export function Inspector() {
     { key: 'meta', label: t('inspector.info'), icon: <Info size={14} /> },
     { key: 'outline', label: t('inspector.outline'), icon: <BookMarked size={14} /> },
     { key: 'notes', label: t('inspector.notes'), icon: <StickyNote size={14} /> },
-    { key: 'annotations', label: t('inspector.annotations'), icon: <Pin size={14} /> },
   ] as const;
 
   if (!pdf) {
@@ -160,7 +159,6 @@ export function Inspector() {
               ['meta', t('inspector.info')],
               ['outline', t('inspector.outline')],
               ['notes', t('inspector.notes')],
-              ['annotations', t('inspector.annotations')],
             ] as const
           ).map(([key, label]) => (
             <button
@@ -183,7 +181,6 @@ export function Inspector() {
         {tab === 'meta' && <MetaPanel pdf={pdf} />}
         {tab === 'outline' && <InspectorOutline items={outline} />}
         {tab === 'notes' && <NotesPanel key={pdf.id} pdf={pdf} />}
-        {tab === 'annotations' && <AnnotationsPanel pdf={pdf} />}
       </div>
     </aside>
   );
