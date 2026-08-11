@@ -291,8 +291,27 @@ async function createMainWindow(): Promise<BrowserWindow> {
     }
   };
 
+  // 最大化/还原时始终记录窗口状态（含内容边界），便于精确定位偏移
+  const logWindowState = (tag: string) => {
+    try {
+      if (win.isDestroyed()) return;
+      const b = win.getBounds();
+      const cb = win.getContentBounds();
+      const wa = screen.getDisplayMatching(b).workArea;
+      const line = `[${new Date().toISOString()}] ${tag} bounds=${JSON.stringify(b)} content=${JSON.stringify(cb)} workArea=${JSON.stringify(wa)} maximized=${win.isMaximized()}`;
+      try {
+        fs.appendFileSync(path.join(app.getPath('userData'), 'window-debug.log'), line + '\n');
+      } catch {
+        /* ignore */
+      }
+    } catch {
+      /* ignore */
+    }
+  };
+
   win.on('maximize', () => {
     win.webContents.send('window:maximized-changed', true);
+    logWindowState('maximize');
     // 等 Windows 最大化动画落定后，若内容仍被不可见边框顶出工作区，条件式钳制回去
     setTimeout(() => {
       if (win.isDestroyed() || !win.isMaximized()) return;
@@ -310,6 +329,7 @@ async function createMainWindow(): Promise<BrowserWindow> {
   });
   win.on('unmaximize', () => {
     win.webContents.send('window:maximized-changed', false);
+    logWindowState('unmaximize');
     // 兜底：还原后若窗口顶边被顶出显示器工作区（无边框最大化的历史错位），纠正回可见位置
     try {
       const b = win.getBounds();
