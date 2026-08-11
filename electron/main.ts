@@ -821,8 +821,16 @@ async function createMainWindow(): Promise<BrowserWindow> {
                       (!tbWrap ||
                         getComputedStyle(tbWrap).maxHeight === '0px' ||
                         tbWrap.getBoundingClientRect().height === 0);
-                    if (wrap) {
-                      wrap.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, relatedTarget: null }));
+                    const screenRoot = document.querySelector('[data-screen-root]');
+                    const rootRect = screenRoot ? screenRoot.getBoundingClientRect() : null;
+                    if (screenRoot && rootRect) {
+                      screenRoot.dispatchEvent(
+                        new MouseEvent('mousemove', {
+                          clientX: rootRect.left + 200,
+                          clientY: rootRect.top + 10,
+                          bubbles: true,
+                        }),
+                      );
                       await new Promise((r) => setTimeout(r, 250));
                     }
                     const hoverShowsToolbar = !!wrap && wrap.querySelectorAll('button').length > 3;
@@ -1993,7 +2001,14 @@ async function createMainWindow(): Promise<BrowserWindow> {
                         saved = after.some((x) => (x.note || '').includes('测试标注'));
                       }
                       const dot = document.querySelector('.annotation-dot');
-                      const dotTitle = dot ? dot.getAttribute('title') : null;
+                      let tooltipText = null;
+                      if (dot) {
+                        const dr = dot.getBoundingClientRect();
+                        dot.dispatchEvent(new MouseEvent('mouseover', { clientX: dr.left + 2, clientY: dr.top + 2, bubbles: true, relatedTarget: null }));
+                        await new Promise((r) => setTimeout(r, 150));
+                        const tip = [...document.querySelectorAll('div')].find((d) => String(d.className || '').includes('z-[90]'));
+                        tooltipText = tip ? (tip.textContent || '').trim() : null;
+                      }
                       let dotOpensPopup = false;
                       if (dot) {
                         const dr = dot.getBoundingClientRect();
@@ -2001,7 +2016,7 @@ async function createMainWindow(): Promise<BrowserWindow> {
                         await new Promise((r) => setTimeout(r, 300));
                         dotOpensPopup = [...document.querySelectorAll('div')].some((d) => String(d.className || '').includes('z-[80]'));
                       }
-                      return { pdf: true, popupOpened, saved, dot: !!dot, dotTitle, dotOpensPopup };
+                      return { pdf: true, popupOpened, saved, dot: !!dot, tooltipText, dotOpensPopup };
                     })()
                   `);
                   console.log('[capture] noteDiag', JSON.stringify(noteDiag));

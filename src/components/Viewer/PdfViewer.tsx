@@ -980,7 +980,6 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
 
   const handleAnnotationClick = (a: AnnotationRecord) => {
     setSelectedAnnotationId(a.id);
-    scrollToPage(a.page);
   };
 
   const saveAnnotationNote = async (a: AnnotationRecord, note: string) => {
@@ -1228,11 +1227,7 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
 
       <div className="relative min-h-0 flex-1 overflow-hidden">
         {immersive && (
-          <div
-            className="absolute inset-x-0 top-0 z-30"
-            onMouseEnter={() => setImmersiveTopOpen(true)}
-            onMouseLeave={() => setImmersiveTopOpen(false)}
-          >
+          <div className="absolute inset-x-0 top-0 z-30">
             {/* 折叠时的顶部热区：光标移入展开 */}
             <div className={immersiveTopOpen ? 'h-0' : 'h-5'} />
             {/* 工具栏滑出动画（不突然出现） */}

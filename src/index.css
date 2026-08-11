@@ -241,7 +241,8 @@ body {
   outline: 1px solid rgba(255, 255, 255, 0.6);
 }
 .annotation-hl.selected {
-  outline: 2px solid var(--app-accent2);
+  outline: 3px dashed rgba(0, 0, 0, 0.9);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.3);
 }
 /* 有标注的高亮：首字上方同色圆点（悬停 title 显示标注） */
 .annotation-dot {

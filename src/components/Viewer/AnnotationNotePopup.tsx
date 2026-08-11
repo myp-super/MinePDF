@@ -99,10 +99,7 @@ export function AnnotationNotePopup({
           placeholder={t('viewer.notePlaceholder')}
           onChange={(e) => setNote(e.target.value)}
         />
-        <div className="mt-2 flex items-center justify-between">
-          <span className="truncate text-[10px] text-app-muted">
-            {a.content ? a.content.slice(0, 24) + (a.content.length > 24 ? '…' : '') : ''}
-          </span>
+        <div className="mt-2 flex items-center justify-end">
           <button
             className="rounded-md bg-app-accent px-3 py-1 text-[11px] font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
             disabled={!editing}

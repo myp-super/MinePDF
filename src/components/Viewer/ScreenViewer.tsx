@@ -34,8 +34,16 @@ export function ScreenViewer({
 
   return (
     <div
+      data-screen-root
       className="flex min-h-0 min-w-0 flex-1 flex-col"
       onClick={() => activateScreen(screen.id)}
+      onMouseMove={(e) => {
+        // 沉浸式：光标贴近本屏顶部（约 64px 内）展开工具栏+标签栏，移开收起
+        if (!immersive) return;
+        const top = e.currentTarget.getBoundingClientRect().top;
+        if (e.clientY - top < 64) useApp.getState().setImmersiveTopOpen(true);
+        else useApp.getState().setImmersiveTopOpen(false);
+      }}
     >
       {/* 沉浸式：标签栏与工具栏联动折叠，悬停顶部一起滑出 */}
       <div

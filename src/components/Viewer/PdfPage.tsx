@@ -103,6 +103,8 @@ export function PdfPage({
   const [wrapEl, setWrapEl] = useState<HTMLDivElement | null>(null);
   const [renderError, setRenderError] = useState(false);
   const [pending, setPending] = useState(false);
+  /** 标注圆点悬停气泡（即时出现，替代原生 title 的慢延迟） */
+  const [noteTip, setNoteTip] = useState<{ x: number; y: number; text: string } | null>(null);
   /** PDFium 原生提取的链接矩形：首帧位图渲染时即可点击，不依赖 pdf.js 解析 */
   const [links, setLinks] = useState<PdfiumLink[]>([]);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -458,9 +460,13 @@ export function PdfPage({
                   <span
                     className="annotation-dot"
                     style={{ background: a.color }}
-                    title={a.note}
+                    onMouseEnter={(e) =>
+                      setNoteTip({ x: e.clientX, y: e.clientY, text: a.note ?? '' })
+                    }
+                    onMouseLeave={() => setNoteTip(null)}
                     onClick={(e) => {
                       e.stopPropagation();
+                      setNoteTip(null);
                       onAnnotationNote?.(a, e.clientX, e.clientY);
                     }}
                   />
@@ -533,6 +539,16 @@ export function PdfPage({
       {renderError && (
         <div className="absolute inset-0 z-40 flex items-center justify-center bg-app-canvas px-6 text-center text-[11px] text-app-muted">
           {t('viewer.renderFailed')}
+        </div>
+      )}
+
+      {/* 标注圆点悬停气泡 */}
+      {noteTip && (
+        <div
+          className="fixed z-[90] max-w-[260px] rounded-lg border border-app-border bg-app-panel px-2.5 py-1.5 text-[11px] leading-relaxed text-app-text shadow-2xl"
+          style={{ left: noteTip.x + 12, top: noteTip.y + 12 }}
+        >
+          {noteTip.text}
         </div>
       )}
     </div>
