@@ -17,6 +17,8 @@ const DEFAULTS: AppSettings = {
   autoCollapseSidebar: false,
   /** 右键拖拽平移（默认开启）；关闭后恢复左键拖拽平移 */
   rightDragPan: true,
+  /** 双击左右边栏空白处快速折叠/展开 */
+  dblClickTogglePanels: true,
   libraryPath: '',
   libraryPdfDir: '',
 };

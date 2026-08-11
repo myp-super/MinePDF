@@ -168,6 +168,7 @@ export function Sidebar() {
   const [appVersion, setAppVersion] = useState('1.0.0');
   /** 知识库自动折叠：阅读 PDF 时悬停左边缘临时展开，移出后自动收起 */
   const autoHide = settings.autoCollapseSidebar && activePdfId != null;
+  const dblClickToggle = settings.dblClickTogglePanels;
   const autoHideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -594,6 +595,9 @@ export function Sidebar() {
     return (
       <aside
         className="flex w-11 shrink-0 flex-col items-center border-r border-app-border bg-app-panel py-2"
+        onDoubleClick={() => {
+          if (dblClickToggle) setSidebarCollapsed(false);
+        }}
         onMouseEnter={() => {
           // 自动折叠开启且正在阅读：悬停即临时展开知识库
           if (autoHide) {
@@ -618,6 +622,12 @@ export function Sidebar() {
       className="flex shrink-0 flex-col border-r border-app-border bg-app-panel"
       style={{ width: sidebarWidth }}
       data-panel="sidebar"
+      onDoubleClick={(e) => {
+        if (!dblClickToggle) return;
+        const t = e.target as HTMLElement;
+        if (t.closest('button, a, input, textarea') || t.closest('[class*="cursor-pointer"]')) return;
+        setSidebarCollapsed(true);
+      }}
       onMouseEnter={cancelAutoHide}
       onMouseLeave={scheduleAutoHide}
     >

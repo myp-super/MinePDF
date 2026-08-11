@@ -70,6 +70,7 @@ export function Inspector() {
   const setTab = useApp((s) => s.setInspectorTab);
   const collapsed = useApp((s) => s.inspectorCollapsed);
   const toggleCollapsed = useApp((s) => s.toggleInspectorCollapsed);
+  const dblClickToggle = useApp((s) => s.settings.dblClickTogglePanels);
   // 书签跟随当前选中屏的 PDF（per-pdf 缓存），避免分屏时显示另一屏的书签
   const outline = useApp((s) =>
     s.activePdfId != null ? s.outlines[s.activePdfId] ?? EMPTY_OUTLINE : EMPTY_OUTLINE,
@@ -100,7 +101,12 @@ export function Inspector() {
 
   if (collapsed) {
     return (
-      <aside className="flex w-11 shrink-0 flex-col items-center border-l border-app-border bg-app-panel py-2">
+      <aside
+        className="flex w-11 shrink-0 flex-col items-center border-l border-app-border bg-app-panel py-2"
+        onDoubleClick={() => {
+          if (dblClickToggle) toggleCollapsed();
+        }}
+      >
         {tabs.map((tabItem) => (
           <button
             key={tabItem.key}
@@ -137,6 +143,12 @@ export function Inspector() {
       className="flex shrink-0 flex-col border-l border-app-border bg-app-panel"
       style={{ width: inspectorWidth }}
       data-panel="inspector"
+      onDoubleClick={(e) => {
+        if (!dblClickToggle) return;
+        const t = e.target as HTMLElement;
+        if (t.closest('button, a, input, textarea') || t.closest('[class*="cursor-pointer"]')) return;
+        toggleCollapsed();
+      }}
     >
       <div className="flex items-center justify-between border-b border-app-border px-3 py-2">
         <div className="flex items-center gap-1.5 text-xs font-semibold">

@@ -10,6 +10,7 @@ import {
   Languages,
   Library,
   Moon,
+  MousePointer2,
   Palette,
   RefreshCw,
   Save,
@@ -193,6 +194,17 @@ export function SettingsPage() {
             <Toggle
               checked={settings.rightDragPan}
               onChange={(v) => void update({ rightDragPan: v })}
+            />
+          </div>
+          <div className="mt-3 flex items-center gap-3">
+            <MousePointer2 size={13} className="shrink-0 text-app-accent" />
+            <div className="min-w-0 flex-1">
+              <div className="text-[11.5px] text-app-text/90">{t('settings.dblClickTogglePanels')}</div>
+              <div className="text-[10.5px] text-app-muted">{t('settings.dblClickTogglePanelsHint')}</div>
+            </div>
+            <Toggle
+              checked={settings.dblClickTogglePanels}
+              onChange={(v) => void update({ dblClickTogglePanels: v })}
             />
           </div>
         </section>

@@ -453,7 +453,6 @@ export function PdfPage({
                   e.preventDefault();
                   onAnnotationContextMenu(a, e.clientX, e.clientY);
                 }}
-                title={a.content || `Page ${pageNumber} highlight`}
               >
                 {/* 有标注的高亮：首字上方同色圆点，悬停显示标注 */}
                 {i === 0 && a.note ? (

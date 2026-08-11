@@ -62,6 +62,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   pdfDefaultApp: false,
   autoCollapseSidebar: false,
   rightDragPan: true,
+  dblClickTogglePanels: true,
   libraryPath: '',
   libraryPdfDir: '',
 };
