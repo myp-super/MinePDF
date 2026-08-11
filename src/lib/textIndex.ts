@@ -113,74 +113,108 @@ export async function getPageTextIndex(
   return { items, lines };
 }
 
-/** 把选中的文本项按“行带”合并成连续色块：一行一块，无视字体/大小写/标点差异 */
-export function mergeSelectionItems(selected: TextItemQuad[], lines: LineBand[]): Quad[] {
-  if (!selected.length) return [];
-  const byBand = new Map<number, TextItemQuad[]>();
-  for (const it of selected) {
-    let bi = 0;
-    let bd = Infinity;
-    for (let i = 0; i < lines.length; i++) {
-      const d = Math.abs(lines[i].baseline - it.baseline);
-      if (d < bd) {
-        bd = d;
-        bi = i;
-      }
-    }
-    const arr = byBand.get(bi) ?? [];
-    arr.push(it);
-    byBand.set(bi, arr);
-  }
-  return [...byBand.values()].map((grp) => {
-    let minX = Infinity;
-    let minY = Infinity;
-    let maxX = -Infinity;
-    let maxY = -Infinity;
-    for (const q of grp) {
-      minX = Math.min(minX, q.x);
-      minY = Math.min(minY, q.y);
-      maxX = Math.max(maxX, q.x + q.w);
-      maxY = Math.max(maxY, q.y + q.h);
-    }
-    return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
-  });
-}
-
 /**
- * 命中测试：先锁定指针所在“行带”（按垂直位置），再在行内取最近项，
- * 跨行拖动不会因标点/中英文等相邻项而跳到错误的行。
+ * 命中测试（移植 SumatraPDF FindClosestGlyph）：
+ * - 优先返回指针“实际落在”的字符；
+ * - 否则取中心距离最近的字符（无垂直加权，行距内判定准确）；
+ * - 指针落在字符右半时返回下一个字符（保证行尾字符能被选中）。
  */
 export function nearestTextIndex(
   items: TextItemQuad[],
-  lines: LineBand[],
+  _lines: LineBand[],
   px: number,
   py: number,
 ): number {
-  if (!items.length || !lines.length) return -1;
-  let bi = 0;
-  let bd = Infinity;
-  for (let i = 0; i < lines.length; i++) {
-    const cy = (lines[i].minY + lines[i].maxY) / 2;
-    const d = Math.abs(py - cy);
-    if (d < bd) {
-      bd = d;
-      bi = i;
-    }
-  }
-  const band = lines[bi];
-  let best = band.indices[0];
-  let bestD = Infinity;
-  for (const idx of band.indices) {
-    const it = items[idx];
-    const cx = it.x + it.w / 2;
-    const cy = it.y + it.h / 2;
-    const dx = px - cx;
-    const dy = (py - cy) * 1.2;
+  const n = items.length;
+  if (!n) return -1;
+  let result = -1;
+  let maxDist = Infinity;
+  let overGlyph = false;
+  for (let i = 0; i < n; i++) {
+    const c = items[i];
+    if (c.w < 0.01) continue;
+    const contains = px >= c.x && px <= c.x + c.w && py >= c.y && py <= c.y + c.h;
+    if (overGlyph && !contains) continue;
+    const dx = px - (c.x + c.w / 2);
+    const dy = py - (c.y + c.h / 2);
     const d = dx * dx + dy * dy;
-    if (d < bestD) {
-      bestD = d;
-      best = idx;
+    if (d < maxDist) {
+      maxDist = d;
+      result = i;
+    }
+    if (!overGlyph && contains) {
+      overGlyph = true;
+      maxDist = d;
+      result = i;
     }
   }
-  return best;
+  if (result < 0) return 0;
+  const bbox = items[result];
+  // 点在字符右半 -> 选中从下一个字符开始（保证拖到行尾能包含最后一个字符）
+  if (px > bbox.x + 0.5 * bbox.w) result++;
+  return Math.min(result, n);
+}
+
+/**
+ * 视觉行判定（移植 SumatraPDF IsGlyphOnVisualLine）：
+ * 新字符与当前行框的垂直重叠 >= 新字符高度的一半，则并入同一行。
+ * 用“字形高度”（em 的 0.6 倍）做判定，避免行距较密时把相邻行误并。
+ */
+function detectQuad(it: TextItemQuad): { x: number; y: number; w: number; h: number } {
+  const h = it.h * 0.6;
+  return { x: it.x, y: it.baseline - h, w: it.w, h };
+}
+
+function isGlyphOnVisualLine(
+  lineBox: { y: number; h: number },
+  glyphBox: { y: number; h: number },
+): boolean {
+  const top = Math.max(lineBox.y, glyphBox.y);
+  const bottom = Math.min(lineBox.y + lineBox.h, glyphBox.y + glyphBox.h);
+  return (bottom - top) * 2 >= glyphBox.h;
+}
+
+/**
+ * 把选中的文本项按视觉行合并成连续色块（移植 SumatraPDF FillSelectionRects）：
+ * 逐字符 Union，垂直重叠不足半高的字符另起一行；每行输出一个矩形，
+ * 行内无视空格/标点/中英文/字号差异，整行一条连续色块。
+ * 最终色块底部下扩 20% 以覆盖西文下行字母与标点。
+ */
+export function mergeSelectionItems(selected: TextItemQuad[], _lines: LineBand[]): Quad[] {
+  const n = selected.length;
+  if (!n) return [];
+  const out: Quad[] = [];
+  let i = 0;
+  while (i < n) {
+    while (i < n && selected[i].w < 0.01) i++;
+    if (i >= n) break;
+    let detect: { x: number; y: number; w: number; h: number } | null = null;
+    let full: TextItemQuad | null = null;
+    while (i < n && selected[i].w >= 0.01) {
+      const d = detectQuad(selected[i]);
+      if (detect && !isGlyphOnVisualLine(detect, d)) break;
+      detect = detect ? unionRect(detect, d) : d;
+      full = full ? unionItem(full, selected[i]) : selected[i];
+      i++;
+    }
+    if (!full) continue;
+    out.push({ x: full.x, y: full.y, w: full.w, h: full.h * 1.2 });
+  }
+  return out;
+}
+
+function unionRect(
+  a: { x: number; y: number; w: number; h: number },
+  b: { x: number; y: number; w: number; h: number },
+): { x: number; y: number; w: number; h: number } {
+  const x = Math.min(a.x, b.x);
+  const y = Math.min(a.y, b.y);
+  const right = Math.max(a.x + a.w, b.x + b.w);
+  const top = Math.max(a.y + a.h, b.y + b.h);
+  return { x, y, w: right - x, h: top - y };
+}
+
+function unionItem(a: TextItemQuad, b: TextItemQuad): TextItemQuad {
+  const u = unionRect(a, b);
+  return { ...u, baseline: a.baseline, str: a.str + b.str };
 }

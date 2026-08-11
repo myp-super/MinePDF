@@ -1750,7 +1750,7 @@ async function createMainWindow(): Promise<BrowserWindow> {
                     const r1 = spans[spans.length - 1].getBoundingClientRect();
                     sc.dispatchEvent(new MouseEvent('mousedown', { button: 0, buttons: 1, clientX: r0.left + 2, clientY: r0.top + r0.height / 2, bubbles: true, cancelable: true }));
                     await new Promise((r) => setTimeout(r, 120));
-                    window.dispatchEvent(new MouseEvent('mousemove', { clientX: r1.right - 2, clientY: r1.top + r1.height / 2, bubbles: true }));
+                    window.dispatchEvent(new MouseEvent('mousemove', { clientX: r1.left + 2, clientY: r1.top + r1.height / 2, bubbles: true }));
                     await new Promise((r) => setTimeout(r, 200));
                     window.dispatchEvent(new MouseEvent('mouseup', { button: 0, buttons: 0, bubbles: true }));
                     await new Promise((r) => setTimeout(r, 900));
@@ -1798,7 +1798,7 @@ async function createMainWindow(): Promise<BrowserWindow> {
                       const before = await window.pkm.listAnnotations(pdf.id);
                       sc.dispatchEvent(new MouseEvent('mousedown', { button: 0, buttons: 1, clientX: rA.left + 1, clientY: rA.top + rA.height / 2, bubbles: true, cancelable: true }));
                       await new Promise((r) => setTimeout(r, 120));
-                      window.dispatchEvent(new MouseEvent('mousemove', { clientX: rB.right - 1, clientY: rB.top + rB.height / 2, bubbles: true }));
+                      window.dispatchEvent(new MouseEvent('mousemove', { clientX: rB.left + 2, clientY: rB.top + rB.height / 2, bubbles: true }));
                       await new Promise((r) => setTimeout(r, 200));
                       window.dispatchEvent(new MouseEvent('mouseup', { button: 0, buttons: 0, bubbles: true }));
                       await new Promise((r) => setTimeout(r, 900));
@@ -1808,6 +1808,25 @@ async function createMainWindow(): Promise<BrowserWindow> {
                       if (added.length === 1) {
                         try { quads = JSON.parse(added[0].position); } catch { quads = null; }
                       }
+                      // 跨行测试：从第 1 行首拖到第 3 行末，应每行一块、共 3 块
+                      const rowsArr = [...rows.values()].sort((a, b) => a[0].getBoundingClientRect().top - b[0].getBoundingClientRect().top);
+                      let crossQuads = null;
+                      if (rowsArr.length >= 3) {
+                        const r1 = rowsArr[0][0].getBoundingClientRect();
+                        const r3 = rowsArr[2][rowsArr[2].length - 1].getBoundingClientRect();
+                        const before2 = await window.pkm.listAnnotations(pdf.id);
+                        sc.dispatchEvent(new MouseEvent('mousedown', { button: 0, buttons: 1, clientX: r1.left + 1, clientY: r1.top + r1.height / 2, bubbles: true, cancelable: true }));
+                        await new Promise((r) => setTimeout(r, 120));
+                        window.dispatchEvent(new MouseEvent('mousemove', { clientX: r3.left + 2, clientY: r3.top + r3.height / 2, bubbles: true }));
+                        await new Promise((r) => setTimeout(r, 200));
+                        window.dispatchEvent(new MouseEvent('mouseup', { button: 0, buttons: 0, bubbles: true }));
+                        await new Promise((r) => setTimeout(r, 900));
+                        const after2 = await window.pkm.listAnnotations(pdf.id);
+                        const added2 = after2.filter((x) => !before2.some((y) => y.id === x.id));
+                        if (added2.length === 1) {
+                          try { crossQuads = JSON.parse(added2[0].position); } catch { crossQuads = null; }
+                        }
+                      }
                       return {
                         pdf: true,
                         spans: spans.length,
@@ -1815,6 +1834,7 @@ async function createMainWindow(): Promise<BrowserWindow> {
                         added: added.length,
                         oneLineOneBlock: !!quads && quads.length === 1,
                         quadWidths: quads ? quads.map((q) => Math.round(q.w)) : null,
+                        crossLines: crossQuads ? crossQuads.length : null,
                       };
                     })()
                   `);
