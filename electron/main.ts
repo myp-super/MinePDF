@@ -264,8 +264,48 @@ async function createMainWindow(): Promise<BrowserWindow> {
       win.webContents.send('window:relayout');
     }, delay);
   };
+
+  // 窗口状态诊断：当内容边界超出工作区时记录精确数据（定位“整体上移/顶端被挤压”）
+  const logWindowIfOffscreen = (tag: string) => {
+    try {
+      if (win.isDestroyed()) return;
+      const b = win.getBounds();
+      const cb = win.getContentBounds();
+      const wa = screen.getDisplayMatching(b).workArea;
+      const off =
+        cb.y < wa.y - 2 ||
+        cb.x < wa.x - 2 ||
+        cb.y + cb.height > wa.y + wa.height + 2 ||
+        cb.x + cb.width > wa.x + wa.width + 2;
+      if (off) {
+        const line = `[${new Date().toISOString()}] ${tag} bounds=${JSON.stringify(b)} content=${JSON.stringify(cb)} workArea=${JSON.stringify(wa)} maximized=${win.isMaximized()}`;
+        try {
+          fs.appendFileSync(path.join(app.getPath('userData'), 'window-debug.log'), line + '\n');
+        } catch {
+          /* ignore */
+        }
+        console.warn('[window] offscreen:', line);
+      }
+    } catch {
+      /* ignore */
+    }
+  };
+
   win.on('maximize', () => {
     win.webContents.send('window:maximized-changed', true);
+    // 等 Windows 最大化动画落定后，若内容仍被不可见边框顶出工作区，条件式钳制回去
+    setTimeout(() => {
+      if (win.isDestroyed() || !win.isMaximized()) return;
+      try {
+        const cb = win.getContentBounds();
+        const wa = screen.getDisplayMatching(win.getBounds()).workArea;
+        if (cb.y < wa.y - 2 || cb.y + cb.height > wa.y + wa.height + 2) {
+          win.setBounds(wa);
+        }
+      } catch {
+        /* ignore */
+      }
+    }, 150);
     reassertLayout();
   });
   win.on('unmaximize', () => {
@@ -286,6 +326,10 @@ async function createMainWindow(): Promise<BrowserWindow> {
     reassertLayout();
   });
   win.on('resize', () => reassertLayout(300));
+  win.on('move', () => logWindowIfOffscreen('move'));
+  win.on('resize', () => logWindowIfOffscreen('resize'));
+  win.on('maximize', () => logWindowIfOffscreen('maximize'));
+  win.on('unmaximize', () => logWindowIfOffscreen('unmaximize'));
   // 加固：显示器拔插 / DPI 变化后，若窗口被移到工作区外，纠正回可见位置
   screen.on('display-metrics-changed', () => {
     if (win.isDestroyed() || win.isMaximized() || win.isFullScreen()) return;
