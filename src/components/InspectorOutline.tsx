@@ -13,6 +13,8 @@ export function InspectorOutline({ items }: { items: OutlineNode[] }) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [allCollapsed, setAllCollapsed] = useState(false);
   const [highlightKey, setHighlightKey] = useState<string | null>(null);
+  /** 当前被点击选中的书签 key（同一时刻只有一个） */
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const itemRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 
   // 收集所有节点 key（index 路径，如 "0_1"）
@@ -146,8 +148,10 @@ export function InspectorOutline({ items }: { items: OutlineNode[] }) {
             query={query.trim().toLowerCase()}
             collapsed={collapsed}
             highlightKey={highlightKey}
+            selectedKey={selectedKey}
             itemRefs={itemRefs}
             onJump={requestJump}
+            onSelect={setSelectedKey}
             onToggle={toggleNode}
           />
         ))}
@@ -164,8 +168,10 @@ function OutlineItem({
   query,
   collapsed,
   highlightKey,
+  selectedKey,
   itemRefs,
   onJump,
+  onSelect,
   onToggle,
 }: {
   node: OutlineNode;
@@ -175,14 +181,17 @@ function OutlineItem({
   query: string;
   collapsed: Set<string>;
   highlightKey: string | null;
+  selectedKey: string | null;
   itemRefs: React.MutableRefObject<Map<string, HTMLDivElement>>;
   onJump: (page: number) => void;
+  onSelect: (key: string) => void;
   onToggle: (key: string) => void;
 }) {
   const hasChildren = !!node.children?.length;
   const isCollapsed = collapsed.has(path);
   const active = node.page != null && node.page === currentPage;
   const highlighted = highlightKey === path;
+  const isSelected = selectedKey === path;
   const canJump = node.page != null;
   // 搜索模式下匹配的节点保持展开
   const forceOpen = query.length > 0;
@@ -191,7 +200,7 @@ function OutlineItem({
     <div ref={(el) => el && itemRefs.current.set(path, el)}>
       <div
         className={`flex w-full items-center gap-0.5 pr-2 text-left text-[11.5px] transition-colors ${
-          highlighted ? 'bg-app-accent/20 text-app-accent' : ''
+          highlighted || isSelected ? 'bg-app-accent/20 text-app-accent' : ''
         }`}
         style={{ paddingLeft: 4 + depth * 11 }}
       >
@@ -208,20 +217,27 @@ function OutlineItem({
         )}
         <button
           className={`min-w-0 flex-1 py-[3px] text-left transition-colors ${
-            active
-              ? 'font-medium text-app-accent'
-              : canJump
-                ? 'text-app-text/85 hover:text-app-text'
-                : 'cursor-default text-app-muted'
+            canJump ? 'text-app-text/85 hover:text-app-text' : 'cursor-default text-app-muted'
           }`}
           disabled={!canJump}
-          onClick={() => node.page != null && onJump(node.page)}
+          onClick={() => {
+            if (node.page != null) {
+              onSelect(path);
+              onJump(node.page);
+            }
+          }}
           title={node.title}
         >
           <span className="block truncate">{node.title}</span>
         </button>
         {node.page != null && (
-          <span className="shrink-0 text-[9.5px] tabular-nums text-app-muted">{node.page}</span>
+          <span
+            className={`shrink-0 text-[9.5px] tabular-nums ${
+              active ? 'text-app-accent' : 'text-app-muted'
+            }`}
+          >
+            {node.page}
+          </span>
         )}
       </div>
       {hasChildren &&
@@ -236,8 +252,10 @@ function OutlineItem({
             query={query}
             collapsed={collapsed}
             highlightKey={highlightKey}
+            selectedKey={selectedKey}
             itemRefs={itemRefs}
             onJump={onJump}
+            onSelect={onSelect}
             onToggle={onToggle}
           />
         ))}

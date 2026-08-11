@@ -107,7 +107,11 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
   const hlDragRef = useRef(false);
   /** 当前拖拽模式：高亮 / 普通选词 */
   const selModeRef = useRef<'highlight' | 'select' | null>(null);
-  /** 高亮拖拽起点/当前点（客户端坐标）：选词 = 扫过的矩形区域 */
+  /** 选词起点：按下时的（页, 行, 行内字符索引） */
+  const hlStartRef = useRef<{ page: number; row: number; idx: number } | null>(null);
+  /** 选词当前点：鼠标最新所在（页, 行, 行内字符索引） */
+  const hlCurRef = useRef<{ page: number; row: number; idx: number } | null>(null);
+  /** 客户端起点坐标：用于“单击不选”的移动阈值 */
   const hlStartPtRef = useRef<{ x: number; y: number } | null>(null);
   const hlLastMoveRef = useRef<{ x: number; y: number } | null>(null);
   const hlRafRef = useRef(0);
@@ -180,6 +184,35 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
   useEffect(() => {
     docRef.current = doc;
   }, [doc]);
+
+  // 捕获模式专用：把「文本索引的行 + 字符」转换为屏幕客户端坐标，供自动化诊断按真实行拖选
+  useEffect(() => {
+    if (!window.location.hash.includes('capture')) return;
+    const w = window as unknown as Record<string, unknown>;
+    w.__pkmSelPoint = (page: number, lineIdx: number, charIdx: number) => {
+      const index = textIndexRef.current.get(page);
+      const el = pageRefs.current.get(page);
+      const vp = viewportsRef.current.get(page);
+      if (!index || !el || !vp || !index.lines[lineIdx]) return null;
+      const gi = index.lines[lineIdx].indices[charIdx];
+      if (gi == null) return null;
+      const it = index.items[gi];
+      const r = el.getBoundingClientRect();
+      const [vx, vy] = vp.convertToViewportPoint(it.x + it.w / 2, it.y + it.h / 2);
+      return { x: r.left + vx, y: r.top + vy, str: it.str };
+    };
+    w.__pkmSelLineInfo = (page: number, lineIdx: number) => {
+      const index = textIndexRef.current.get(page);
+      if (!index || !index.lines[lineIdx]) return null;
+      const l = index.lines[lineIdx];
+      return {
+        minY: l.minY,
+        maxY: l.maxY,
+        n: l.indices.length,
+        text: l.indices.map((gi) => index.items[gi].str).join(''),
+      };
+    };
+  }, []);
 
   // ---------- 放大后可抓取平移 ----------
   useEffect(() => {
@@ -818,70 +851,139 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
     [searchMatches, searchCurrent, scrollToPage],
   );
 
-  // ---------- text selection -> highlight（涂过式：拖拽扫过的矩形区域，按行合并） ----------
-  /** 取出与 PDF 矩形相交的文本项（含空格/标点项，整行整块不再断） */
-  const selectItemsInPdfRect = (
-    page: number,
-    r: { x1: number; y1: number; x2: number; y2: number },
-  ): TextItemQuad[] => {
-    const index = textIndexRef.current.get(page);
-    if (!index) return [];
-    const minX = Math.min(r.x1, r.x2);
-    const maxX = Math.max(r.x1, r.x2);
-    const minY = Math.min(r.y1, r.y2);
-    const maxY = Math.max(r.y1, r.y2);
-    const TOL = 0.5;
-    const hit = index.items.filter(
-      (it) =>
-        it.x < maxX + TOL &&
-        // 起点严格：右边缘恰好贴着起点的前一个字符不再误选
-        it.x + it.w > minX &&
-        it.y < maxY + TOL &&
-        it.y + it.h > minY - TOL,
-    );
-    return hit;
+  // ---------- text selection -> highlight（按“行 + 行内字符索引”精确计算，跨行不再整段联动） ----------
+  const pageAtPoint = (x: number, y: number): number | null => {
+    for (const [n, el] of pageRefs.current) {
+      const r = el.getBoundingClientRect();
+      if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return n;
+    }
+    return null;
   };
 
-  /** 按“扫过矩形”逐页取选中文本项（支持跨页） */
-  const computeRectSelection = (
-    sx: number,
-    sy: number,
-    cx: number,
-    cy: number,
+  /** 光标在行内的字符索引：落在某字符内（或其后间隙）→ 该字符；行尾之后 → 行长度 */
+  const charIndexAt = (items: TextItemQuad[], rowChars: number[], px: number): number => {
+    if (!rowChars.length) return 0;
+    const last = items[rowChars[rowChars.length - 1]];
+    if (px >= last.x + last.w) return rowChars.length;
+    for (let i = 0; i < rowChars.length; i++) {
+      const it = items[rowChars[i]];
+      if (px < it.x + it.w) return i;
+    }
+    return rowChars.length;
+  };
+
+  /** 客户端坐标 -> (页, 行, 行内字符索引)；文本索引未就绪返回 null */
+  const pointToRowChar = (
+    page: number,
+    x: number,
+    y: number,
+  ): { row: number; idx: number } | null => {
+    const index = textIndexRef.current.get(page);
+    const el = pageRefs.current.get(page);
+    const vp = viewportsRef.current.get(page);
+    if (!index || !el || !vp || !index.lines.length) return null;
+    const r = el.getBoundingClientRect();
+    const [px, py] = vp.convertToPdfPoint(x - r.left, y - r.top);
+    const lines = index.lines;
+    let row = 0;
+    let bestD = Infinity;
+    for (let i = 0; i < lines.length; i++) {
+      const cy = (lines[i].minY + lines[i].maxY) / 2;
+      const d = Math.abs(py - cy);
+      if (d < bestD) {
+        bestD = d;
+        row = i;
+      }
+    }
+    const idx = charIndexAt(index.items, lines[row].indices, px);
+    return { row, idx };
+  };
+
+  /** 取一行 [from, to) 的字符项 */
+  const rowCharItems = (
+    index: PageTextIndex,
+    row: number,
+    from: number,
+    to: number,
+  ): TextItemQuad[] => {
+    const line = index.lines[row];
+    if (!line) return [];
+    const a = Math.max(0, Math.min(from, line.indices.length));
+    const b = Math.max(0, Math.min(to, line.indices.length));
+    const out: TextItemQuad[] = [];
+    for (let i = a; i < b; i++) out.push(index.items[line.indices[i]]);
+    return out;
+  };
+
+  /**
+   * 按“起点行/终点行”精确计算选中字符（半开区间）：
+   * - 同页：起点行只选起点之后，终点行只选到鼠标位置，中间行整行；
+   * - 跨页：起点页/终点页同理，中间页整页。
+   * 支持从上往下与从下往上（对称）。
+   */
+  const computeRowSelection = (
+    start: { page: number; row: number; idx: number },
+    cur: { page: number; row: number; idx: number },
   ): { page: number; items: TextItemQuad[]; lines: PageTextIndex['lines'] }[] => {
-    // 只保留纵向 ±6px 容差（纯水平拖拽也有竖向覆盖，不会因 0 高矩形跳过）；
-    // 横向不加容差，否则起点会向左多框进前一个字符
-    const x1 = Math.min(sx, cx);
-    const x2 = Math.max(sx, cx);
-    const y1 = Math.min(sy, cy) - 6;
-    const y2 = Math.max(sy, cy) + 6;
     const out: { page: number; items: TextItemQuad[]; lines: PageTextIndex['lines'] }[] = [];
-    for (const [page, el] of pageRefs.current) {
-      const r = el.getBoundingClientRect();
-      const ix = Math.max(x1, r.left);
-      const iy = Math.max(y1, r.top);
-      const ix2 = Math.min(x2, r.right);
-      const iy2 = Math.min(y2, r.bottom);
-      if (ix2 <= ix || iy2 <= iy) continue;
-      const vp = viewportsRef.current.get(page);
-      const index = textIndexRef.current.get(page);
-      if (!vp || !index) continue;
-      const [px1, py1] = vp.convertToPdfPoint(ix - r.left, iy - r.top);
-      const [px2, py2] = vp.convertToPdfPoint(ix2 - r.left, iy2 - r.top);
-      const items = selectItemsInPdfRect(page, { x1: px1, y1: py1, x2: px2, y2: py2 });
-      if (items.length) out.push({ page, items, lines: index.lines });
+    // 按文档顺序（上 → 下、页 → 页）决定遍历方向：
+    // - downward：起点在上，遍历 start..cur；
+    // - upward：起点在下，遍历 cur..start（对称反转）。
+    const downward = start.page < cur.page || (start.page === cur.page && start.row <= cur.row);
+    const lo = downward ? start.page : cur.page;
+    const hi = downward ? cur.page : start.page;
+    for (let p = lo; p <= hi; p++) {
+      const index = textIndexRef.current.get(p);
+      if (!index || !index.lines.length) continue;
+      const rowCount = index.lines.length;
+      const items: TextItemQuad[] = [];
+      // 本页的行区间：
+      // - downward：起点页从 start.row 起，终点页到 cur.row 止，中间页全页；
+      // - upward：终点页（上方）从 cur.row 起，起点页（下方）到 start.row 止，中间页全页。
+      const rStart = p === (downward ? start.page : cur.page) ? (downward ? start.row : cur.row) : 0;
+      const rEnd = p === (downward ? cur.page : start.page) ? (downward ? cur.row : start.row) : rowCount - 1;
+      for (let r = rStart; r <= rEnd; r++) {
+        const rowLen = index.lines[r].indices.length;
+        let from = 0;
+        let to = rowLen;
+        // 同一行（含反向拖选）：取两点之间的区间
+        if (p === start.page && p === cur.page && r === start.row && r === cur.row) {
+          from = Math.min(start.idx, cur.idx);
+          to = Math.max(start.idx, cur.idx) + 1;
+        } else if (downward) {
+          if (p === start.page && r === start.row) from = start.idx;
+          if (p === cur.page && r === cur.row) to = cur.idx + 1;
+        } else {
+          if (p === cur.page && r === cur.row) from = cur.idx;
+          if (p === start.page && r === start.row) to = start.idx + 1;
+        }
+        items.push(...rowCharItems(index, r, from, to));
+      }
+      if (items.length) out.push({ page: p, items, lines: index.lines });
     }
     return out;
   };
 
   const updateHlSelection = () => {
-    const start = hlStartPtRef.current;
+    const start = hlStartRef.current;
     const last = hlLastMoveRef.current;
     if (!start || !last) return;
-    const sel = computeRectSelection(start.x, start.y, last.x, last.y);
+    const page = pageAtPoint(last.x, last.y);
+    if (page == null) return;
+    const rc = pointToRowChar(page, last.x, last.y);
+    if (!rc) return;
+    hlCurRef.current = { page, row: rc.row, idx: rc.idx };
+    const sel = computeRowSelection(start, hlCurRef.current);
     const next: Record<number, Quad[]> = {};
-    for (const { page, items, lines } of sel) next[page] = mergeSelectionItems(items, lines);
+    for (const { page: pg, items, lines } of sel) next[pg] = mergeSelectionItems(items, lines);
     setLiveSel(next);
+  };
+
+  const finalSelection = () => {
+    const start = hlStartRef.current;
+    const cur = hlCurRef.current;
+    if (!start || !cur) return [];
+    return computeRowSelection(start, cur);
   };
 
   const commitHlSelection = async () => {
@@ -891,7 +993,7 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
     if (!start || !last) return;
     // 单击（几乎没移动）不生成高亮
     if (Math.abs(last.x - start.x) + Math.abs(last.y - start.y) < 8) return;
-    const pages = computeRectSelection(start.x, start.y, last.x, last.y);
+    const pages = finalSelection();
     if (!pages.length) return;
     try {
       for (const { page, items, lines } of pages) {
@@ -918,7 +1020,7 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
     }
   };
 
-  /** 普通模式：把扫过的区域保存为蓝色连续选区（不生成高亮） */
+  /** 普通模式：把精确选区保存为蓝色连续选区（不生成高亮） */
   const commitSelection = () => {
     const start = hlStartPtRef.current;
     const last = hlLastMoveRef.current;
@@ -926,7 +1028,7 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
     if (!start || !last) return;
     // 单击（几乎没移动）不产生选区，保留链接点击等默认行为
     if (Math.abs(last.x - start.x) + Math.abs(last.y - start.y) < 8) return;
-    const pages = computeRectSelection(start.x, start.y, last.x, last.y);
+    const pages = finalSelection();
     if (!pages.length) return;
     const quads: Record<number, Quad[]> = {};
     const parts: string[] = [];
@@ -948,6 +1050,12 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
     } catch {
       /* ignore */
     }
+    const page = pageAtPoint(e.clientX, e.clientY);
+    if (page == null) return;
+    const rc = pointToRowChar(page, e.clientX, e.clientY);
+    if (!rc) return;
+    hlStartRef.current = { page, row: rc.row, idx: rc.idx };
+    hlCurRef.current = { ...hlStartRef.current };
     hlStartPtRef.current = { x: e.clientX, y: e.clientY };
     hlLastMoveRef.current = null;
     hlDragRef.current = true;
@@ -969,7 +1077,10 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
       }
       hlDragRef.current = false;
       // 没有 mousemove（单击）时用 mouseup 位置提交，交给移动阈值拦截
-      if (!hlLastMoveRef.current) hlLastMoveRef.current = { x: ev.clientX, y: ev.clientY };
+      if (!hlLastMoveRef.current) {
+        hlLastMoveRef.current = { x: ev.clientX, y: ev.clientY };
+        updateHlSelection();
+      }
       if (selModeRef.current === 'highlight') void commitHlSelection();
       else commitSelection();
       selModeRef.current = null;

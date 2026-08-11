@@ -54,6 +54,8 @@ export async function getPageTextQuads(
   for (const c of chars) {
     const w = c.w;
     if (w < 0.01) continue;
+    // 跳过 pdfium 的占位符（\u0001/空串）：它们没有可见字形，会让行内索引与可见文字错位
+    if (c.str === '\u0001' || c.str === '') continue;
     const h = c.h > 0 ? c.h : 1;
     items.push({ x: c.x, y: c.y, w, h, baseline: c.y + h, str: c.str });
   }
@@ -90,6 +92,11 @@ export function buildPageLines(items: TextItemQuad[]): LineBand[] {
     } else {
       bands.push({ baseline: it.baseline, minY: it.y, maxY: it.y + it.h, indices: [i] });
     }
+  }
+  // 行内按 x 排序为视觉阅读顺序：同一行内基线略异的字符（中文/英文/上下标）
+  // 在 items 中的顺序可能与视觉顺序不一致，选词索引与内容拼接都必须按 x 顺序。
+  for (const b of bands) {
+    b.indices.sort((a, c) => items[a].x - items[c].x || a - c);
   }
   return bands;
 }
