@@ -47,10 +47,10 @@ export function ScreenViewer({
     >
       {/* 沉浸式：标签栏与工具栏联动折叠，悬停顶部一起滑出 */}
       <div
-        className={`overflow-hidden transition-[max-height,opacity,transform] duration-300 ease-out ${
+        className={`overflow-hidden transition-[max-height,opacity] duration-300 ease-out ${
           immersive && !immersiveTopOpen
-            ? 'max-h-0 -translate-y-2 opacity-0'
-            : 'max-h-8 translate-y-0 opacity-100'
+            ? 'max-h-0 opacity-0'
+            : 'max-h-8 opacity-100'
         }`}
       >
         <TabBar screen={screen} active={active} />

@@ -1306,10 +1306,10 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
             {/* 工具栏滑出动画（不突然出现） */}
             <div
               data-immersive-toolbar
-              className={`overflow-hidden transition-[max-height,opacity,transform] duration-300 ease-out ${
+              className={`overflow-hidden transition-[max-height,opacity] duration-300 ease-out ${
                 immersiveTopOpen
-                  ? 'max-h-16 translate-y-0 opacity-100'
-                  : 'max-h-0 -translate-y-2 opacity-0'
+                  ? 'max-h-16 opacity-100'
+                  : 'max-h-0 opacity-0'
               }`}
             >
               <PdfToolbar

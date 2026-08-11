@@ -1290,6 +1290,27 @@ async function createMainWindow(): Promise<BrowserWindow> {
                   })()
                 `);
                 console.log('[capture] tabsDiag', JSON.stringify(tabsDiag));
+                // 标签右键菜单回归：确认关闭/分屏功能菜单正常弹出且不被裁切
+                const tabMenuDiag = await win.webContents.executeJavaScript(`
+                  (async () => {
+                    const snap = await window.pkm.getSnapshot();
+                    const a = snap.pdfs.find((p) => p.filename === 'smoke-test.pdf');
+                    if (!a) return { pdf: false };
+                    window.__pkmAct('clearScreens');
+                    window.__pkmOpenPdf(a.id);
+                    if (window.__pkmAct) window.__pkmAct('openPdfInNewTab', a.id);
+                    await new Promise((r) => setTimeout(r, 1400));
+                    const tab = [...document.querySelectorAll('button')].find((b) => (b.textContent || '').includes('smoke-test'));
+                    if (!tab) return { tab: false };
+                    const tr = tab.getBoundingClientRect();
+                    tab.dispatchEvent(new MouseEvent('contextmenu', { clientX: tr.left + 10, clientY: tr.top + 10, bubbles: true, cancelable: true }));
+                    await new Promise((r) => setTimeout(r, 300));
+                    const menuItems = ['关闭', '关闭其他标签', '关闭全部标签', '上下分屏', '左右分屏'];
+                    const found = menuItems.filter((label) => [...document.querySelectorAll('button')].some((b) => (b.textContent || '').trim() === label));
+                    return { tab: true, menuFound: found.length, missing: menuItems.filter((l) => !found.includes(l)) };
+                  })()
+                `);
+                console.log('[capture] tabMenuDiag', JSON.stringify(tabMenuDiag));
                 // 书签面板工具条（搜索/定位/折叠）验证
                 const outlineUiDiag = await win.webContents.executeJavaScript(`
                   (async () => {
