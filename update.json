@@ -1,8 +1,8 @@
 {
   "notes": [
-    "v3.4.3 - 高亮选词连续性修复：整页行带聚类合并（中英混排/标点/上下标同行不再拆块），命中测试先锁定行再取行内最近项"
+    "v3.4.4 - 移植SumatraPDF选词算法：命中优先落在字形上+右半选下一字符（行尾不再丢字/翻行），按视觉行逐字符Union成整条连续色块（垂直重叠半高判定），色块下扩覆盖下行字母"
   ],
-  "version": "3.4.3",
   "publishDate": "2026-08-11",
-  "url": "https://github.com/myp-super/MinePDF/releases/download/v3.4.3/MinePDF.Setup.3.4.3.exe"
+  "version": "3.4.4",
+  "url": "https://github.com/myp-super/MinePDF/releases/download/v3.4.4/MinePDF.Setup.3.4.4.exe"
 }
