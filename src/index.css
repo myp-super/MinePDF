@@ -251,6 +251,14 @@ body {
   border-radius: 1px;
   z-index: 6;
 }
+/* 普通模式连续选区（仿 Edge 蓝色选词，不拦截鼠标事件） */
+.selection-highlight {
+  position: absolute;
+  pointer-events: none;
+  background: rgba(59, 130, 246, 0.32);
+  border-radius: 1px;
+  z-index: 7;
+}
 .search-hl {
   position: absolute;
   background: rgba(34, 211, 238, 0.38);

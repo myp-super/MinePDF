@@ -1896,6 +1896,42 @@ async function createMainWindow(): Promise<BrowserWindow> {
                   `);
                   console.log('[capture] hlFixDiag', JSON.stringify(hlFixDiag));
                 }
+                // 普通模式连续选区验证：拖拽出蓝色选区，点空白清除
+                if (process.env.PKM_TEST_PDF) {
+                  const selDiag = await win.webContents.executeJavaScript(`
+                    (async () => {
+                      const p = ${JSON.stringify(process.env.PKM_TEST_PDF)};
+                      if (window.__pkmAct) window.__pkmAct('clearScreens');
+                      await new Promise((r) => setTimeout(r, 200));
+                      await window.pkm.importPdfs([p], null);
+                      const snap = await window.pkm.getSnapshot();
+                      const pdf = snap.pdfs.find((x) => x.filepath.includes('Submission') || x.filepath.includes('感受野') || x.filepath.includes('英语'));
+                      if (!pdf) return { pdf: false };
+                      window.__pkmOpenPdf(pdf.id);
+                      await new Promise((r) => setTimeout(r, 2500));
+                      const sc = document.querySelector('[data-pan-scroll]');
+                      const span = [...document.querySelectorAll('.textLayer span')].find((s) => (s.textContent || '').trim());
+                      const sr = span.getBoundingClientRect();
+                      // 高亮按钮应处于关闭状态（普通模式）
+                      const hlBtn = [...document.querySelectorAll('button')].find((b) => (b.getAttribute('title') || '').includes('高亮模式'));
+                      const hlActive = hlBtn ? (hlBtn.className || '').includes('active') || (hlBtn.getAttribute('aria-pressed') === 'true') : false;
+                      sc.dispatchEvent(new MouseEvent('mousedown', { button: 0, buttons: 1, clientX: sr.left + 2, clientY: sr.top + sr.height / 2, bubbles: true, cancelable: true }));
+                      await new Promise((r) => setTimeout(r, 120));
+                      window.dispatchEvent(new MouseEvent('mousemove', { clientX: sr.left + 180, clientY: sr.top + sr.height / 2, bubbles: true }));
+                      await new Promise((r) => setTimeout(r, 200));
+                      window.dispatchEvent(new MouseEvent('mouseup', { button: 0, buttons: 0, clientX: sr.left + 180, clientY: sr.top + sr.height / 2, bubbles: true }));
+                      await new Promise((r) => setTimeout(r, 400));
+                      const selCount = document.querySelectorAll('.selection-highlight').length;
+                      // 点空白清除选区
+                      const scRect = sc.getBoundingClientRect();
+                      sc.dispatchEvent(new MouseEvent('click', { clientX: scRect.left + 10, clientY: scRect.top + 10, bubbles: true, cancelable: true }));
+                      await new Promise((r) => setTimeout(r, 300));
+                      const afterClear = document.querySelectorAll('.selection-highlight').length;
+                      return { pdf: true, hlActive, selCount, afterClear };
+                    })()
+                  `);
+                  console.log('[capture] selDiag', JSON.stringify(selDiag));
+                }
                 // 删除 PDF 后，已打开的标签页应被自动清理（含分屏）
                 const deleteTabDiag = await win.webContents.executeJavaScript(`
                   (async () => {

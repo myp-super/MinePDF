@@ -95,7 +95,14 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
   const [highlightColor, setHighlightColor] = useState('#fde047');
   /** 拖拽高亮实时预览：页码 -> 合并后的连续色块（PDF 坐标） */
   const [liveSel, setLiveSel] = useState<Record<number, Quad[]>>({});
+  /** 普通模式已选中的连续选区（蓝色，仿 Edge 选词；Ctrl+C 可复制） */
+  const [selection, setSelection] = useState<{
+    quads: Record<number, Quad[]>;
+    text: string;
+  } | null>(null);
   const hlDragRef = useRef(false);
+  /** 当前拖拽模式：高亮 / 普通选词 */
+  const selModeRef = useRef<'highlight' | 'select' | null>(null);
   /** 高亮拖拽起点/当前点（客户端坐标）：选词 = 扫过的矩形区域 */
   const hlStartPtRef = useRef<{ x: number; y: number } | null>(null);
   const hlLastMoveRef = useRef<{ x: number; y: number } | null>(null);
@@ -886,8 +893,27 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
     }
   };
 
-  const hlMouseDown = (e: React.MouseEvent) => {
-    if (!highlightMode) return;
+  /** 普通模式：把扫过的区域保存为蓝色连续选区（不生成高亮） */
+  const commitSelection = () => {
+    const start = hlStartPtRef.current;
+    const last = hlLastMoveRef.current;
+    setLiveSel({});
+    if (!start || !last) return;
+    // 单击（几乎没移动）不产生选区，保留链接点击等默认行为
+    if (Math.abs(last.x - start.x) + Math.abs(last.y - start.y) < 8) return;
+    const pages = computeRectSelection(start.x, start.y, last.x, last.y);
+    if (!pages.length) return;
+    const quads: Record<number, Quad[]> = {};
+    const parts: string[] = [];
+    for (const { page, items, lines } of pages) {
+      const qs = mergeSelectionItems(items, lines);
+      if (qs.length) quads[page] = qs;
+      parts.push(items.map((i) => i.str).join(''));
+    }
+    setSelection({ quads, text: parts.join('\n') });
+  };
+
+  const startSelectDrag = (e: React.MouseEvent, mode: 'highlight' | 'select') => {
     if (e.button !== 0) return;
     // 同步阻止浏览器原生选区，避免与预览色块叠加
     e.preventDefault();
@@ -899,6 +925,7 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
     hlStartPtRef.current = { x: e.clientX, y: e.clientY };
     hlLastMoveRef.current = null;
     hlDragRef.current = true;
+    selModeRef.current = mode;
     const onMove = (ev: MouseEvent) => {
       hlLastMoveRef.current = { x: ev.clientX, y: ev.clientY };
       if (hlRafRef.current) return;
@@ -917,15 +944,26 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
       hlDragRef.current = false;
       // 没有 mousemove（单击）时用 mouseup 位置提交，交给移动阈值拦截
       if (!hlLastMoveRef.current) hlLastMoveRef.current = { x: ev.clientX, y: ev.clientY };
-      void commitHlSelection();
+      if (selModeRef.current === 'highlight') void commitHlSelection();
+      else commitSelection();
+      selModeRef.current = null;
     };
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
   };
 
   const handleMouseDown = (e: React.MouseEvent) => {
-    if (highlightMode) hlMouseDown(e);
-    else onPanMouseDown(e);
+    if (highlightMode) {
+      startSelectDrag(e, 'highlight');
+      return;
+    }
+    if (rightDragPan) {
+      // 右键平移；左键普通连续选词
+      if (e.button === 2) onPanMouseDown(e);
+      else startSelectDrag(e, 'select');
+      return;
+    }
+    onPanMouseDown(e);
   };
 
   const handleAnnotationClick = (a: AnnotationRecord) => {
@@ -965,6 +1003,31 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [selectedAnnotationId, annotations, deleteAnnotation]);
+
+  // Ctrl+C 复制普通模式选中的文字
+  useEffect(() => {
+    if (!selection) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 'c') return;
+      const target = e.target as HTMLElement;
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
+        return;
+      }
+      e.preventDefault();
+      void navigator.clipboard
+        .writeText(selection.text)
+        .catch(() => {
+          const ta = document.createElement('textarea');
+          ta.value = selection.text;
+          document.body.appendChild(ta);
+          ta.select();
+          document.execCommand('copy');
+          ta.remove();
+        });
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [selection]);
 
   // ---------- data grouping ----------
   const annotationsByPage = useMemo(() => {
@@ -1062,6 +1125,8 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
       linkService={linkService}
       liveHighlights={liveSel[n]}
       highlightColor={highlightColor}
+      liveHighlightsColor={highlightMode ? highlightColor : '#3b82f6'}
+      selectionQuads={selection?.quads[n]}
       onAnnotationClick={handleAnnotationClick}
       onAnnotationContextMenu={(a, x, y) => setAnnMenu({ a, x, y })}
       onJumpToPage={gotoPage}
@@ -1202,20 +1267,23 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
           <div
             ref={scrollRef}
             data-pan-scroll
-            className={`h-full overflow-auto bg-[var(--app-canvas)] ${
+            className={`h-full select-none overflow-auto bg-[var(--app-canvas)] ${
               panning
-                ? 'cursor-grabbing select-none'
+                ? 'cursor-grabbing'
                 : highlightMode
-                  ? 'select-none'
+                  ? ''
                   : !rightDragPan && canPan && !screenshotMode
                   ? 'cursor-grab'
                   : ''
             }`}
             onMouseDown={handleMouseDown}
             onClick={(e) => {
-              // 点击空白处取消高亮选中（点在高亮色块上时保持选中）
+              // 点击空白处取消高亮选中与普通选区（点在高亮色块上时保持选中）
               const t = e.target as HTMLElement;
-              if (!t.closest('.annotation-hl')) setSelectedAnnotationId(null);
+              if (!t.closest('.annotation-hl')) {
+                setSelectedAnnotationId(null);
+                setSelection(null);
+              }
             }}
           >
             {/* 虚拟滚动：容器总高度 = 全部行高之和，只挂载可视区 ± 预载行，

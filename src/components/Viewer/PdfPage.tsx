@@ -37,6 +37,10 @@ interface PdfPageProps {
   /** 拖拽高亮实时预览（PDF 坐标，未提交） */
   liveHighlights?: Quad[];
   highlightColor: string;
+  /** 普通模式拖拽选区的实时预览颜色 */
+  liveHighlightsColor?: string;
+  /** 普通模式已选中的连续选区（PDF 坐标，蓝色） */
+  selectionQuads?: Quad[];
   linkService: PdfLinkService;
   /** PDFium 已给出的页面物理尺寸（doc 未就绪时用于占位布局） */
   fallbackW: number | null;
@@ -79,6 +83,8 @@ export function PdfPage({
   selectedAnnotationId,
   liveHighlights,
   highlightColor,
+  liveHighlightsColor,
+  selectionQuads,
   linkService,
   fallbackW,
   fallbackH,
@@ -448,7 +454,7 @@ export function PdfPage({
           }),
         )}
 
-      {/* 拖拽高亮实时预览：荧光笔涂过效果（未提交，pointer-events 穿透） */}
+      {/* 拖拽选区实时预览：高亮模式荧光笔色 / 普通模式选中蓝（未提交，pointer-events 穿透） */}
       {viewport &&
         liveHighlights?.map((q, i) => {
           const [left, top] = viewport.convertToViewportPoint(q.x, q.y + q.h);
@@ -462,7 +468,26 @@ export function PdfPage({
                 top,
                 width: Math.max(1, right - left),
                 height: Math.max(1, bottom - top),
-                background: hexToRgba(highlightColor, 0.38),
+                background: hexToRgba(liveHighlightsColor ?? highlightColor, 0.38),
+              }}
+            />
+          );
+        })}
+
+      {/* 普通模式已选中的连续选区（蓝色，仿 Edge 选词） */}
+      {viewport &&
+        selectionQuads?.map((q, i) => {
+          const [left, top] = viewport.convertToViewportPoint(q.x, q.y + q.h);
+          const [right, bottom] = viewport.convertToViewportPoint(q.x + q.w, q.y);
+          return (
+            <div
+              key={`sel-${i}`}
+              className="selection-highlight"
+              style={{
+                left,
+                top,
+                width: Math.max(1, right - left),
+                height: Math.max(1, bottom - top),
               }}
             />
           );
