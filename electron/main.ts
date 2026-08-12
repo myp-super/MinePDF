@@ -117,19 +117,29 @@ function buildTestPdf(noOutline = false): string {
 
 /** 两页链接测试 PDF：页内交叉引用 + 外部网址 + 邮箱 */
 /** 书签单选测试 PDF：3 个并列书签，全部指向第 1 页 */
+/** 书签单选/滚动跟随测试 PDF：3 页、3 个并列书签（Alpha->p1, Beta->p2, Gamma->p3） */
+/** 书签单选/滚动跟随/同页精确跳转测试 PDF：页1两个书签（顶部+页内），页2/页3各一个 */
 function buildOutlineTestPdf(): string {
   const objects: Record<number, string> = {};
   objects[1] = '1 0 obj\n<< /Type /Catalog /Pages 2 0 R /Outlines 6 0 R >>\nendobj\n';
-  objects[2] = '2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n';
-  const content = 'BT /F1 18 Tf 72 720 Td (Outline Selection Test) Tj ET\n';
-  objects[4] = `4 0 obj\n<< /Length ${Buffer.byteLength(content, 'latin1')} >>\nstream\n${content}endstream\nendobj\n`;
-  objects[3] =
-    '3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>\nendobj\n';
-  objects[5] = '5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n';
-  objects[6] = '6 0 obj\n<< /Type /Outlines /First 7 0 R /Last 9 0 R /Count 3 >>\nendobj\n';
-  objects[7] = '7 0 obj\n<< /Title (Alpha Bookmark) /Parent 6 0 R /Next 8 0 R /Dest [3 0 R /Fit] >>\nendobj\n';
-  objects[8] = '8 0 obj\n<< /Title (Beta Bookmark) /Parent 6 0 R /Prev 7 0 R /Next 9 0 R /Dest [3 0 R /Fit] >>\nendobj\n';
-  objects[9] = '9 0 obj\n<< /Title (Gamma Bookmark) /Parent 6 0 R /Prev 8 0 R /Dest [3 0 R /Fit] >>\nendobj\n';
+  objects[2] = '2 0 obj\n<< /Type /Pages /Kids [3 0 R 4 0 R 5 0 R] /Count 3 >>\nendobj\n';
+  const pages: Array<[number, number, string]> = [
+    [3, 10, 'Page 1 Outline Selection Test'],
+    [4, 11, 'Page 2 Outline Selection Test'],
+    [5, 12, 'Page 3 Outline Selection Test'],
+  ];
+  for (const [pageId, contentId, text] of pages) {
+    const content = `BT /F1 18 Tf 72 720 Td (${text}) Tj ET\n`;
+    objects[contentId] = `${contentId} 0 obj\n<< /Length ${Buffer.byteLength(content, 'latin1')} >>\nstream\n${content}endstream\nendobj\n`;
+    objects[pageId] =
+      `${pageId} 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents ${contentId} 0 R /Resources << /Font << /F1 13 0 R >> >> >>\nendobj\n`;
+  }
+  objects[13] = '13 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n';
+  objects[6] = '6 0 obj\n<< /Type /Outlines /First 7 0 R /Last 10 0 R /Count 4 >>\nendobj\n';
+  objects[7] = '7 0 obj\n<< /Title (Alpha Bookmark) /Parent 6 0 R /Next 8 0 R /Dest [3 0 R /XYZ 0 720 0] >>\nendobj\n';
+  objects[8] = '8 0 obj\n<< /Title (Alpha Sub Bookmark) /Parent 6 0 R /Prev 7 0 R /Next 9 0 R /Dest [3 0 R /XYZ 0 300 0] >>\nendobj\n';
+  objects[9] = '9 0 obj\n<< /Title (Beta Bookmark) /Parent 6 0 R /Prev 8 0 R /Next 10 0 R /Dest [4 0 R /XYZ 0 720 0] >>\nendobj\n';
+  objects[10] = '10 0 obj\n<< /Title (Gamma Bookmark) /Parent 6 0 R /Prev 9 0 R /Dest [5 0 R /XYZ 0 720 0] >>\nendobj\n';
   let pdf = '%PDF-1.4\n';
   const offsets: number[] = [];
   const ids = Object.keys(objects)
@@ -1422,6 +1432,58 @@ async function createMainWindow(): Promise<BrowserWindow> {
                   })()
                 `);
                 console.log('[capture] tabMenuDiag', JSON.stringify(tabMenuDiag));
+                // 长按拖动排序：长按第一个标签拖到第二个，松手后顺序应交换
+                const tabReorderDiag = await win.webContents.executeJavaScript(`
+                  (async () => {
+                    const snap = await window.pkm.getSnapshot();
+                    const a = snap.pdfs.find((p) => p.filename === 'smoke-test.pdf');
+                    const b = snap.pdfs.find((p) => p.filename === 'smoke-autoscan.pdf');
+                    const pid = snap.pdfs.find((p) => p.filename === 'PID-Tuning-Methods.pdf');
+                    if (!a || !b || !pid) return { files: !!a && !!b && !!pid };
+                    if (window.__pkmAct) window.__pkmAct('clearScreens');
+                    window.__pkmOpenPdf(a.id);
+                    await new Promise((r) => setTimeout(r, 1000));
+                    window.__pkmAct('openPdfInNewTab', b.id);
+                    await new Promise((r) => setTimeout(r, 700));
+                    window.__pkmAct('openPdfInNewTab', pid.id);
+                    await new Promise((r) => setTimeout(r, 700));
+                    const tabs = () => [...document.querySelectorAll('[data-tab-id]')];
+                    const before = tabs().map((el) => el.getAttribute('data-tab-id'));
+                    if (before.length < 3) return { tabs: before.length };
+                    // 长按中间标签（B）
+                    const tMid = tabs()[1];
+                    const rMid = tMid.getBoundingClientRect();
+                    tMid.dispatchEvent(new PointerEvent('pointerdown', { button: 0, bubbles: true, cancelable: true, clientX: rMid.left + 12, clientY: rMid.top + rMid.height / 2 }));
+                    await new Promise((r) => setTimeout(r, 50));
+                    // 拖到 C 中心右侧 → B 应实时让到末尾 [A,C,B]
+                    const tLast = tabs()[2];
+                    const rLast = tLast.getBoundingClientRect();
+                    window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: rLast.right - 12, clientY: rLast.top + rLast.height / 2 }));
+                    await new Promise((r) => setTimeout(r, 150));
+                    const mid1 = tabs().map((el) => el.getAttribute('data-tab-id'));
+                    // 再拖到 A 中心左侧 → B 应实时让到最前 [B,A,C]
+                    const tFirst = tabs().find((el) => el.getAttribute('data-tab-id') !== mid1[1]);
+                    const rFirst = tFirst.getBoundingClientRect();
+                    window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: rFirst.left + 4, clientY: rFirst.top + rFirst.height / 2 }));
+                    await new Promise((r) => setTimeout(r, 150));
+                    const mid2 = tabs().map((el) => el.getAttribute('data-tab-id'));
+                    window.dispatchEvent(new PointerEvent('pointerup', { button: 0, bubbles: true }));
+                    await new Promise((r) => setTimeout(r, 400));
+                    const after = tabs().map((el) => el.getAttribute('data-tab-id'));
+                    return {
+                      before,
+                      mid1,
+                      mid2,
+                      after,
+                      reorderedOk:
+                        before.length === 3 &&
+                        mid1[0] === before[0] && mid1[1] === before[2] && mid1[2] === before[1] &&
+                        mid2[0] === before[1] && mid2[1] === before[0] && mid2[2] === before[2] &&
+                        after[0] === mid2[0] && after[1] === mid2[1] && after[2] === mid2[2],
+                    };
+                  })()
+                `);
+                console.log('[capture] tabReorderDiag', JSON.stringify(tabReorderDiag));
                 // 书签面板工具条（搜索/定位/折叠）验证
                 const outlineUiDiag = await win.webContents.executeJavaScript(`
                   (async () => {
@@ -2045,41 +2107,122 @@ async function createMainWindow(): Promise<BrowserWindow> {
                     if (!tabBtn) return { tab: false };
                     tabBtn.click();
                     await new Promise((r) => setTimeout(r, 500));
-                    const collect = () => [...document.querySelectorAll('button[title]')].filter((b) => b.title === 'Alpha Bookmark' || b.title === 'Beta Bookmark' || b.title === 'Gamma Bookmark');
+                    const collect = () => [...document.querySelectorAll('button[title]')].filter((b) => b.title === 'Alpha Bookmark' || b.title === 'Alpha Sub Bookmark' || b.title === 'Beta Bookmark' || b.title === 'Gamma Bookmark');
                     let items = collect();
-                    for (let i = 0; i < 12 && items.length < 3; i++) {
+                    for (let i = 0; i < 12 && items.length < 4; i++) {
                       await new Promise((r) => setTimeout(r, 500));
                       items = collect();
                     }
-                    if (items.length < 3) {
+                    if (items.length < 4) {
                       const emptyTexts = [...document.querySelectorAll('p')].map((p) => (p.textContent || '').trim()).filter((t) => t.length > 0 && t.length < 60).slice(0, 8);
                       const tabLabels = [...document.querySelectorAll('button[aria-label]')].map((b) => b.getAttribute('aria-label')).filter(Boolean).slice(0, 12);
                       return { items: items.length, emptyTexts, tabLabels };
                     }
-                    const sel = () => items.filter((b) => b.parentElement && b.parentElement.className.includes('bg-app-accent/20'));
-                    const which = () => sel().map((b) => b.title);
-                    const beforeCount = sel().length;
-                    items[0].click();
-                    await new Promise((r) => setTimeout(r, 250));
-                    const afterAlpha = { count: sel().length, which: which() };
+                    const sc = document.querySelector('[data-pan-scroll]');
+                    const scTop0 = sc ? sc.scrollTop : -1;
+                    // 同页精确跳转：点击 Alpha Sub Bookmark（页 1 页内 top=300）→ 页面应滚到页内位置
                     items[1].click();
-                    await new Promise((r) => setTimeout(r, 250));
-                    const afterBeta = { count: sel().length, which: which() };
-                    items[0].click();
-                    await new Promise((r) => setTimeout(r, 250));
-                    const afterAlpha2 = { count: sel().length, which: which() };
+                    await new Promise((r) => setTimeout(r, 700));
+                    const scTopAfterSub = sc ? sc.scrollTop : -1;
+                    // 跨页跳转：点击 Beta（页 2）→ currentPage=2；点击 Gamma（页 3）→ currentPage=3
+                    items[2].click();
+                    await new Promise((r) => setTimeout(r, 800));
+                    const pageAfterBeta = window.__pkmStore ? window.__pkmStore().currentPage : null;
+                    items[3].click();
+                    await new Promise((r) => setTimeout(r, 800));
+                    const pageAfterGamma = window.__pkmStore ? window.__pkmStore().currentPage : null;
                     return {
                       pdf: true,
                       tab: true,
                       items: items.length,
-                      beforeCount,
-                      alphaOk: afterAlpha.count === 1 && afterAlpha.which.length === 1 && afterAlpha.which[0] === 'Alpha Bookmark',
-                      betaOk: afterBeta.count === 1 && afterBeta.which.length === 1 && afterBeta.which[0] === 'Beta Bookmark',
-                      switchOk: afterAlpha2.count === 1 && afterAlpha2.which.length === 1 && afterAlpha2.which[0] === 'Alpha Bookmark' && !afterAlpha2.which.includes('Beta Bookmark'),
+                      scTop0,
+                      scTopAfterSub,
+                      samePageJumpOk: scTopAfterSub > scTop0,
+                      crossPageOk: pageAfterBeta === 2 && pageAfterGamma === 3,
+                      pageAfterBeta,
+                      pageAfterGamma,
                     };
                   })()
                 `);
                 console.log('[capture] outlineSelDiag', JSON.stringify(outlineSelDiag));
+                // 书签精确定位：不同缩放比例下，目标章节必须贴合阅读 viewport 顶部（无固定偏移）
+                const outlinePreciseDiag = await win.webContents.executeJavaScript(`
+                  (async () => {
+                    const p = ${JSON.stringify(outlineTestPath)};
+                    if (window.__pkmAct) window.__pkmAct('clearScreens');
+                    await new Promise((r) => setTimeout(r, 200));
+                    await window.pkm.importPdfs([p], null);
+                    const snap = await window.pkm.getSnapshot();
+                    const pdf = snap.pdfs.find((x) => x.filename === 'outline-test.pdf');
+                    if (!pdf) return { pdf: false };
+                    window.__pkmOpenPdf(pdf.id);
+                    await new Promise((r) => setTimeout(r, 2400));
+                    const tabBtn = [...document.querySelectorAll('button')].find((b) => b.getAttribute('title') === '书签' || b.getAttribute('aria-label') === '书签' || b.getAttribute('title') === 'Bookmarks' || b.getAttribute('aria-label') === 'Bookmarks' || (b.textContent || '').includes('书签'));
+                    if (!tabBtn) return { tab: false };
+                    tabBtn.click();
+                    await new Promise((r) => setTimeout(r, 500));
+                    const collect = () => [...document.querySelectorAll('button[title]')].filter((b) => b.title === 'Alpha Bookmark' || b.title === 'Alpha Sub Bookmark' || b.title === 'Beta Bookmark' || b.title === 'Gamma Bookmark');
+                    let items = collect();
+                    for (let i = 0; i < 12 && items.length < 4; i++) {
+                      await new Promise((r) => setTimeout(r, 500));
+                      items = collect();
+                    }
+                    if (items.length < 4) return { items: items.length };
+                    const sc = document.querySelector('[data-pan-scroll]');
+                    const sheet1 = () => document.querySelector('.pdf-page-sheet[data-page-number="1"]');
+                    const check = () => {
+                      const s = sheet1();
+                      const scRect = sc.getBoundingClientRect();
+                      const sRect = s.getBoundingClientRect();
+                      const scale = s.offsetHeight / 792;
+                      return { scale, sTop: sRect.top, scTop: scRect.top, sH: s.offsetHeight };
+                    };
+                    const before = check();
+                    // 场景1：初始缩放，点击页内书签 Alpha Sub（top=300）→ 章节贴合 viewport 顶部
+                    items[1].click();
+                    await new Promise((r) => setTimeout(r, 900));
+                    const after1 = check();
+                    const err1 = Math.abs(after1.sTop - (after1.scTop - (792 - 300) * after1.scale));
+                    // 场景2：Ctrl+wheel 放大后，点击页顶书签 Alpha（top=720）
+                    const r2 = sc.getBoundingClientRect();
+                    for (let i = 0; i < 10; i++) {
+                      sc.dispatchEvent(new WheelEvent('wheel', { ctrlKey: true, deltaY: -120, clientX: r2.left + r2.width / 2, clientY: r2.top + 200, bubbles: true, cancelable: true }));
+                      await new Promise((rr) => setTimeout(rr, 40));
+                    }
+                    await new Promise((r) => setTimeout(r, 1400));
+                    const zoomed = check();
+                    items[0].click();
+                    await new Promise((r) => setTimeout(r, 900));
+                    const after2 = check();
+                    const err2 = Math.abs(after2.sTop - (after2.scTop - (792 - 720) * after2.scale));
+                    // 场景3：缩小回初始比例，再点页内书签
+                    const r3 = sc.getBoundingClientRect();
+                    for (let i = 0; i < 10; i++) {
+                      sc.dispatchEvent(new WheelEvent('wheel', { ctrlKey: true, deltaY: 120, clientX: r3.left + r3.width / 2, clientY: r3.top + 200, bubbles: true, cancelable: true }));
+                      await new Promise((rr) => setTimeout(rr, 40));
+                    }
+                    await new Promise((r) => setTimeout(r, 1400));
+                    const shrunk = check();
+                    items[1].click();
+                    await new Promise((r) => setTimeout(r, 900));
+                    const after3 = check();
+                    const err3 = Math.abs(after3.sTop - (after3.scTop - (792 - 300) * after3.scale));
+                    return {
+                      pdf: true,
+                      items: items.length,
+                      scale0: +before.scale.toFixed(3),
+                      ok1: err1 < 2.5,
+                      err1: +err1.toFixed(2),
+                      scaleZoom: +zoomed.scale.toFixed(3),
+                      ok2: err2 < 2.5,
+                      err2: +err2.toFixed(2),
+                      scaleShrink: +shrunk.scale.toFixed(3),
+                      ok3: err3 < 2.5,
+                      err3: +err3.toFixed(2),
+                    };
+                  })()
+                `);
+                console.log('[capture] outlinePreciseDiag', JSON.stringify(outlinePreciseDiag));
                 // 跨行精确选词：A行中间 -> B行中间（向下），B行中间 -> A行中间（向上）
                 if (process.env.PKM_TEST_PDF) {
                                     const selPreciseDiag = await win.webContents.executeJavaScript(`

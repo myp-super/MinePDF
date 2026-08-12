@@ -79,6 +79,7 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
   const rightDragPan = useApp((s) => s.settings.rightDragPan);
   const setStoreOutline = useApp((s) => s.setOutline);
   const jumpPage = useApp((s) => s.jumpPage);
+  const jumpTop = useApp((s) => s.jumpTop);
   const consumeJump = useApp((s) => s.consumeJump);
   const setStoreCurrentPage = useApp((s) => s.setCurrentPage);
   const outlineCount = useApp((s) => s.outline.length);
@@ -682,35 +683,69 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
   }, [doc, pdf.id]);
 
   // ---------- shortcuts ----------
-  const scrollToPage = useCallback((n: number) => {
+  const scrollToPage = useCallback((n: number, top?: number | null) => {
     const el = scrollRef.current;
     if (!el) return;
-    // 目标页已挂载且尺寸就绪 → 立即定位（不依赖平滑滚动）
-    const tryJump = () => {
+    const L = layoutRef.current;
+
+    /**
+     * 目标章节在 scroll 内容坐标系中的 Y（每次调用基于当前真实 DOM/布局动态计算）：
+     * - 页面已挂载：用页面与 scroll 容器的实际 rect + 当前 scrollTop 反推页面绝对位置；
+     * - 页面未挂载：用虚拟布局的行顶（含页间距），先滚动触发挂载，随后校正；
+     * - 页内偏移：优先用 pdf.js viewport 把 PDF 用户空间 y-up 坐标权威转换成
+     *   当前渲染尺寸下“距页顶的 DOM 像素”（自动处理缩放/旋转）；viewport 未就绪时
+     *   用页面尺寸 × scale 估算（无旋转）。
+     */
+    const targetY = (): number | null => {
+      let pageAbsTop: number | null = null;
       const p = pageRefs.current.get(n);
       if (p && p.offsetHeight > 0) {
-        p.scrollIntoView({ block: 'start' });
-        return true;
+        const cRect = el.getBoundingClientRect();
+        const pRect = p.getBoundingClientRect();
+        pageAbsTop = el.scrollTop + (pRect.top - cRect.top);
+      } else {
+        const rowIdx = L.rows.findIndex((r) => r.includes(n));
+        if (rowIdx >= 0) pageAbsTop = L.tops[rowIdx];
       }
-      return false;
+      if (pageAbsTop == null) return null;
+
+      let offset = 0;
+      if (top != null && top > 0) {
+        const vp = viewportsRef.current.get(n);
+        if (vp) {
+          // PDF 用户空间 y-up → 视口 y-down（含当前 scale 与页面旋转）
+          const [, vy] = vp.convertToViewportPoint(0, top);
+          offset = Math.max(0, Math.round(vy));
+        } else {
+          const s = pageSizes?.[n - 1];
+          const pageH = s && s.h > 0 ? s.h : baseH;
+          offset = Math.max(0, Math.round((pageH - top) * scale));
+        }
+      }
+      return Math.max(0, pageAbsTop + offset);
     };
-    if (tryJump()) return;
-    // 目标页尚未挂载：用虚拟布局的精确行顶位置直接滚动（触发可视窗口挂载），
-    // 再持续轮询直到页面尺寸就绪后精确对齐，保证跳转不会丢失
-    const L = layoutRef.current;
-    const rowIdx = L.rows.findIndex((r) => r.includes(n));
-    if (rowIdx >= 0) {
-      el.scrollTop = Math.max(0, L.tops[rowIdx]);
-    } else if (baseH > 0 && scale > 0) {
-      el.scrollTop = Math.max(0, Math.round((n - 1) * (baseH * scale + 16)));
-    }
+
+    // 立即定位一次（页面已挂载则直接到位；未挂载则按布局估算滚动以触发挂载）
+    const y0 = targetY();
+    if (y0 != null) el.scrollTop = y0;
+
+    // 持续校正：等待大 PDF 渲染 / 缩放 / 布局稳定后，用最新坐标重算并修正，
+    // 直到目标章节精确贴合 viewport 顶部（不做任何固定偏移）
     let tries = 0;
-    const align = () => {
-      if (tryJump()) return;
-      if (++tries < 240) requestAnimationFrame(align); // 最长约 4 秒，等待大 PDF 渲染
+    let last = 0;
+    const align = (ts: number) => {
+      const y = targetY();
+      if (y != null && Math.abs(el.scrollTop - y) < 1.5) return; // 已精确对齐
+      if (ts - last < 80) {
+        requestAnimationFrame(align);
+        return;
+      }
+      last = ts;
+      if (y != null) el.scrollTop = y;
+      if (++tries < 80) requestAnimationFrame(align); // 最长约 6.5 秒，等待大 PDF 渲染/布局稳定
     };
     requestAnimationFrame(align);
-  }, [baseH, scale, layout]);
+  }, [baseH, scale, layout, pageSizes]);
 
   // 同步当前页到全局（信息面板书签高亮）
   useEffect(() => {
@@ -728,10 +763,10 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
   useEffect(() => {
     if (!paneActive) return;
     if (jumpPage != null && pageCount > 0) {
-      scrollToPage(Math.min(Math.max(1, jumpPage), pageCount));
+      scrollToPage(Math.min(Math.max(1, jumpPage), pageCount), jumpTop);
       consumeJump();
     }
-  }, [jumpPage, pageCount, scrollToPage, consumeJump, paneActive]);
+  }, [jumpPage, jumpTop, pageCount, scrollToPage, consumeJump, paneActive]);
 
   /** Link service for PDF internal links / cross references + external URLs. */
   const linkService = useMemo<PdfLinkService>(

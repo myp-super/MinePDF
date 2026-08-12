@@ -40,6 +40,8 @@ export interface OutlineNode {
   title: string;
   /** 目标页（1 起），解析失败为 null */
   page: number | null;
+  /** 页内 y 坐标（PDF 用户空间，y-up；无坐标时为 null），用于同页书签精确跳转 */
+  top: number | null;
   children: OutlineNode[];
 }
 
@@ -53,34 +55,48 @@ export async function getOutlineTree(doc: PDFDocumentProxy): Promise<OutlineNode
   }
   if (!outline || !outline.length) return [];
 
-  const resolveDestPage = async (dest: unknown): Promise<number | null> => {
-    if (!dest) return null;
+  const resolveDest = async (
+    dest: unknown,
+  ): Promise<{ page: number | null; top: number | null }> => {
+    if (!dest) return { page: null, top: null };
     let ref: unknown = null;
+    let arr: unknown[] = [];
     if (typeof dest === 'string') {
       try {
-        const arr = await doc.getDestination(dest);
-        if (Array.isArray(arr) && arr.length) ref = arr[0];
+        const d = await doc.getDestination(dest);
+        if (Array.isArray(d) && d.length) {
+          arr = d;
+          ref = d[0];
+        }
       } catch {
-        return null;
+        return { page: null, top: null };
       }
     } else if (Array.isArray(dest) && dest.length) {
+      arr = dest;
       ref = dest[0];
     }
-    if (!ref || typeof ref !== 'object') return null;
+    if (!ref || typeof ref !== 'object') return { page: null, top: null };
+    // dest 形如 [pageRef, {name:'XYZ'} | 'XYZ', left, top, zoom]；仅 XYZ 提供页内坐标
+    let top: number | null = null;
+    const destName =
+      arr[1] && typeof arr[1] === 'object' && 'name' in (arr[1] as object)
+        ? (arr[1] as { name?: unknown }).name
+        : arr[1];
+    if (destName === 'XYZ' && typeof arr[3] === 'number') top = arr[3] as number;
     try {
       const index = await doc.getPageIndex(ref as never);
-      return typeof index === 'number' ? index + 1 : null;
+      return { page: typeof index === 'number' ? index + 1 : null, top };
     } catch {
-      return null;
+      return { page: null, top };
     }
   };
 
   const walk = async (items: Array<{ title?: string; dest?: unknown; items?: unknown[] }>): Promise<OutlineNode[]> => {
     const out: OutlineNode[] = [];
     for (const item of items) {
-      const page = await resolveDestPage(item.dest);
+      const { page, top } = await resolveDest(item.dest);
       const children = Array.isArray(item.items) && item.items.length ? await walk(item.items as never[]) : [];
-      out.push({ title: item.title ?? '', page, children });
+      out.push({ title: item.title ?? '', page, top, children });
     }
     return out;
   };

@@ -153,6 +153,7 @@ interface AppState {
   outline: OutlineNode[];
   outlines: Record<number, OutlineNode[]>;
   jumpPage: number | null;
+  jumpTop: number | null;
   currentPage: number;
   sidebarWidth: number;
   inspectorWidth: number;
@@ -169,6 +170,8 @@ interface AppState {
   closeTab: (screenId: string, tabId: string) => void;
   closeAllTabs: (screenId: string) => void;
   closeOtherTabs: (screenId: string, tabId: string) => void;
+  /** 长按拖动排序：把 fromTabId 移到“移除它之后”的 toIndex 位置（实时让位） */
+  reorderTab: (screenId: string, fromTabId: string, toIndex: number) => void;
   clearScreens: () => void;
   splitScreen: (layout: 'split-h' | 'split-v') => void;
   unsplitScreen: () => void;
@@ -191,7 +194,7 @@ interface AppState {
   bumpNoteRevision: () => void;
   setOutline: (nodes: OutlineNode[]) => void;
   setOutlineFor: (pdfId: number, nodes: OutlineNode[]) => void;
-  requestJump: (page: number) => void;
+  requestJump: (page: number, top?: number | null) => void;
   consumeJump: () => void;
   setCurrentPage: (page: number) => void;
   /** 记录某份 PDF 的阅读页码（标签切换/卸载时保留） */
@@ -236,6 +239,7 @@ export const useApp = create<AppState>((set, get) => ({
   outline: [],
   outlines: {},
   jumpPage: null,
+  jumpTop: null,
   currentPage: 1,
   tabPages: {},
   sidebarWidth: Number(localStorage.getItem('pkm.sidebarWidth')) || 268,
@@ -487,6 +491,21 @@ export const useApp = create<AppState>((set, get) => ({
     const activePdfId = derivePdfId(screens, s.activeScreenId);
     set({ screens, activePdfId });
   },
+  reorderTab: (screenId, fromTabId, toIndex) => {
+    const s = get();
+    const screens = s.screens.map((sc) => {
+      if (sc.id !== screenId) return sc;
+      const from = sc.tabs.findIndex((t) => t.id === fromTabId);
+      if (from < 0) return sc;
+      const tabs = [...sc.tabs];
+      const [moved] = tabs.splice(from, 1);
+      const target = Math.max(0, Math.min(toIndex, tabs.length));
+      if (target === from) return sc;
+      tabs.splice(target, 0, moved);
+      return { ...sc, tabs };
+    });
+    set({ screens });
+  },
   clearScreens: () => {
     const s = get();
     set({
@@ -656,8 +675,8 @@ export const useApp = create<AppState>((set, get) => ({
   setOutline: (nodes) => set({ outline: nodes }),
   setOutlineFor: (pdfId, nodes) =>
     set((s) => ({ outlines: { ...s.outlines, [pdfId]: nodes } })),
-  requestJump: (page) => set({ jumpPage: page }),
-  consumeJump: () => set({ jumpPage: null }),
+  requestJump: (page, top) => set({ jumpPage: page, jumpTop: top ?? null }),
+  consumeJump: () => set({ jumpPage: null, jumpTop: null }),
   setCurrentPage: (page) => {
     const s = get();
     const pdfId = s.activePdfId ?? -1;

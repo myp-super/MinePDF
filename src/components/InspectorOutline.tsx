@@ -12,9 +12,6 @@ export function InspectorOutline({ items }: { items: OutlineNode[] }) {
   const [query, setQuery] = useState('');
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [allCollapsed, setAllCollapsed] = useState(false);
-  const [highlightKey, setHighlightKey] = useState<string | null>(null);
-  /** 当前被点击选中的书签 key（同一时刻只有一个） */
-  const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const itemRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 
   // 收集所有节点 key（index 路径，如 "0_1"）
@@ -54,7 +51,7 @@ export function InspectorOutline({ items }: { items: OutlineNode[] }) {
     });
   };
 
-  /** 定位当前章节：页码 ≤ 当前页的最近节点，展开其父链并滚动高亮 */
+  /** 定位当前章节：页码 ≤ 当前页的最近节点，展开其父链并滚动到可视区（不高亮） */
   const locateCurrent = () => {
     type Cand = { key: string; page: number; depth: number };
     const pick = (a: Cand | null, b: Cand): Cand => {
@@ -87,10 +84,8 @@ export function InspectorOutline({ items }: { items: OutlineNode[] }) {
       return next;
     });
     setAllCollapsed(false);
-    setHighlightKey(best.key);
     setTimeout(() => {
       itemRefs.current.get(best.key)?.scrollIntoView({ block: 'nearest' });
-      setTimeout(() => setHighlightKey((k) => (k === best.key ? null : k)), 1600);
     }, 80);
   };
 
@@ -144,14 +139,10 @@ export function InspectorOutline({ items }: { items: OutlineNode[] }) {
             node={node}
             depth={0}
             path={String(i)}
-            currentPage={currentPage}
             query={query.trim().toLowerCase()}
             collapsed={collapsed}
-            highlightKey={highlightKey}
-            selectedKey={selectedKey}
             itemRefs={itemRefs}
             onJump={requestJump}
-            onSelect={setSelectedKey}
             onToggle={toggleNode}
           />
         ))}
@@ -164,46 +155,30 @@ function OutlineItem({
   node,
   depth,
   path,
-  currentPage,
   query,
   collapsed,
-  highlightKey,
-  selectedKey,
   itemRefs,
   onJump,
-  onSelect,
   onToggle,
 }: {
   node: OutlineNode;
   depth: number;
   path: string;
-  currentPage: number;
   query: string;
   collapsed: Set<string>;
-  highlightKey: string | null;
-  selectedKey: string | null;
   itemRefs: React.MutableRefObject<Map<string, HTMLDivElement>>;
-  onJump: (page: number) => void;
-  onSelect: (key: string) => void;
+  onJump: (page: number, top?: number | null) => void;
   onToggle: (key: string) => void;
 }) {
   const hasChildren = !!node.children?.length;
   const isCollapsed = collapsed.has(path);
-  const active = node.page != null && node.page === currentPage;
-  const highlighted = highlightKey === path;
-  const isSelected = selectedKey === path;
   const canJump = node.page != null;
   // 搜索模式下匹配的节点保持展开
   const forceOpen = query.length > 0;
 
   return (
     <div ref={(el) => el && itemRefs.current.set(path, el)}>
-      <div
-        className={`flex w-full items-center gap-0.5 pr-2 text-left text-[11.5px] transition-colors ${
-          highlighted || isSelected ? 'bg-app-accent/20 text-app-accent' : ''
-        }`}
-        style={{ paddingLeft: 4 + depth * 11 }}
-      >
+      <div className="flex w-full items-center gap-0.5 pr-2 text-left text-[11.5px]" style={{ paddingLeft: 4 + depth * 11 }}>
         {hasChildren ? (
           <button
             className="flex h-4 w-4 shrink-0 items-center justify-center text-app-muted transition-colors hover:text-app-text"
@@ -222,22 +197,15 @@ function OutlineItem({
           disabled={!canJump}
           onClick={() => {
             if (node.page != null) {
-              onSelect(path);
-              onJump(node.page);
+              onJump(node.page, node.top ?? null);
             }
           }}
           title={node.title}
         >
-          <span className="block truncate">{node.title}</span>
+          <span className="block break-words leading-snug">{node.title}</span>
         </button>
         {node.page != null && (
-          <span
-            className={`shrink-0 text-[9.5px] tabular-nums ${
-              active ? 'text-app-accent' : 'text-app-muted'
-            }`}
-          >
-            {node.page}
-          </span>
+          <span className="shrink-0 text-[9.5px] tabular-nums text-app-muted">{node.page}</span>
         )}
       </div>
       {hasChildren &&
@@ -248,14 +216,10 @@ function OutlineItem({
             node={child}
             depth={depth + 1}
             path={`${path}_${i}`}
-            currentPage={currentPage}
             query={query}
             collapsed={collapsed}
-            highlightKey={highlightKey}
-            selectedKey={selectedKey}
             itemRefs={itemRefs}
             onJump={onJump}
-            onSelect={onSelect}
             onToggle={onToggle}
           />
         ))}
