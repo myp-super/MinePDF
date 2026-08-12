@@ -1,19 +1,17 @@
 # Security Policy
 
-## 支持范围
+**Supported Versions**
 
-仅对最新发布的正式版本提供安全更新支持。
+当前只维护最新公开版本。
 
-| 版本 | 支持 |
-| --- | --- |
-| 最新 Release | ✅ |
-| 旧版本 | ❌ |
+**Installer Safety Notice**
 
-## 报告安全问题
+请只从 GitHub Release 或 README 中列出的官方网盘入口下载安装包，旧版本 .exe 安装包一律视为不可信历史产物并隔离保留，不建议继续安装或传播。需要安装 MinePDF 时，请使用最新版本的官方 Release 安装包或便携版。
 
-如果发现安全漏洞，请通过以下方式报告，**不要**在公开 Issue 中直接披露漏洞细节：
+软件内更新仅通过官方更新源（update.json）下发，请勿使用来源不明的第三方更新地址。
 
-- 在 [Issues](https://github.com/myp-super/MinePDF/issues) 提交，并在标题前加 `[Security]`
-- 或通过 GitHub 私信作者（[@myp-super](https://github.com/myp-super)）
+**Reporting a Vulnerability**
 
-收到报告后我会在 7 天内确认并回复，修复完成后会在 Release 说明中注明。
+如果你发现安全问题，请通过 [GitHub Issues](https://github.com/myp-super/MinePDF/issues) 或仓库作者主页联系作者。
+
+请不要在公开 Issue 中直接贴出 Cookie、Token、账号信息、私密链接或可复现的敏感数据。
