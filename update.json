@@ -1,8 +1,8 @@
 {
-  "version": "3.5.10",
+  "publishDate": "2026-08-12",
+  "version": "3.5.11",
+  "url": "https://github.com/myp-super/MinePDF/releases/download/v3.5.11/MinePDF.Setup.3.5.11.exe",
   "notes": [
-    "v3.5.10 - 修复书签单选与精确跨行选词：点击书签仅当前项选中且切换即时生效；选词按行+字符索引精确计算（起点行选后半、终点行选到鼠标、中间行整行，双向与跨页对称）"
-  ],
-  "publishDate": "2026-08-11",
-  "url": "https://github.com/myp-super/MinePDF/releases/download/v3.5.10/MinePDF.Setup.3.5.10.exe"
+    "v3.5.11 - 书签精确定位（任意缩放贴合阅读区顶部）、书签仅点击跳转、标签页按下即拖拽实时让位排序、书签文字自动换行"
+  ]
 }
