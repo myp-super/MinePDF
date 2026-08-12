@@ -49,13 +49,23 @@ Electron 桌面软件、未签名安装包有时会被浏览器、Windows Defend
 
 ## 界面预览
 
+**知识库管理**：本地存储，分区管理，快捷高效
+
 <div align="center">
-  <img src="./pic/1.jpg" alt="知识库管理：本地存储，分区管理" width="32%" />
-  <img src="./pic/2.png" alt="界面简洁：三栏布局一目了然" width="32%" />
-  <img src="./pic/3.png" alt="图文笔记：支持插入代码、公式、导出" width="32%" />
+  <img src="./pic/1.jpg" alt="知识库管理：本地存储，分区管理" width="90%" />
 </div>
 
-知识库管理（左）：本地存储，分区管理，快捷高效　·　界面简洁（中）：三栏布局一目了然　·　图文笔记（右）：笔记功能，边读边记，支持插入代码、公式、导出等
+**界面简洁**：三栏布局一目了然
+
+<div align="center">
+  <img src="./pic/2.png" alt="界面简洁：三栏布局一目了然" width="90%" />
+</div>
+
+**图文笔记**：笔记功能，边读边记，支持插入代码、公式、导出等
+
+<div align="center">
+  <img src="./pic/3.png" alt="图文笔记：支持插入代码、公式、导出" width="90%" />
+</div>
 
 ## 核心特性
 
