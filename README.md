@@ -123,10 +123,14 @@ Documents/MinePDF/
     └── backups/
 ```
 
-## 版权与授权
+## License
 
 Copyright (C) 2026 myp-super.
 
 本项目采用 MIT 授权。详见 [LICENSE](./LICENSE)。
 
 MinePDF 名称、Logo、界面视觉设计与原创表达归作者所有；第三方依赖（Electron、PDFium、PDF.js、SQLite 等）分别遵循其各自授权。
+
+## Security Policy
+
+发现安全问题时，请参阅 [SECURITY.md](./SECURITY.md) 了解如何报告。
