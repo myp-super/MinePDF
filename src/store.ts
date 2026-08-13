@@ -63,6 +63,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   autoCollapseSidebar: false,
   rightDragPan: true,
   dblClickTogglePanels: true,
+  uiFontScale: 1,
   libraryPath: '',
   libraryPdfDir: '',
 };

@@ -28,6 +28,7 @@ import { Button, ConfirmDialog, ContextMenu, type ContextMenuItem, IconButton, M
 
 const FOLDER_MIME = 'application/x-pkm-folder';
 const PDF_MIME = 'application/x-pkm-pdf';
+const PDF_IDS_MIME = 'application/x-pkm-pdf-ids';
 const LIBRARY_MIME = 'application/x-pkm-library';
 
 interface ConfirmState {
@@ -58,6 +59,21 @@ function pathsFromDrag(e: React.DragEvent): string[] {
     }
   }
   return paths;
+}
+
+/** 从拖拽数据解析 PDF id 集合（多选拖拽时为整个选中集合，否则为单个） */
+function pdfIdsFromDrag(e: React.DragEvent): number[] {
+  try {
+    const arr = JSON.parse(e.dataTransfer.getData(PDF_IDS_MIME));
+    if (Array.isArray(arr)) {
+      const ids = arr.filter((n): n is number => typeof n === 'number');
+      if (ids.length) return ids;
+    }
+  } catch {
+    /* fall through */
+  }
+  const single = Number(e.dataTransfer.getData(PDF_MIME));
+  return Number.isFinite(single) ? [single] : [];
 }
 
 /** 同级拖拽排序：先归入目标父级（如需），再排到 beforeId 之前 */
@@ -727,6 +743,38 @@ export function Sidebar() {
           if (e.clientY < r.top + threshold) el.scrollTop -= 14;
           else if (e.clientY > r.bottom - threshold) el.scrollTop += 14;
         }}
+        onDrop={(e) => {
+          // 知识库空白区松手：统一落到默认知识库根目录（桌面文件导入 / 库内 PDF 或文件夹移动）
+          noDrag(e);
+          if (dragHasFiles(e)) {
+            const paths = pathsFromDrag(e).filter((p) => p.toLowerCase().endsWith('.pdf'));
+            if (paths.length) void doImport(paths, defaultLibrary?.rootFolderId ?? null);
+            return;
+          }
+          const f = e.dataTransfer.getData(FOLDER_MIME);
+          const p = e.dataTransfer.getData(PDF_MIME);
+          if (f) {
+            void (async () => {
+              try {
+                await window.pkm.moveFolder(Number(f), defaultLibrary?.rootFolderId ?? null);
+                await refresh();
+              } catch (err) {
+                toast('error', terr(err instanceof Error ? err.message : String(err)));
+              }
+            })();
+          } else if (p) {
+            void (async () => {
+              try {
+                for (const id of pdfIdsFromDrag(e)) {
+                  await window.pkm.movePdf(id, defaultLibrary?.rootFolderId ?? null);
+                }
+                await refresh();
+              } catch (err) {
+                toast('error', terr(err instanceof Error ? err.message : String(err)));
+              }
+            })();
+          }
+        }}
         onContextMenu={(e) => {
           // 知识库区空白处右键：新建知识库 / 新建子文件夹 / 导入 PDF
           if (!(e.target as HTMLElement).closest('[role="treeitem"]')) {
@@ -805,7 +853,7 @@ export function Sidebar() {
                   })
                 }
                 onRemovePdf={requestRemovePdf}
-                onDropFiles={(paths) => doImport(paths, lib.rootFolderId)}
+                onDropFiles={(paths, targetFolderId) => doImport(paths, targetFolderId)}
                 onDropFolder={(folderId) =>
                   void (async () => {
                     try {
@@ -970,11 +1018,6 @@ export function Sidebar() {
             className="overflow-y-auto px-2 pb-2"
             style={{ height: inboxHeight }}
           >
-            {inboxPdfs.length === 0 && (
-              <div className="px-2 py-2 text-[10.5px] leading-relaxed text-app-muted/80">
-                {t('inbox.empty')}
-              </div>
-            )}
             {inboxPdfs.map((p) => (
               <div
                 key={p.id}
@@ -1094,7 +1137,7 @@ function LibraryNode({
   onPickFolder: () => void;
   onMoveTo: (folderId: number) => void;
   onRemovePdf: (pdf: PdfRecord) => void;
-  onDropFiles: (paths: string[]) => Promise<void>;
+  onDropFiles: (paths: string[], targetFolderId: number) => Promise<void>;
   onDropFolder: (folderId: number) => void;
   onDropPdf: (pdfId: number) => void;
   sortMode: boolean;
@@ -1150,7 +1193,7 @@ function LibraryNode({
     dragDepth.current = 0;
     setDragOver(false);
     if (dragHasFiles(e)) {
-      await onDropFiles(pathsFromDrag(e));
+      await onDropFiles(pathsFromDrag(e), lib.rootFolderId);
       return;
     }
     const f = e.dataTransfer.getData(FOLDER_MIME);
@@ -1160,16 +1203,13 @@ function LibraryNode({
       if (sortMode && l) {
         const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
         onReorderLibrary(Number(l), e.clientY > rect.top + rect.height / 2);
-        toggleExpanded(lib.rootFolderId);
       } else if (sortMode) {
         // 排序模式下拖文件夹到知识库行不执行“移入”，避免误操作
         return;
       } else if (f) {
         onDropFolder(Number(f));
-        toggleExpanded(lib.rootFolderId);
       } else if (p) {
-        onDropPdf(Number(p));
-        toggleExpanded(lib.rootFolderId);
+        for (const id of pdfIdsFromDrag(e)) onDropPdf(id);
       }
     } catch (err) {
       toast('error', terr(err instanceof Error ? err.message : String(err)));
@@ -1337,7 +1377,7 @@ function LibraryNode({
                 onMoveTo={onMoveTo}
                 onRenameDone={onRenameDone}
                 onRemovePdf={onRemovePdf}
-                onDropFiles={onDropFiles}
+                onDropFiles={(paths) => onDropFiles(paths, f.id)}
               />
             </Fragment>
           ))}
@@ -1536,7 +1576,7 @@ function FolderNode({
   onMoveTo?: (folderId: number) => void;
   onRenameDone?: () => void;
   onRemovePdf: (pdf: PdfRecord) => void;
-  onDropFiles: (paths: string[]) => Promise<void>;
+  onDropFiles: (paths: string[], targetFolderId: number) => Promise<void>;
 }) {
   const t = useT();
   const terr = useTError();
@@ -1561,7 +1601,7 @@ function FolderNode({
     dragDepth.current = 0;
     setDragOver(false);
     if (dragHasFiles(e)) {
-      await onDropFiles(pathsFromDrag(e));
+      await onDropFiles(pathsFromDrag(e), folder.id);
       return;
     }
     const f = e.dataTransfer.getData(FOLDER_MIME);
@@ -1579,11 +1619,9 @@ function FolderNode({
       } else if (f) {
         await window.pkm.moveFolder(Number(f), folder.id);
         await refresh();
-        toggleExpanded(folder.id);
       } else if (p) {
-        await window.pkm.movePdf(Number(p), folder.id);
+        for (const id of pdfIdsFromDrag(e)) await window.pkm.movePdf(id, folder.id);
         await refresh();
-        toggleExpanded(folder.id);
       }
     } catch (err) {
       toast('error', terr(err instanceof Error ? err.message : String(err)));
@@ -1789,7 +1827,7 @@ function FolderNode({
                 onMoveTo={onMoveTo}
                 onRenameDone={onRenameDone}
                 onRemovePdf={onRemovePdf}
-                onDropFiles={onDropFiles}
+                onDropFiles={(paths) => onDropFiles(paths, f.id)}
               />
             </Fragment>
           ))}
@@ -1855,6 +1893,12 @@ function PdfRow({
       draggable
       onDragStart={(e) => {
         e.dataTransfer.setData(PDF_MIME, String(pdf.id));
+        // 多选时拖动：携带整个选中集合，松手后批量移动；单选仍只带自身
+        const ids =
+          selectedPdfIds.includes(pdf.id) && selectedPdfIds.length > 1
+            ? selectedPdfIds
+            : [pdf.id];
+        e.dataTransfer.setData(PDF_IDS_MIME, JSON.stringify(ids));
         e.dataTransfer.effectAllowed = 'move';
       }}
       onClick={(e) => {

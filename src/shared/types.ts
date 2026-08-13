@@ -109,6 +109,8 @@ export interface AppSettings {
   rightDragPan: boolean;
   /** 双击左右边栏空白处快速折叠/展开 */
   dblClickTogglePanels: boolean;
+  /** 界面字号缩放（0.9=小 / 1=中 / 1.1=大），仅作用于 UI 区域，不影响 PDF 清晰度 */
+  uiFontScale: number;
   /** 知识库根目录（Documents/PDFKnowledgeManager） */
   libraryPath: string;
   /** PDF 库文件夹：所有 PDF 的统一存放目录（Obsidian 式） */

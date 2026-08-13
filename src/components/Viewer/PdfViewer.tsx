@@ -237,7 +237,7 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
   }, [doc, scale, mode, pdf.id]);
 
   const onPanMouseDown = (e: React.MouseEvent) => {
-    if (screenshotMode || highlightMode || !canPanRef.current) return;
+    if (screenshotMode || !canPanRef.current) return;
     // 右键拖拽模式用右键平移；关闭后恢复左键平移
     const btn = rightDragPan ? 2 : 0;
     if (e.button !== btn) return;
@@ -1125,14 +1125,18 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
   };
 
   const handleMouseDown = (e: React.MouseEvent) => {
+    // 右键平移优先：高亮模式下也要能用右键小手抓取
+    if (rightDragPan && e.button === 2) {
+      onPanMouseDown(e);
+      return;
+    }
     if (highlightMode) {
       startSelectDrag(e, 'highlight');
       return;
     }
     if (rightDragPan) {
-      // 右键平移；左键普通连续选词
-      if (e.button === 2) onPanMouseDown(e);
-      else startSelectDrag(e, 'select');
+      // 左键普通连续选词
+      startSelectDrag(e, 'select');
       return;
     }
     onPanMouseDown(e);

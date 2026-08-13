@@ -1,12 +1,13 @@
 import {
   ArrowLeft,
+  BookOpen,
   Database,
   Download,
   FileText,
   FolderInput,
   FolderOpen,
   Hand,
-  HardDrive,
+  Info,
   Languages,
   Library,
   Moon,
@@ -20,6 +21,8 @@ import React, { useEffect, useState } from 'react';
 import { useT, useTError } from '../i18n';
 import type { AppSettings } from '../shared/types';
 import { useApp } from '../store';
+import { AboutModal } from './AboutModal';
+import { UpdateModal } from './UpdateModal';
 import { Button, Toggle } from './ui';
 
 export function SettingsPage() {
@@ -30,10 +33,16 @@ export function SettingsPage() {
   const refresh = useApp((s) => s.refresh);
   const toast = useApp((s) => s.toast);
   const [busy, setBusy] = useState(false);
-  const [checking, setChecking] = useState(false);
+  const [updateOpen, setUpdateOpen] = useState(false);
+  const [aboutOpen, setAboutOpen] = useState(false);
+  const [appVersion, setAppVersion] = useState('');
   const [defaultPdf, setDefaultPdf] = useState<boolean | null>(null);
 
   useEffect(() => {
+    void window.pkm
+      .getAppInfo()
+      .then((info) => setAppVersion(info.version))
+      .catch(() => undefined);
     void window.pkm
       .isDefaultPdfApp()
       .then(setDefaultPdf)
@@ -104,19 +113,6 @@ export function SettingsPage() {
     }
   };
 
-  const checkUpdate = async () => {
-    setChecking(true);
-    try {
-      const res = await window.pkm.checkForUpdates();
-      if (res.status === 'up-to-date') toast('success', t('update.upToDate'));
-      else if (res.status === 'disabled') toast('info', t('update.disabled'));
-      else if (res.status === 'error') toast('error', t('update.error', { msg: res.error ?? '' }));
-      else if (res.latest) toast('info', t('update.newVersion', { version: res.latest.version }));
-    } finally {
-      setChecking(false);
-    }
-  };
-
   return (
     <main className="min-w-0 flex-1 overflow-y-auto bg-app-base">
       <div className="mx-auto max-w-2xl px-8 py-6">
@@ -175,6 +171,34 @@ export function SettingsPage() {
             </select>
           </div>
           <div className="mt-3 flex items-center gap-3">
+            <MousePointer2 size={13} className="shrink-0 text-app-accent" />
+            <div className="min-w-0 flex-1">
+              <div className="text-[11.5px] text-app-text/90">{t('settings.uiFontScale')}</div>
+              <div className="text-[10.5px] text-app-muted">{t('settings.uiFontScaleHint')}</div>
+            </div>
+            <div className="flex overflow-hidden rounded-md border border-app-border">
+              {([0.9, 1, 1.1] as const).map((scale, i) => (
+                <button
+                  key={scale}
+                  className={`px-2.5 py-1 text-xs transition-colors ${
+                    Math.abs(settings.uiFontScale - scale) < 0.001
+                      ? 'bg-app-accent/20 text-app-text'
+                      : 'bg-app-panel2 text-app-muted hover:text-app-text'
+                  } ${i > 0 ? 'border-l border-app-border' : ''}`}
+                  onClick={() => void update({ uiFontScale: scale })}
+                >
+                  {t(scale === 0.9 ? 'settings.fontSmall' : scale === 1 ? 'settings.fontMedium' : 'settings.fontLarge')}
+                </button>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        <section className="mb-4 rounded-xl border border-app-border bg-app-panel p-4">
+          <div className="mb-3 flex items-center gap-2 text-xs font-semibold">
+            <BookOpen size={14} className="text-app-accent" /> {t('settings.readSection')}
+          </div>
+          <div className="flex items-center gap-3">
             <Library size={13} className="shrink-0 text-app-accent" />
             <div className="min-w-0 flex-1">
               <div className="text-[11.5px] text-app-text/90">{t('settings.autoCollapseSidebar')}</div>
@@ -211,9 +235,9 @@ export function SettingsPage() {
 
         <section className="mb-4 rounded-xl border border-app-border bg-app-panel p-4">
           <div className="mb-3 flex items-center gap-2 text-xs font-semibold">
-            <HardDrive size={14} className="text-app-accent" /> {t('settings.importSection')}
+            <Library size={14} className="text-app-accent" /> {t('settings.librarySection')}
           </div>
-          <div className="mb-2 flex items-center justify-between gap-3">
+          <div className="mb-3 flex items-center justify-between gap-3">
             <div className="min-w-0">
               <div className="text-[11.5px] text-app-text/90">{t('settings.defaultImportDir')}</div>
               <div className="mt-0.5 truncate text-[10.5px] text-app-muted">
@@ -223,13 +247,6 @@ export function SettingsPage() {
             <Button size="sm" variant="outline" onClick={() => void chooseImportDir()}>
               {t('settings.choose')}
             </Button>
-          </div>
-          <p className="text-[10.5px] leading-relaxed text-app-muted/80">{t('settings.importHint')}</p>
-        </section>
-
-        <section className="mb-4 rounded-xl border border-app-border bg-app-panel p-4">
-          <div className="mb-3 flex items-center gap-2 text-xs font-semibold">
-            <Library size={14} className="text-app-accent" /> {t('settings.librarySection')}
           </div>
           <div className="mb-2 rounded-lg bg-app-panel2 px-3 py-2 text-[11px] text-app-muted">
             {settings.libraryPdfDir}
@@ -262,8 +279,8 @@ export function SettingsPage() {
             <RefreshCw size={14} className="text-app-accent" /> {t('settings.updateSection')}
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <Button size="sm" variant="primary" disabled={checking} onClick={() => void checkUpdate()}>
-              <RefreshCw size={12} /> {checking ? t('settings.checking') : t('settings.checkUpdate')}
+            <Button size="sm" variant="primary" onClick={() => setUpdateOpen(true)}>
+              <RefreshCw size={12} /> {t('settings.checkUpdate')}
             </Button>
           </div>
           <div className="mt-3 flex items-center justify-between gap-3 border-t border-app-border pt-3">
@@ -283,7 +300,7 @@ export function SettingsPage() {
             <FileText size={14} className="text-app-accent" /> {t('settings.defaultPdf')}
           </div>
           <div className="flex items-center justify-between gap-3">
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1">
               <div className="text-[11.5px] text-app-text/90">
                 {t('settings.defaultPdfStatus', {
                   status:
@@ -294,11 +311,11 @@ export function SettingsPage() {
                         : t('settings.defaultPdfUnknown'),
                 })}
               </div>
-              <div className="mt-0.5 text-[10.5px] text-app-muted">{t('settings.defaultPdfHint')}</div>
             </div>
             <Button
               size="sm"
               variant={defaultPdf ? 'outline' : 'primary'}
+              className="shrink-0 whitespace-nowrap"
               disabled={busy}
               onClick={() =>
                 defaultPdf ? void cancelDefaultPdf() : void applyDefaultPdf()
@@ -327,7 +344,26 @@ export function SettingsPage() {
           </div>
           <p className="mt-2 text-[10.5px] leading-relaxed text-app-muted/80">{t('settings.backupHint')}</p>
         </section>
+
+        <section className="rounded-xl border border-app-border bg-app-panel p-4">
+          <div className="mb-3 flex items-center gap-2 text-xs font-semibold">
+            <Info size={14} className="text-app-accent" /> {t('settings.about')}
+          </div>
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <div className="text-[11.5px] text-app-text/90">{t('settings.aboutHint')}</div>
+              <div className="mt-0.5 text-[10.5px] text-app-muted">
+                {t('about.version')}：v{appVersion}
+              </div>
+            </div>
+            <Button size="sm" variant="primary" onClick={() => setAboutOpen(true)}>
+              <Info size={12} /> {t('settings.aboutOpen')}
+            </Button>
+          </div>
+        </section>
       </div>
+      <AboutModal open={aboutOpen} onClose={() => setAboutOpen(false)} />
+      <UpdateModal open={updateOpen} onClose={() => setUpdateOpen(false)} />
     </main>
   );
 }

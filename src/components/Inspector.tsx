@@ -432,7 +432,8 @@ function NotesPanel({ pdf }: { pdf: PdfRecord }) {
   const [mode, setMode] = useState<'edit' | 'preview'>('edit');
   const [loading, setLoading] = useState(true);
   const [dirty, setDirty] = useState(false);
-  const [savedAt, setSavedAt] = useState<Date | null>(null);
+  /** 保存完成后的短暂提示文案（i18n key），2 秒后自动消失 */
+  const [justSaved, setJustSaved] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [noteFile, setNoteFile] = useState<string | null>(null);
   const [noteDir, setNoteDir] = useState<string | null>(null);
@@ -440,6 +441,12 @@ function NotesPanel({ pdf }: { pdf: PdfRecord }) {
   const noteRevision = useApp((s) => s.noteRevision);
   const [exporting, setExporting] = useState(false);
   const loadedRef = useRef(false);
+  const mdRef = useRef('');
+  const dirtyRef = useRef(false);
+  const autoSaveRef = useRef(autoSave);
+  mdRef.current = md;
+  dirtyRef.current = dirty;
+  autoSaveRef.current = autoSave;
 
   useEffect(() => {
     loadedRef.current = false;
@@ -473,9 +480,9 @@ function NotesPanel({ pdf }: { pdf: PdfRecord }) {
       try {
         setSaving(true);
         await window.pkm.saveNote(pdf.id, text);
-        setSavedAt(new Date());
         setDirty(false);
-        if (!silent) toast('success', t('inspector.noteSaved'));
+        setJustSaved(silent ? 'inspector.autoSaved' : 'inspector.saved');
+        setTimeout(() => setJustSaved((v) => (v === (silent ? 'inspector.autoSaved' : 'inspector.saved') ? null : v)), 2000);
       } catch (err) {
         toast('error', t('inspector.saveFailed', { msg: err instanceof Error ? err.message : String(err) }));
       } finally {
@@ -487,9 +494,19 @@ function NotesPanel({ pdf }: { pdf: PdfRecord }) {
 
   useEffect(() => {
     if (!loadedRef.current || !dirty || !autoSave) return;
-    const timer = setTimeout(() => void save(md, true), 900);
+    // 输入即保存：仅保留极短防抖避免每次击键都触发 IPC
+    const timer = setTimeout(() => void save(md, true), 100);
     return () => clearTimeout(timer);
   }, [md, dirty, autoSave, save]);
+
+  // 组件卸载（切换 PDF / 面板 tab / 关闭）前强制落库，防止编辑内容丢失
+  useEffect(() => {
+    return () => {
+      if (loadedRef.current && dirtyRef.current && autoSaveRef.current && mdRef.current != null) {
+        void window.pkm.saveNote(pdf.id, mdRef.current).catch(() => undefined);
+      }
+    };
+  }, [pdf.id]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -602,12 +619,12 @@ function NotesPanel({ pdf }: { pdf: PdfRecord }) {
             <span className="flex items-center gap-1 whitespace-nowrap">
               <Loader2 size={10} className="animate-spin" /> {t('common.saving')}
             </span>
+          ) : justSaved ? (
+            <span className="flex items-center gap-1 whitespace-nowrap text-emerald-400">
+              <Check size={10} /> {t(justSaved)}
+            </span>
           ) : dirty ? (
             <span className="whitespace-nowrap">{t('inspector.unsaved')}</span>
-          ) : savedAt ? (
-            <span className="flex items-center gap-1 whitespace-nowrap text-emerald-400">
-              <Check size={10} /> {savedAt.toLocaleTimeString('zh-CN', { hour12: false })}
-            </span>
           ) : (
             <span className="flex items-center gap-1 whitespace-nowrap">
               <StickyNote size={10} /> {autoSave ? t('inspector.autoSave') : t('inspector.ctrlSave')}

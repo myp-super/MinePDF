@@ -77,7 +77,14 @@ export function PdfToolbar({
   const t = useT();
 
   return (
-    <div className="flex h-10 shrink-0 items-center gap-0.5 overflow-x-auto border-b border-app-border bg-app-panel px-2">
+    <div className="relative flex h-10 shrink-0 items-center gap-0.5 overflow-x-auto border-b border-app-border bg-app-panel px-2">
+      {/* 阅读进度：当前页 / 总页数 */}
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-[3px] bg-app-panel2/80">
+        <div
+          className="h-full bg-app-accent transition-all duration-150"
+          style={{ width: `${pageCount > 0 ? Math.min(100, (currentPage / pageCount) * 100) : 0}%` }}
+        />
+      </div>
       <IconButton disabled={!ready || currentPage <= 1} onClick={onPrev} title={t('toolbar.prev')}>
         <ChevronLeft size={15} />
       </IconButton>

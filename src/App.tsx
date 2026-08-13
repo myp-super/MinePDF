@@ -38,6 +38,7 @@ export default function App() {
   const setInspectorWidth = useApp((s) => s.setInspectorWidth);
   const inspectorCollapsed = useApp((s) => s.inspectorCollapsed);
   const sidebarCollapsed = useApp((s) => s.sidebarCollapsed);
+  const uiFontScale = settings.uiFontScale ?? 1;
 
   const [missingPdf, setMissingPdf] = useState<PdfRecord | null>(null);
 
@@ -237,9 +238,13 @@ export default function App() {
 
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-app-base text-app-text">
-      <TitleBar />
+      <div style={{ zoom: uiFontScale }}>
+        <TitleBar />
+      </div>
       <div className="flex min-h-0 flex-1">
-        <Sidebar />
+        <div className="flex min-h-0" style={{ zoom: uiFontScale }}>
+          <Sidebar />
+        </div>
         {!sidebarCollapsed && (
           <ResizeHandle
             width={sidebarWidth}
@@ -252,7 +257,9 @@ export default function App() {
           />
         )}
         {view === 'settings' ? (
-          <SettingsPage />
+          <div className="flex min-h-0 min-w-0 flex-1" style={{ zoom: uiFontScale }}>
+            <SettingsPage />
+          </div>
         ) : activeScreen ? (
           splitLayout !== 'single' && screens.length > 1 ? (
             <div
@@ -313,7 +320,9 @@ export default function App() {
             title={t('common.resize')}
           />
         )}
-        <Inspector />
+        <div className="flex min-h-0" style={{ zoom: uiFontScale }}>
+          <Inspector />
+        </div>
       </div>
 
       <SearchModal />

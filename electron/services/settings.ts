@@ -19,6 +19,8 @@ const DEFAULTS: AppSettings = {
   rightDragPan: true,
   /** 双击左右边栏空白处快速折叠/展开 */
   dblClickTogglePanels: true,
+  /** 界面字号缩放 */
+  uiFontScale: 1,
   libraryPath: '',
   libraryPdfDir: '',
 };

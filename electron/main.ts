@@ -2,7 +2,7 @@ import { app, BrowserWindow, screen, shell } from 'electron';
 import fs from 'fs';
 import path from 'path';
 import { pathToFileURL } from 'url';
-import { closeDb, initDatabase } from './db/database';
+import { closeDb, getDataDir, initDatabase } from './db/database';
 import {
   ensureNoForcedPdfAssociation,
   onRendererReady,
@@ -18,6 +18,49 @@ const devServerUrl = process.env.VITE_DEV_SERVER_URL ?? '';
 const isDev = Boolean(devServerUrl);
 const smokeTest = process.env.PKM_SMOKE_TEST === '1';
 const bootT0 = Date.now();
+
+/** 窗口状态持久化文件（记住上次窗口大小与位置） */
+function windowStateFile(): string {
+  return path.join(getDataDir(), 'config', 'window-state.json');
+}
+
+/** 读取上次窗口状态，并校验它仍落在某个显示器工作区内（屏幕布局变化时回退默认） */
+function loadWindowState(): { x: number; y: number; width: number; height: number } | null {
+  try {
+    const raw = fs.readFileSync(windowStateFile(), 'utf8');
+    const s = JSON.parse(raw) as { x?: number; y?: number; width?: number; height?: number };
+    if (typeof s.width !== 'number' || typeof s.height !== 'number') return null;
+    const b = { x: s.x ?? 0, y: s.y ?? 0, width: s.width, height: s.height };
+    const wa = screen.getDisplayMatching(b).workArea;
+    const margin = 100;
+    if (
+      b.x < wa.x - margin ||
+      b.y < wa.y - margin ||
+      b.x + b.width > wa.x + wa.width + margin ||
+      b.y + b.height > wa.y + wa.height + margin
+    ) {
+      return null;
+    }
+    return b;
+  } catch {
+    return null;
+  }
+}
+
+function saveWindowState(win: BrowserWindow): void {
+  if (win.isDestroyed() || win.isMaximized() || win.isFullScreen()) return;
+  const b = win.getBounds();
+  try {
+    fs.mkdirSync(path.dirname(windowStateFile()), { recursive: true });
+    fs.writeFileSync(
+      windowStateFile(),
+      JSON.stringify({ x: b.x, y: b.y, width: b.width, height: b.height }),
+      'utf8',
+    );
+  } catch {
+    /* 保存失败不影响主流程 */
+  }
+}
 const elapsed = (label: string): void => {
   console.log(`[boot:${label}] ${Date.now() - bootT0}ms`);
 };
@@ -263,9 +306,11 @@ function createSplash(): BrowserWindow {
 }
 
 async function createMainWindow(): Promise<BrowserWindow> {
+  const saved = loadWindowState();
   const win = new BrowserWindow({
-    width: 1440,
-    height: 900,
+    ...(saved ? { x: saved.x, y: saved.y, width: saved.width, height: saved.height } : {}),
+    width: saved?.width ?? 1440,
+    height: saved?.height ?? 900,
     minWidth: 1100,
     minHeight: 700,
     show: false,
@@ -292,6 +337,16 @@ async function createMainWindow(): Promise<BrowserWindow> {
   win.webContents.on('console-message', (_event, level, message) => {
     if (smokeTest) console.log(`[renderer:${level}] ${message}`);
   });
+
+  // 记住窗口大小与位置（防抖保存，最大化/全屏时跳过）
+  let stateTimer: NodeJS.Timeout | null = null;
+  const persistWindowState = () => {
+    if (stateTimer) clearTimeout(stateTimer);
+    stateTimer = setTimeout(() => saveWindowState(win), 400);
+  };
+  win.on('resize', persistWindowState);
+  win.on('move', persistWindowState);
+  win.on('close', () => saveWindowState(win));
 
   // 无边框窗口（frame:false）在 Windows 上最大化/还原/拖动缩放后，
   // 偶发“内容整体上移、顶部标题栏被吞”的错位问题。
