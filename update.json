@@ -1,8 +1,8 @@
 {
-  "publishDate": "2026-08-12",
-  "version": "3.5.11",
-  "url": "https://github.com/myp-super/MinePDF/releases/download/v3.5.11/MinePDF.Setup.3.5.11.exe",
   "notes": [
-    "v3.5.11 - 书签精确定位（任意缩放贴合阅读区顶部）、书签仅点击跳转、标签页按下即拖拽实时让位排序、书签文字自动换行"
-  ]
+    "3.6.0 - 关于面板、界面字号、窗口记忆、阅读进度线、设置规整化、笔记自动保存优化"
+  ],
+  "url": "https://github.com/myp-super/MinePDF/releases/download/v3.6.0/MinePDF.Setup.3.6.0.exe",
+  "version": "3.6.0",
+  "publishDate": "2026-08-13"
 }
