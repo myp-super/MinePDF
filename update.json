@@ -1,8 +1,8 @@
 {
+  "version": "3.6.1",
+  "url": "https://github.com/myp-super/MinePDF/releases/download/v3.6.1/MinePDF.Setup.3.6.1.exe",
   "notes": [
-    "3.6.0 - 关于面板、界面字号、窗口记忆、阅读进度线、设置规整化、笔记自动保存优化"
+    "3.6.1 - 修复双栏/多栏 PDF 跨栏误选，选词与高亮严格限制在起始栏内"
   ],
-  "url": "https://github.com/myp-super/MinePDF/releases/download/v3.6.0/MinePDF.Setup.3.6.0.exe",
-  "version": "3.6.0",
-  "publishDate": "2026-08-13"
+  "publishDate": "2026-08-15"
 }
