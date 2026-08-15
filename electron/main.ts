@@ -311,8 +311,10 @@ async function createMainWindow(): Promise<BrowserWindow> {
     ...(saved ? { x: saved.x, y: saved.y, width: saved.width, height: saved.height } : {}),
     width: saved?.width ?? 1440,
     height: saved?.height ?? 900,
-    minWidth: 1100,
-    minHeight: 700,
+    // 允许缩小到 480×360，保证 Windows Snap 二分/四分屏和手动小窗口 resize 可用
+    // （1080p 四分屏为 960×540，720p 四分屏为 640×360，均落在下限之内）
+    minWidth: 480,
+    minHeight: 360,
     show: false,
     frame: false,
     backgroundColor: '#0b0f1a',
