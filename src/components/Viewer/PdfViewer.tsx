@@ -157,6 +157,8 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
   const [selMenu, setSelMenu] = useState<{ x: number; y: number } | null>(null);
 
   const scrollRef = useRef<HTMLDivElement>(null);
+  /** 页码/书签跳转的校正循环句柄：新跳转会取消上一次循环，避免互相抢滚动位置 */
+  const scrollAlignRef = useRef(0);
   const pageRefs = useRef<Map<number, HTMLDivElement>>(new Map());
   const viewportsRef = useRef<Map<number, ViewportLike>>(new Map());
   const scaleRef = useRef(scale);
@@ -688,6 +690,11 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
   const scrollToPage = useCallback((n: number, top?: number | null) => {
     const el = scrollRef.current;
     if (!el) return;
+    // 取消上一次校正循环：连续跳转（如页码输入两次提交）时不互相抢滚动位置
+    if (scrollAlignRef.current) {
+      cancelAnimationFrame(scrollAlignRef.current);
+      scrollAlignRef.current = 0;
+    }
     const L = layoutRef.current;
 
     /**
@@ -737,17 +744,28 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
     let last = 0;
     const align = (ts: number) => {
       const y = targetY();
-      if (y != null && Math.abs(el.scrollTop - y) < 1.5) return; // 已精确对齐
+      if (y != null && Math.abs(el.scrollTop - y) < 1.5) {
+        scrollAlignRef.current = 0; // 已精确对齐
+        return;
+      }
       if (ts - last < 80) {
-        requestAnimationFrame(align);
+        scrollAlignRef.current = requestAnimationFrame(align);
         return;
       }
       last = ts;
       if (y != null) el.scrollTop = y;
-      if (++tries < 80) requestAnimationFrame(align); // 最长约 6.5 秒，等待大 PDF 渲染/布局稳定
+      if (++tries < 80) scrollAlignRef.current = requestAnimationFrame(align);
+      else scrollAlignRef.current = 0; // 最长约 6.5 秒，等待大 PDF 渲染/布局稳定
     };
-    requestAnimationFrame(align);
+    scrollAlignRef.current = requestAnimationFrame(align);
   }, [baseH, scale, layout, pageSizes]);
+
+  // 卸载时取消未完成的跳转校正循环
+  useEffect(() => {
+    return () => {
+      if (scrollAlignRef.current) cancelAnimationFrame(scrollAlignRef.current);
+    };
+  }, []);
 
   // 同步当前页到全局（信息面板书签高亮）
   useEffect(() => {
