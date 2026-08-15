@@ -1,8 +1,8 @@
 {
-  "notes": [
-    "chore: update update.json for v3.6.2"
-  ],
   "version": "3.6.3",
-  "publishDate": "2026-08-15",
-  "url": "https://github.com/myp-super/MinePDF/releases/download/v3.6.3/MinePDF.Setup.3.6.3.exe"
+  "url": "https://github.com/myp-super/MinePDF/releases/download/v3.6.3/MinePDF.Setup.3.6.3.exe",
+  "notes": [
+    "3.6.3 - 支持 Windows 原生 Snap 二分/四分屏与自由缩放，窗口最小尺寸降至 480x360"
+  ],
+  "publishDate": "2026-08-15"
 }

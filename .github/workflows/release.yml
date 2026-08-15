@@ -57,7 +57,9 @@ jobs:
           $ver = $env:GITHUB_REF_NAME -replace '^v',''
           # GitHub 会把 Release 附件名中的空格规范为点号，链接必须用点号格式
           $url = "https://github.com/$env:GITHUB_REPOSITORY/releases/download/$env:GITHUB_REF_NAME/MinePDF.Setup.$ver.exe"
-          $subject = (git log -1 --pretty=%s) -replace '^release:\s*',''
+          # 用标签自身提交的说明，而不是 checkout main 后的 HEAD：
+          # 两个 release 并发时，后者若用 git log -1 会取到前者的 chore 提交，notes 会串版本
+          $subject = (git show -s --format=%s "refs/tags/$env:GITHUB_REF_NAME") -replace '^release:\s*',''
           $json = @{
             version = $ver
             notes = @($subject)
