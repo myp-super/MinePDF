@@ -108,10 +108,12 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
   const hlDragRef = useRef(false);
   /** 当前拖拽模式：高亮 / 普通选词 */
   const selModeRef = useRef<'highlight' | 'select' | null>(null);
-  /** 选词起点：按下时的（页, 行, 行内字符索引） */
-  const hlStartRef = useRef<{ page: number; row: number; idx: number } | null>(null);
-  /** 选词当前点：鼠标最新所在（页, 行, 行内字符索引） */
-  const hlCurRef = useRef<{ page: number; row: number; idx: number } | null>(null);
+  /** 选词起点：按下时的（页, 行, 行内 line 下标, 行内字符索引） */
+  const hlStartRef = useRef<{ page: number; row: number; line: number; idx: number } | null>(null);
+  /** 选词当前点：鼠标最新所在（页, 行, 行内 line 下标, 行内字符索引） */
+  const hlCurRef = useRef<{ page: number; row: number; line: number; idx: number } | null>(null);
+  /** 选词起点所属列的 PDF 横向范围：拖拽期间把指针 X 钳制在该列内，禁止跨栏 */
+  const hlColRef = useRef<{ minX: number; maxX: number } | null>(null);
   /** 客户端起点坐标：用于“单击不选”的移动阈值 */
   const hlStartPtRef = useRef<{ x: number; y: number } | null>(null);
   const hlLastMoveRef = useRef<{ x: number; y: number } | null>(null);
@@ -907,41 +909,49 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
     return rowChars.length;
   };
 
-  /** 客户端坐标 -> (页, 行, 行内字符索引)；文本索引未就绪返回 null */
+  /** 客户端坐标 -> (页, 行, 行内 line 下标, 行内字符索引)；文本索引未就绪返回 null */
   const pointToRowChar = (
     page: number,
     x: number,
     y: number,
-  ): { row: number; idx: number } | null => {
+    clampX?: { minX: number; maxX: number },
+  ): { row: number; line: number; idx: number } | null => {
     const index = textIndexRef.current.get(page);
     const el = pageRefs.current.get(page);
     const vp = viewportsRef.current.get(page);
     if (!index || !el || !vp || !index.lines.length) return null;
     const r = el.getBoundingClientRect();
-    const [px, py] = vp.convertToPdfPoint(x - r.left, y - r.top);
+    let [px, py] = vp.convertToPdfPoint(x - r.left, y - r.top);
+    if (clampX) px = Math.min(Math.max(px, clampX.minX), clampX.maxX);
     const lines = index.lines;
-    let row = 0;
-    let bestD = Infinity;
+    let best = -1;
+    let bestDx = Infinity;
+    let bestDy = Infinity;
     for (let i = 0; i < lines.length; i++) {
-      const cy = (lines[i].minY + lines[i].maxY) / 2;
-      const d = Math.abs(py - cy);
-      if (d < bestD) {
-        bestD = d;
-        row = i;
+      const l = lines[i];
+      const dy = Math.abs(py - (l.minY + l.maxY) / 2);
+      const dx = px < l.minX ? l.minX - px : px > l.maxX ? px - l.maxX : 0;
+      // 优先横向命中（同一视觉列），其次纵向最近
+      if (dx < bestDx - 0.5 || (Math.abs(dx - bestDx) <= 0.5 && dy < bestDy)) {
+        bestDx = dx;
+        bestDy = dy;
+        best = i;
       }
     }
-    const idx = charIndexAt(index.items, lines[row].indices, px);
-    return { row, idx };
+    if (best < 0) return null;
+    const line = lines[best];
+    const idx = charIndexAt(index.items, line.indices, px);
+    return { row: line.row, line: best, idx };
   };
 
-  /** 取一行 [from, to) 的字符项 */
-  const rowCharItems = (
+  /** 取某 line [from, to) 的字符项 */
+  const lineCharItems = (
     index: PageTextIndex,
-    row: number,
+    lineIdx: number,
     from: number,
     to: number,
   ): TextItemQuad[] => {
-    const line = index.lines[row];
+    const line = index.lines[lineIdx];
     if (!line) return [];
     const a = Math.max(0, Math.min(from, line.indices.length));
     const b = Math.max(0, Math.min(to, line.indices.length));
@@ -950,17 +960,38 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
     return out;
   };
 
+  /** 在指定视觉行里，找到与起始列 X 中心最接近的 line（列对齐用） */
+  const lineInColumn = (index: PageTextIndex, row: number, colCx: number): number => {
+    const cands = index.rowLines[row];
+    if (!cands || !cands.length) return -1;
+    let best = cands[0];
+    let bestD = Infinity;
+    for (const li of cands) {
+      const l = index.lines[li];
+      const d = Math.abs((l.minX + l.maxX) / 2 - colCx);
+      if (d < bestD) {
+        bestD = d;
+        best = li;
+      }
+    }
+    return best;
+  };
+
   /**
-   * 按“起点行/终点行”精确计算选中字符（半开区间）：
-   * - 同页：起点行只选起点之后，终点行只选到鼠标位置，中间行整行；
-   * - 跨页：起点页/终点页同理，中间页整页。
-   * 支持从上往下与从下往上（对称）。
+   * 按“起点行/终点行”精确计算选中字符（半开区间），并强制约束在起点所属视觉列内：
+   * - 同页：起点行只选起点之后，终点行只选到鼠标位置，中间行整行（仅该列）；
+   * - 跨页：起点页/终点页同理，中间页整页（仅该列）。
+   * 支持从上往下与从下往上（对称）；允许跨行，禁止跨栏。
    */
   const computeRowSelection = (
-    start: { page: number; row: number; idx: number },
-    cur: { page: number; row: number; idx: number },
+    start: { page: number; row: number; line: number; idx: number },
+    cur: { page: number; row: number; line: number; idx: number },
   ): { page: number; items: TextItemQuad[]; lines: PageTextIndex['lines'] }[] => {
     const out: { page: number; items: TextItemQuad[]; lines: PageTextIndex['lines'] }[] = [];
+    const startIndex = textIndexRef.current.get(start.page);
+    const startLine = startIndex?.lines[start.line];
+    if (!startLine) return out;
+    const colCx = (startLine.minX + startLine.maxX) / 2;
     // 按文档顺序（上 → 下、页 → 页）决定遍历方向：
     // - downward：起点在上，遍历 start..cur；
     // - upward：起点在下，遍历 cur..start（对称反转）。
@@ -970,7 +1001,7 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
     for (let p = lo; p <= hi; p++) {
       const index = textIndexRef.current.get(p);
       if (!index || !index.lines.length) continue;
-      const rowCount = index.lines.length;
+      const rowCount = index.rowLines.length;
       const items: TextItemQuad[] = [];
       // 本页的行区间：
       // - downward：起点页从 start.row 起，终点页到 cur.row 止，中间页全页；
@@ -978,7 +1009,12 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
       const rStart = p === (downward ? start.page : cur.page) ? (downward ? start.row : cur.row) : 0;
       const rEnd = p === (downward ? cur.page : start.page) ? (downward ? cur.row : start.row) : rowCount - 1;
       for (let r = rStart; r <= rEnd; r++) {
-        const rowLen = index.lines[r].indices.length;
+        let li: number;
+        if (p === start.page && r === start.row) li = start.line;
+        else if (p === cur.page && r === cur.row) li = cur.line;
+        else li = lineInColumn(index, r, colCx);
+        if (li < 0) continue;
+        const rowLen = index.lines[li].indices.length;
         let from = 0;
         let to = rowLen;
         // 同一行（含反向拖选）：取两点之间的区间
@@ -992,7 +1028,7 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
           if (p === cur.page && r === cur.row) from = cur.idx;
           if (p === start.page && r === start.row) to = start.idx + 1;
         }
-        items.push(...rowCharItems(index, r, from, to));
+        items.push(...lineCharItems(index, li, from, to));
       }
       if (items.length) out.push({ page: p, items, lines: index.lines });
     }
@@ -1005,9 +1041,9 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
     if (!start || !last) return;
     const page = pageAtPoint(last.x, last.y);
     if (page == null) return;
-    const rc = pointToRowChar(page, last.x, last.y);
+    const rc = pointToRowChar(page, last.x, last.y, hlColRef.current ?? undefined);
     if (!rc) return;
-    hlCurRef.current = { page, row: rc.row, idx: rc.idx };
+    hlCurRef.current = { page, row: rc.row, line: rc.line, idx: rc.idx };
     const sel = computeRowSelection(start, hlCurRef.current);
     const next: Record<number, Quad[]> = {};
     for (const { page: pg, items, lines } of sel) next[pg] = mergeSelectionItems(items, lines);
@@ -1089,8 +1125,12 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
     if (page == null) return;
     const rc = pointToRowChar(page, e.clientX, e.clientY);
     if (!rc) return;
-    hlStartRef.current = { page, row: rc.row, idx: rc.idx };
+    const startIndex = textIndexRef.current.get(page);
+    const startLine = startIndex?.lines[rc.line];
+    if (!startLine) return;
+    hlStartRef.current = { page, row: rc.row, line: rc.line, idx: rc.idx };
     hlCurRef.current = { ...hlStartRef.current };
+    hlColRef.current = { minX: startLine.minX, maxX: startLine.maxX };
     hlStartPtRef.current = { x: e.clientX, y: e.clientY };
     hlLastMoveRef.current = null;
     hlDragRef.current = true;
@@ -1111,6 +1151,7 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
         hlRafRef.current = 0;
       }
       hlDragRef.current = false;
+      hlColRef.current = null;
       // 没有 mousemove（单击）时用 mouseup 位置提交，交给移动阈值拦截
       if (!hlLastMoveRef.current) {
         hlLastMoveRef.current = { x: ev.clientX, y: ev.clientY };

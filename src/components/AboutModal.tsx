@@ -39,7 +39,10 @@ Reporting a Vulnerability
 请不要在公开 Issue 中直接贴出 Cookie、Token、账号信息、私密链接或可复现的敏感数据。`;
 
 /** 最近版本更新内容 */
-const CHANGELOG_TEXT = `3.6.0（当前版本）
+const CHANGELOG_TEXT = `3.6.1（当前版本）
+• 修复双栏 / 多栏 PDF 跨栏误选：选词与高亮严格限制在起始栏内，同栏跨行仍正常
+
+3.6.0
 • 新增窗口状态记忆：记住上次窗口大小与位置
 • PDF 工具栏新增阅读进度线
 • 设置页按类重新分组，查找更清晰

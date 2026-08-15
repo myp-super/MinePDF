@@ -23,6 +23,11 @@ export interface LineBand {
   baseline: number;
   minY: number;
   maxY: number;
+  /** 该行（视觉列单元格）的横向范围，用于按列命中与列内选词 */
+  minX: number;
+  maxX: number;
+  /** 所属视觉行序号（0 为页顶第一行），用于跨行选词时按列对齐 */
+  row: number;
   /** 在“读序数组”中的下标（读序：从上到下、从左到右） */
   indices: number[];
 }
@@ -30,8 +35,10 @@ export interface LineBand {
 export interface PageTextIndex {
   /** 读序文本项 */
   items: TextItemQuad[];
-  /** 整页行带 */
+  /** 整页行带（已按“视觉列”拆开：双栏页一行会拆成左右两段） */
   lines: LineBand[];
+  /** 视觉行序号 -> 该行内所有 line 的下标（供按列匹配） */
+  rowLines: number[][];
 }
 
 const textCache = new Map<string, TextItemQuad[]>();
@@ -69,12 +76,18 @@ export async function getPageTextQuads(
   return items;
 }
 
-/** 整页行带聚类：用整页中位字号定容差，避免“首项锚定”导致的同行拆块 */
+/** 整页行带聚类：用整页中位字号定容差，先按基线聚成“行带”，再按横向间隙切成视觉列，避免双栏跨栏选词 */
 export function buildPageLines(items: TextItemQuad[]): LineBand[] {
+  const widths = items.map((i) => i.w).filter((w) => w >= 0.01).sort((a, b) => a - b);
+  const medianW = widths.length ? widths[Math.floor(widths.length / 2)] : 8;
   const heights = items.map((i) => i.h).sort((a, b) => a - b);
   const medianH = heights.length ? heights[Math.floor(heights.length / 2)] : 10;
   const tol = Math.max(2.5, medianH * 0.45);
-  const bands: LineBand[] = [];
+  // 列间距通常远大于字符/单词间距：以中位字宽为基准设自适应阈值，避免硬编码像素
+  const colGap = Math.max(medianW * 2.2, 6);
+
+  type RawBand = { baseline: number; minY: number; maxY: number; indices: number[] };
+  const bands: RawBand[] = [];
   for (let i = 0; i < items.length; i++) {
     const it = items[i];
     let target = -1;
@@ -93,12 +106,48 @@ export function buildPageLines(items: TextItemQuad[]): LineBand[] {
       bands.push({ baseline: it.baseline, minY: it.y, maxY: it.y + it.h, indices: [i] });
     }
   }
-  // 行内按 x 排序为视觉阅读顺序：同一行内基线略异的字符（中文/英文/上下标）
-  // 在 items 中的顺序可能与视觉顺序不一致，选词索引与内容拼接都必须按 x 顺序。
-  for (const b of bands) {
-    b.indices.sort((a, c) => items[a].x - items[c].x || a - c);
+  // 按基线从高到低（视觉从上到下）排序，保证 row 序号稳定
+  bands.sort((a, b) => b.baseline - a.baseline);
+
+  const lines: LineBand[] = [];
+  for (let r = 0; r < bands.length; r++) {
+    const band = bands[r];
+    band.indices.sort((a, c) => items[a].x - items[c].x || a - c);
+    // 行内按横向间隙切列：列间留白远大于字符/单词间隙
+    const segs: number[][] = [];
+    let cur: number[] = [];
+    let prevRight: number | null = null;
+    for (let k = 0; k < band.indices.length; k++) {
+      const gi = band.indices[k];
+      const it = items[gi];
+      if (prevRight !== null && cur.length && it.x - prevRight > colGap) {
+        segs.push(cur);
+        cur = [];
+      }
+      cur.push(gi);
+      prevRight = it.x + it.w;
+    }
+    if (cur.length) segs.push(cur);
+
+    for (const seg of segs) {
+      let minX = Infinity;
+      let maxX = -Infinity;
+      for (const gi of seg) {
+        minX = Math.min(minX, items[gi].x);
+        maxX = Math.max(maxX, items[gi].x + items[gi].w);
+      }
+      lines.push({
+        baseline: band.baseline,
+        minY: band.minY,
+        maxY: band.maxY,
+        minX,
+        maxX,
+        row: r,
+        indices: seg,
+      });
+    }
   }
-  return bands;
+  return lines;
 }
 
 /** 取整页文本索引（读序项 + 行带），缓存 */
@@ -113,7 +162,12 @@ export async function getPageTextIndex(
     lines = buildPageLines(items);
     lineCache.set(key, lines);
   }
-  return { items, lines };
+  const rowLines: number[][] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const r = lines[i].row;
+    (rowLines[r] ||= []).push(i);
+  }
+  return { items, lines, rowLines };
 }
 
 /**
