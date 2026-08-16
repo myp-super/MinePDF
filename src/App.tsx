@@ -91,7 +91,10 @@ export default function App() {
     return {
       screens: s.screens.map((sc) => ({
         id: sc.id,
-        tabs: sc.tabs.map((t) => ({ id: t.id, pdfId: t.pdfId, title: t.title, kind: t.kind })),
+        tabs: sc.tabs.map((t) => {
+          const p = (t.kind === 'inbox' ? s.inboxPdfs : s.pdfs).find((x) => x.id === t.pdfId);
+          return { id: t.id, pdfId: t.pdfId, title: p?.title || '', kind: t.kind };
+        }),
         activeTabId: sc.activeTabId,
       })),
       activeScreenId: s.activeScreenId,

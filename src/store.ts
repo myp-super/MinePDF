@@ -39,7 +39,6 @@ export interface DocTab {
   id: string;
   kind: 'library' | 'inbox';
   pdfId: number;
-  title: string;
 }
 
 /** 一个阅读屏（编辑器分组）：有自己的标签栏，可独立打开/切换/关闭标签 */
@@ -64,6 +63,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   rightDragPan: true,
   dblClickTogglePanels: true,
   uiFontScale: 1,
+  disabledTagPresets: [],
   libraryPath: '',
   libraryPdfDir: '',
 };
@@ -94,7 +94,7 @@ function makeTab(s: AppState, id: number): DocTab | null {
   const pdf = s.pdfs.find((p) => p.id === id) ?? s.inboxPdfs.find((p) => p.id === id);
   if (!pdf) return null;
   const kind: 'library' | 'inbox' = s.inboxPdfs.some((p) => p.id === id) ? 'inbox' : 'library';
-  return { id: nextTabId(), kind, pdfId: id, title: pdf.title || pdf.filename };
+  return { id: nextTabId(), kind, pdfId: id };
 }
 
 /** 由屏状态推导当前激活 PDF id */
@@ -588,7 +588,7 @@ export const useApp = create<AppState>((set, get) => ({
                 ? s.inboxPdfs.find((p) => p.id === t.pdfId)
                 : s.pdfs.find((p) => p.id === t.pdfId);
             if (!pdf) continue;
-            tabs.push({ id: nextTabId(), kind: t.kind, pdfId: t.pdfId, title: pdf.title || pdf.filename });
+            tabs.push({ id: nextTabId(), kind: t.kind, pdfId: t.pdfId });
           }
           if (!tabs.length) return;
           const activeTabId =

@@ -21,6 +21,8 @@ const DEFAULTS: AppSettings = {
   dblClickTogglePanels: true,
   /** 界面字号缩放 */
   uiFontScale: 1,
+  /** 被用户隐藏的默认标签（不再出现在推荐列表，可通过“恢复默认标签”还原） */
+  disabledTagPresets: [],
   libraryPath: '',
   libraryPdfDir: '',
 };

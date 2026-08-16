@@ -483,6 +483,7 @@ export function registerIpc(): void {
   handle('tag:add', (pdfId: number, name: string) => repository.addTagToPdf(pdfId, name));
   handle('tag:remove', (pdfId: number, tagId: number) => repository.removeTagFromPdf(pdfId, tagId));
   handle('tag:delete', (tagId: number) => repository.deleteTag(tagId));
+  handle('tag:rename', (tagId: number, newName: string) => repository.renameTag(tagId, newName));
 
   // ---------- 笔记 ----------
   handle('note:get', (pdfId: number) => repository.getNote(pdfId));

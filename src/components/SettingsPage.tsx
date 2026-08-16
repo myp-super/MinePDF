@@ -3,27 +3,34 @@ import {
   BookOpen,
   Database,
   Download,
+  Eye,
+  EyeOff,
   FileText,
   FolderInput,
   FolderOpen,
   Hand,
+  Hash,
   Info,
   Languages,
   Library,
   Moon,
   MousePointer2,
   Palette,
+  Pencil,
   RefreshCw,
+  RotateCcw,
   Save,
   Sun,
+  Trash2,
 } from 'lucide-react';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useT, useTError } from '../i18n';
 import type { AppSettings } from '../shared/types';
+import { DEFAULT_TAG_PRESETS, isPresetTag, normalizeTagName } from '../lib/tags';
 import { useApp } from '../store';
 import { AboutModal } from './AboutModal';
 import { UpdateModal } from './UpdateModal';
-import { Button, Toggle } from './ui';
+import { Button, Modal, Toggle } from './ui';
 
 export function SettingsPage() {
   const t = useT();
@@ -32,11 +39,23 @@ export function SettingsPage() {
   const setView = useApp((s) => s.setView);
   const refresh = useApp((s) => s.refresh);
   const toast = useApp((s) => s.toast);
+  const tags = useApp((s) => s.tags);
+  const pdfs = useApp((s) => s.pdfs);
+  const inboxPdfs = useApp((s) => s.inboxPdfs);
   const [busy, setBusy] = useState(false);
   const [updateOpen, setUpdateOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
   const [appVersion, setAppVersion] = useState('');
   const [defaultPdf, setDefaultPdf] = useState<boolean | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{
+    id: number;
+    name: string;
+    usage: number;
+    preset: boolean;
+  } | null>(null);
+  const [renaming, setRenaming] = useState<{ id: number; value: string } | null>(null);
+  /** 重命名草稿的 ref：输入框失焦（含 Escape 取消后的失焦）时以最新状态判断是否提交 */
+  const renamingRef = useRef<{ id: number; value: string } | null>(null);
 
   useEffect(() => {
     void window.pkm
@@ -84,6 +103,105 @@ export function SettingsPage() {
     } finally {
       setBusy(false);
     }
+  };
+
+  // ---------- 标签管理 ----------
+  const disabledPresets = settings.disabledTagPresets ?? [];
+  const countTag = (tagId: number) =>
+    pdfs.filter((p) => p.tags.some((tg) => tg.id === tagId)).length +
+    inboxPdfs.filter((p) => p.tags.some((tg) => tg.id === tagId)).length;
+  const tagRows: Array<{
+    id: number | null;
+    name: string;
+    usage: number;
+    preset: boolean;
+    hidden: boolean;
+  }> = [
+    ...DEFAULT_TAG_PRESETS.map((name) => {
+      const db = tags.find((t) => t.name === name);
+      return {
+        id: db?.id ?? null,
+        name,
+        usage: db ? countTag(db.id) : 0,
+        preset: true,
+        hidden: disabledPresets.includes(name),
+      };
+    }),
+    ...tags
+      .filter((t) => !isPresetTag(t.name))
+      .map((t) => ({
+        id: t.id,
+        name: t.name,
+        usage: countTag(t.id),
+        preset: false,
+        hidden: false,
+      })),
+  ];
+
+  const togglePreset = async (name: string) => {
+    const next = disabledPresets.includes(name)
+      ? disabledPresets.filter((x) => x !== name)
+      : [...disabledPresets, name];
+    await update({ disabledTagPresets: next });
+  };
+
+  const restoreDefaults = async () => {
+    await update({ disabledTagPresets: [] });
+    toast('success', t('settings.tagsRestored'));
+  };
+
+  const requestDelete = (row: (typeof tagRows)[number]) => {
+    if (row.id == null) return;
+    setDeleteTarget({ id: row.id, name: row.name, usage: row.usage, preset: row.preset });
+  };
+
+  const doDeleteTag = async () => {
+    if (!deleteTarget) return;
+    try {
+      // 删除默认标签：同时隐藏，避免它继续出现在推荐列表（恢复默认标签可还原）
+      if (deleteTarget.preset && !disabledPresets.includes(deleteTarget.name)) {
+        await window.pkm.updateSettings({
+          disabledTagPresets: [...disabledPresets, deleteTarget.name],
+        });
+      }
+      await window.pkm.deleteTag(deleteTarget.id);
+      await refresh();
+      toast('success', t('settings.tagDeleted', { name: deleteTarget.name }));
+    } catch (err) {
+      toast('error', terr(err instanceof Error ? err.message : String(err)));
+    }
+    setDeleteTarget(null);
+  };
+
+  const startRename = (row: (typeof tagRows)[number]) => {
+    if (row.preset || row.id == null) return;
+    renamingRef.current = { id: row.id, value: row.name };
+    setRenaming(renamingRef.current);
+  };
+
+  const commitRename = async () => {
+    const r = renamingRef.current;
+    if (!r) return;
+    const name = normalizeTagName(r.value);
+    const old = tags.find((t) => t.id === r.id);
+    try {
+      if (name && old && name !== old.name) {
+        const res = await window.pkm.renameTag(r.id, name);
+        if (res && res.id !== r.id) {
+          toast('info', t('settings.tagMerged', { name: res.name }));
+        }
+      }
+      await refresh();
+    } catch (err) {
+      toast('error', terr(err instanceof Error ? err.message : String(err)));
+    }
+    renamingRef.current = null;
+    setRenaming(null);
+  };
+
+  const cancelRename = () => {
+    renamingRef.current = null;
+    setRenaming(null);
   };
 
   const applyDefaultPdf = async () => {
@@ -345,6 +463,91 @@ export function SettingsPage() {
           <p className="mt-2 text-[10.5px] leading-relaxed text-app-muted/80">{t('settings.backupHint')}</p>
         </section>
 
+        <section className="mb-4 rounded-xl border border-app-border bg-app-panel p-4">
+          <div className="mb-3 flex items-center gap-2 text-xs font-semibold">
+            <Hash size={14} className="text-app-accent" /> {t('settings.tagsSection')}
+          </div>
+          <p className="mb-3 text-[10.5px] leading-relaxed text-app-muted/80">{t('settings.tagsHint')}</p>
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            <Button size="sm" variant="outline" onClick={() => void restoreDefaults()}>
+              <RotateCcw size={12} /> {t('settings.restoreDefaultTags')}
+            </Button>
+            {disabledPresets.length > 0 && (
+              <span className="text-[10.5px] text-app-muted">
+                {t('settings.hiddenPresets', { n: disabledPresets.length })}
+              </span>
+            )}
+          </div>
+          <div className="max-h-64 space-y-1 overflow-y-auto pr-1">
+            {tagRows.map((row) => (
+              <div
+                key={`${row.preset ? 'p' : 'c'}:${row.name}`}
+                className="flex items-center gap-2 rounded-lg bg-app-panel2 px-2.5 py-1.5"
+              >
+                <Hash size={11} className="shrink-0 text-app-muted" />
+                {renaming && renaming.id === row.id ? (
+                  <input
+                    autoFocus
+                    className="h-6 min-w-0 flex-1 rounded border border-app-border bg-app-panel px-1.5 text-[11.5px] outline-none focus:border-app-accent/70"
+                    value={renaming.value}
+                    onChange={(e) => {
+                      renamingRef.current = { id: renaming.id, value: e.target.value };
+                      setRenaming(renamingRef.current);
+                    }}
+                    onBlur={() => void commitRename()}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+                      else if (e.key === 'Escape') cancelRename();
+                    }}
+                  />
+                ) : (
+                  <span
+                    className={`min-w-0 flex-1 truncate text-[11.5px] ${
+                      row.hidden ? 'text-app-muted/60 line-through' : 'text-app-text/90'
+                    }`}
+                  >
+                    #{row.name}
+                  </span>
+                )}
+                <span className="shrink-0 text-[10px] tabular-nums text-app-muted">
+                  {t('settings.tagUsage', { n: row.usage })}
+                </span>
+                {row.preset ? (
+                  <button
+                    className="shrink-0 p-0.5 text-app-muted transition-colors hover:text-app-text"
+                    title={row.hidden ? t('settings.tagShow') : t('settings.tagHide')}
+                    onClick={() => void togglePreset(row.name)}
+                  >
+                    {row.hidden ? <Eye size={12} /> : <EyeOff size={12} />}
+                  </button>
+                ) : (
+                  !(renaming && renaming.id === row.id) && (
+                    <button
+                      className="shrink-0 p-0.5 text-app-muted transition-colors hover:text-app-text"
+                      title={t('settings.tagRename')}
+                      onClick={() => startRename(row)}
+                    >
+                      <Pencil size={12} />
+                    </button>
+                  )
+                )}
+                {row.id != null && (
+                  <button
+                    className="shrink-0 p-0.5 text-app-muted transition-colors hover:text-app-danger"
+                    title={t('settings.tagDelete')}
+                    onClick={() => requestDelete(row)}
+                  >
+                    <Trash2 size={12} />
+                  </button>
+                )}
+              </div>
+            ))}
+            {tagRows.length === 0 && (
+              <p className="text-[11px] text-app-muted">{t('settings.tagsEmpty')}</p>
+            )}
+          </div>
+        </section>
+
         <section className="rounded-xl border border-app-border bg-app-panel p-4">
           <div className="mb-3 flex items-center gap-2 text-xs font-semibold">
             <Info size={14} className="text-app-accent" /> {t('settings.about')}
@@ -364,6 +567,33 @@ export function SettingsPage() {
       </div>
       <AboutModal open={aboutOpen} onClose={() => setAboutOpen(false)} />
       <UpdateModal open={updateOpen} onClose={() => setUpdateOpen(false)} />
+      <Modal
+        open={deleteTarget != null}
+        onClose={() => setDeleteTarget(null)}
+        title={t('settings.tagDeleteTitle')}
+        width={400}
+      >
+        {deleteTarget && (
+          <div>
+            <p className="text-[12.5px] leading-relaxed text-app-text/90">
+              {deleteTarget.usage > 0
+                ? t('settings.tagDeleteConfirm', {
+                    name: deleteTarget.name,
+                    n: deleteTarget.usage,
+                  })
+                : t('settings.tagDeleteConfirmZero', { name: deleteTarget.name })}
+            </p>
+            <div className="mt-4 flex justify-end gap-2">
+              <Button variant="ghost" onClick={() => setDeleteTarget(null)}>
+                {t('common.cancel')}
+              </Button>
+              <Button variant="danger" onClick={() => void doDeleteTag()}>
+                {t('settings.tagDeleteConfirmBtn')}
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
     </main>
   );
 }

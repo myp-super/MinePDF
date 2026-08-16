@@ -3,6 +3,7 @@ import {
   BookMarked,
   Camera,
   Check,
+  ChevronDown,
   Copy,
   ExternalLink,
   FileDown,
@@ -18,6 +19,7 @@ import {
   Pin,
   Plus,
   Save,
+  Search,
   StickyNote,
   Trash2,
   X,
@@ -29,8 +31,9 @@ import rehypeKatex from 'rehype-katex';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import { useT, useTError } from '../i18n';
-import type { AnnotationRecord, PdfRecord } from '../shared/types';
+import type { AnnotationRecord, PdfRecord, Tag } from '../shared/types';
 import type { OutlineNode } from '../lib/pdf';
+import { DEFAULT_TAG_PRESETS, isPresetTag, normalizeTagName } from '../lib/tags';
 import { useApp } from '../store';
 import { Button, formatBytes, formatDate, IconButton, Toggle } from './ui';
 import { InspectorOutline } from './InspectorOutline';
@@ -204,6 +207,9 @@ function MetaPanel({ pdf }: { pdf: PdfRecord }) {
   const refresh = useApp((s) => s.refresh);
   const toast = useApp((s) => s.toast);
   const tags = useApp((s) => s.tags);
+  const settings = useApp((s) => s.settings);
+  const pdfs = useApp((s) => s.pdfs);
+  const inboxPdfs = useApp((s) => s.inboxPdfs);
   const [title, setTitle] = useState(pdf.title);
 
   useEffect(() => setTitle(pdf.title), [pdf.id, pdf.title]);
@@ -225,8 +231,16 @@ function MetaPanel({ pdf }: { pdf: PdfRecord }) {
   };
 
   const addTag = async (raw: string) => {
-    const name = raw.trim().replace(/^#/, '');
+    const name = normalizeTagName(raw);
     if (!name) return;
+    // 同一文件不重复添加规范化后相同的标签
+    if (
+      pdf.tags.some(
+        (t) => normalizeTagName(t.name).toLowerCase() === name.toLowerCase(),
+      )
+    ) {
+      return;
+    }
     try {
       await window.pkm.addTag(pdf.id, name);
       await refresh();
@@ -243,6 +257,20 @@ function MetaPanel({ pdf }: { pdf: PdfRecord }) {
       toast('error', terr(err instanceof Error ? err.message : String(err)));
     }
   };
+
+  const deleteTagDef = async (tagId: number) => {
+    try {
+      await window.pkm.deleteTag(tagId);
+      await refresh();
+    } catch (err) {
+      toast('error', terr(err instanceof Error ? err.message : String(err)));
+    }
+  };
+  // 自定义标签库（非内置预设）；标签定义与“文件使用标签”是两层
+  const customTags = tags.filter((t) => !isPresetTag(t.name));
+  const usageOf = (tagId: number) =>
+    pdfs.filter((p) => p.tags.some((t) => t.id === tagId)).length +
+    inboxPdfs.filter((p) => p.tags.some((t) => t.id === tagId)).length;
 
   return (
     <div className="space-y-4 px-3.5 py-3">
@@ -305,10 +333,15 @@ function MetaPanel({ pdf }: { pdf: PdfRecord }) {
             </span>
           ))}
         </div>
-        <TagInput
-          existing={tags.map((tag) => tag.name)}
-          current={pdf.tags.map((tag) => tag.name)}
+        <TagPicker
+          presets={DEFAULT_TAG_PRESETS.filter((p) => !(settings.disabledTagPresets ?? []).includes(p))}
+          custom={customTags}
+          current={pdf.tags}
+          usageOf={usageOf}
           onAdd={(n) => void addTag(n)}
+          onRemove={(tagId) => void removeTag(tagId)}
+          onCreate={(n) => void addTag(n)}
+          onDelete={(tagId) => void deleteTagDef(tagId)}
         />
       </section>
 
@@ -362,63 +395,258 @@ function MetaRow({ label, value }: { label: string; value: string }) {
   );
 }
 
-function TagInput({
-  existing,
+/** 标签选择器：按钮触发下拉，预设/自定义分行展示，可勾选切换、搜索、新建与删除自定义标签 */
+function TagPicker({
+  presets,
+  custom,
   current,
+  usageOf,
   onAdd,
+  onRemove,
+  onCreate,
+  onDelete,
 }: {
-  existing: string[];
-  current: string[];
+  presets: string[];
+  custom: Tag[];
+  current: Tag[];
+  usageOf: (tagId: number) => number;
   onAdd: (name: string) => void;
+  onRemove: (tagId: number) => void;
+  onCreate: (name: string) => void;
+  onDelete: (tagId: number) => void;
 }) {
   const t = useT();
-  const [value, setValue] = useState('');
-  const [focus, setFocus] = useState(false);
-  const suggestions = value.trim()
-    ? existing
-        .filter((n) => !current.includes(n) && n.toLowerCase().includes(value.trim().toLowerCase()))
-        .slice(0, 6)
-    : [];
-  const submit = () => {
-    if (!value.trim()) return;
-    onAdd(value);
-    setValue('');
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const [creating, setCreating] = useState(false);
+  const [createValue, setCreateValue] = useState('');
+  const [confirmDel, setConfirmDel] = useState<Tag | null>(null);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const createRef = useRef<HTMLInputElement>(null);
+
+  const closePanel = () => {
+    setOpen(false);
+    setConfirmDel(null);
+    setCreating(false);
+    setQuery('');
   };
+
+  useEffect(() => {
+    const onDoc = (e: MouseEvent) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) closePanel();
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, []);
+
+  const q = normalizeTagName(query).toLowerCase();
+  const match = (name: string) => {
+    const n = normalizeTagName(name).toLowerCase();
+    return !q || n.includes(q);
+  };
+  const presetRows = presets.filter(match);
+  const customRows = custom.filter((tg) => match(tg.name));
+
+  /** 点击标签行：已选则从当前文件移除（不删标签定义），未选则添加 */
+  const toggle = (tg: Tag) => {
+    const hit = current.find((c) => c.id === tg.id || c.name === tg.name);
+    if (hit) onRemove(hit.id);
+    else onAdd(normalizeTagName(tg.name));
+  };
+
+  const submitCreate = () => {
+    const n = normalizeTagName(createValue);
+    if (!n) return;
+    onCreate(n);
+    setCreateValue('');
+    setCreating(false);
+    createRef.current?.focus();
+  };
+
   return (
-    <div className="relative">
-      <div className="flex items-center gap-1 rounded-md border border-app-border bg-app-panel2 px-2 focus-within:border-app-accent/70">
-        <Hash size={11} className="text-app-muted" />
-        <input
-          className="h-7 min-w-0 flex-1 bg-transparent text-xs outline-none placeholder:text-app-muted"
-          placeholder={t('inspector.tagPlaceholder')}
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-          onFocus={() => setFocus(true)}
-          onBlur={() => setTimeout(() => setFocus(false), 150)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') submit();
-          }}
-        />
-        <button className="text-app-muted hover:text-app-text" onClick={submit}>
-          <Plus size={12} />
-        </button>
-      </div>
-      {focus && suggestions.length > 0 && (
-        <div className="absolute left-0 top-full z-20 mt-1 w-full overflow-hidden rounded-md border border-app-border bg-app-panel shadow-xl">
-          {suggestions.map((n) => (
-            <button
-              key={n}
-              className="block w-full px-2.5 py-1.5 text-left text-[11px] hover:bg-app-panel2"
-              onMouseDown={(e) => {
-                e.preventDefault();
-                onAdd(n);
-                setValue('');
-              }}
-            >
-              #{n}
-            </button>
-          ))}
+    <div ref={wrapRef} className="relative">
+      <button
+        type="button"
+        className="flex h-7 w-full items-center justify-center gap-1 rounded-md border border-app-border bg-app-panel2 text-[11px] text-app-muted transition-colors hover:border-app-accent/40 hover:text-app-text"
+        onClick={() => (open ? closePanel() : setOpen(true))}
+      >
+        <Plus size={12} /> {t('inspector.tagAdd')} <ChevronDown size={11} />
+      </button>
+
+      {open && (
+        <div className="absolute left-0 top-full z-20 mt-1 w-full rounded-lg border border-app-border bg-app-panel p-2 shadow-md">
+          <div className="mb-1.5 px-1 text-[10.5px] font-semibold text-app-text/90">
+            {t('inspector.tagAddTitle')}
+          </div>
+          <div className="mb-2 flex items-center gap-1 rounded-md border border-app-border bg-app-panel2 px-2 focus-within:border-app-accent/70">
+            <Search size={11} className="shrink-0 text-app-muted" />
+            <input
+              className="h-6 min-w-0 flex-1 bg-transparent text-[11px] outline-none placeholder:text-app-muted"
+              placeholder={t('inspector.tagSearch')}
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+          </div>
+
+          {confirmDel ? (
+            <div className="rounded-md border border-app-danger/30 bg-app-danger/5 p-2">
+              <p className="text-[11px] leading-relaxed text-app-text/90">
+                {usageOf(confirmDel.id) > 0
+                  ? t('inspector.tagDeleteConfirm', {
+                      name: confirmDel.name,
+                      n: usageOf(confirmDel.id),
+                    })
+                  : t('inspector.tagDeleteConfirmZero', { name: confirmDel.name })}
+              </p>
+              <div className="mt-2 flex justify-end gap-1.5">
+                <button
+                  type="button"
+                  className="px-2 py-1 text-[10.5px] text-app-muted hover:text-app-text"
+                  onClick={() => setConfirmDel(null)}
+                >
+                  {t('common.cancel')}
+                </button>
+                <button
+                  type="button"
+                  className="rounded-md bg-app-danger px-2 py-1 text-[10.5px] font-medium text-white hover:opacity-90"
+                  onClick={() => {
+                    onDelete(confirmDel.id);
+                    setConfirmDel(null);
+                  }}
+                >
+                  {t('settings.tagDeleteConfirmBtn')}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="max-h-64 overflow-y-auto pr-0.5">
+              {presetRows.length > 0 && (
+                <div className="mb-2">
+                  <div className="px-1 pb-1 text-[9.5px] font-medium uppercase tracking-wide text-app-muted">
+                    {t('inspector.tagPresets')}
+                  </div>
+                  <div className="flex flex-col">
+                    {presetRows.map((name) => (
+                      <TagRow
+                        key={`p:${name}`}
+                        label={name}
+                        checked={current.some((c) => c.name === name)}
+                        onToggle={() =>
+                          toggle(
+                            current.find((c) => c.name === name) ?? {
+                              id: -1,
+                              name,
+                              createdTime: '',
+                            },
+                          )
+                        }
+                      />
+                    ))}
+                  </div>
+                </div>
+              )}
+              {customRows.length > 0 && (
+                <div className="mb-2">
+                  <div className="px-1 pb-1 text-[9.5px] font-medium uppercase tracking-wide text-app-muted">
+                    {t('inspector.tagCustom')}
+                  </div>
+                  <div className="flex flex-col">
+                    {customRows.map((tg) => (
+                      <TagRow
+                        key={`c:${tg.id}`}
+                        label={tg.name}
+                        checked={current.some((c) => c.id === tg.id)}
+                        onToggle={() => toggle(tg)}
+                        deleteTitle={t('inspector.tagDeleteDefinition')}
+                        onDelete={() => setConfirmDel(tg)}
+                      />
+                    ))}
+                  </div>
+                </div>
+              )}
+              <button
+                type="button"
+                className="flex h-6 w-full items-center gap-1 rounded-md px-1 text-[10.5px] text-app-muted transition-colors hover:bg-app-panel2 hover:text-app-accent"
+                onClick={() => {
+                  setCreating((v) => !v);
+                  requestAnimationFrame(() => createRef.current?.focus());
+                }}
+              >
+                <Plus size={11} /> {t('inspector.tagAddCustom')}
+              </button>
+              {creating && (
+                <div className="mt-1.5 rounded-md border border-app-border bg-app-panel2 p-1.5">
+                  <div className="px-1 pb-1 text-[9.5px] font-medium uppercase tracking-wide text-app-muted">
+                    {t('inspector.tagNewTitle')}
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <Hash size={11} className="shrink-0 text-app-muted" />
+                    <input
+                      ref={createRef}
+                      className="h-6 min-w-0 flex-1 bg-transparent text-[11px] outline-none placeholder:text-app-muted"
+                      placeholder={t('inspector.tagNewPlaceholder')}
+                      value={createValue}
+                      onChange={(e) => setCreateValue(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') submitCreate();
+                        else if (e.key === 'Escape') {
+                          setCreating(false);
+                          setCreateValue('');
+                        }
+                      }}
+                    />
+                    <button
+                      type="button"
+                      className="rounded-md bg-app-accent px-2 py-0.5 text-[10.5px] font-medium text-white hover:opacity-90"
+                      onClick={submitCreate}
+                    >
+                      {t('inspector.tagCreate')}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
+      )}
+    </div>
+  );
+}
+
+/** 下拉框中的标签行：✓ 表示当前文件已拥有；右侧 × 仅对自定义标签提供（删除标签定义） */
+function TagRow({
+  label,
+  checked,
+  onToggle,
+  deleteTitle,
+  onDelete,
+}: {
+  label: string;
+  checked: boolean;
+  onToggle: () => void;
+  deleteTitle?: string;
+  onDelete?: () => void;
+}) {
+  return (
+    <div className="group flex items-center rounded-md px-1 py-0.5 transition-colors hover:bg-app-panel2">
+      <button
+        type="button"
+        className="flex min-w-0 flex-1 items-center gap-1.5 py-0.5 text-left text-[11px] text-app-text/90 hover:text-app-text"
+        onClick={onToggle}
+      >
+        <Hash size={10} className="shrink-0 text-app-muted" />
+        <span className="min-w-0 flex-1 truncate">{label}</span>
+        {checked && <Check size={12} className="shrink-0 text-app-accent" />}
+      </button>
+      {onDelete && (
+        <button
+          type="button"
+          title={deleteTitle}
+          className="shrink-0 rounded p-0.5 text-app-muted/50 opacity-60 transition-opacity hover:text-app-danger group-hover:opacity-100"
+          onClick={onDelete}
+        >
+          <X size={11} />
+        </button>
       )}
     </div>
   );

@@ -111,6 +111,8 @@ export interface AppSettings {
   dblClickTogglePanels: boolean;
   /** 界面字号缩放（0.9=小 / 1=中 / 1.1=大），仅作用于 UI 区域，不影响 PDF 清晰度 */
   uiFontScale: number;
+  /** 被用户隐藏的默认标签名（推荐列表不再显示，可通过“恢复默认标签”还原） */
+  disabledTagPresets: string[];
   /** 知识库根目录（Documents/PDFKnowledgeManager） */
   libraryPath: string;
   /** PDF 库文件夹：所有 PDF 的统一存放目录（Obsidian 式） */
@@ -260,6 +262,8 @@ export interface PkmApi {
   addTag(pdfId: number, name: string): Promise<Tag>;
   removeTag(pdfId: number, tagId: number): Promise<void>;
   deleteTag(tagId: number): Promise<void>;
+  /** 全局重命名标签；目标名已存在时合并，不产生重复标签 */
+  renameTag(tagId: number, newName: string): Promise<Tag | null>;
 
   getNote(pdfId: number): Promise<NoteRecord | null>;
   saveNote(pdfId: number, markdown: string): Promise<NoteRecord>;

@@ -839,6 +839,11 @@ export const repository = {
   },
 
   // ---------- tags ----------
+  /** 标签规范化：去掉前导 # 与空白（#论文 / # 论文 / ##论文 统一为 论文） */
+  normalizeTagName(raw: string): string {
+    return (raw ?? '').trim().replace(/^[#\s]+/, '');
+  },
+
   getTags(): Tag[] {
     const db = getDb();
     return (db.prepare('SELECT * FROM tags ORDER BY name COLLATE NOCASE').all() as Row[]).map(mapTag);
@@ -846,20 +851,30 @@ export const repository = {
 
   getTagByName(name: string): Tag | null {
     const db = getDb();
-    const r = db.prepare('SELECT * FROM tags WHERE name = ? COLLATE NOCASE').get(name.trim()) as Row | undefined;
+    const r = db.prepare('SELECT * FROM tags WHERE name = ? COLLATE NOCASE').get(this.normalizeTagName(name)) as Row | undefined;
+    return r ? mapTag(r) : null;
+  },
+
+  getTagById(tagId: number): Tag | null {
+    const db = getDb();
+    const r = db.prepare('SELECT * FROM tags WHERE id = ?').get(tagId) as Row | undefined;
     return r ? mapTag(r) : null;
   },
 
   createTag(name: string): Tag {
     const db = getDb();
-    const res = db.prepare('INSERT INTO tags (name, created_time) VALUES (?, ?)').run(name.trim(), now());
+    const clean = this.normalizeTagName(name);
+    if (!clean) throw new Error('标签不能为空');
+    const res = db.prepare('INSERT INTO tags (name, created_time) VALUES (?, ?)').run(clean, now());
     const r = db.prepare('SELECT * FROM tags WHERE id = ?').get(res.lastInsertRowid) as Row | undefined;
     return mapTag(row(r));
   },
 
   addTagToPdf(pdfId: number, name: string): Tag {
     const db = getDb();
-    let tag = this.getTagByName(name);
+    const clean = this.normalizeTagName(name);
+    if (!clean) throw new Error('标签不能为空');
+    let tag = this.getTagByName(clean);
     if (!tag) tag = this.createTag(name);
     db.prepare('INSERT OR IGNORE INTO pdf_tags (pdf_id, tag_id) VALUES (?, ?)').run(pdfId, tag.id);
     return tag;
@@ -871,6 +886,27 @@ export const repository = {
 
   deleteTag(tagId: number): void {
     getDb().prepare('DELETE FROM tags WHERE id = ?').run(tagId);
+  },
+
+  /** 全局重命名标签；目标名已存在（不区分大小写）时合并到目标标签，不产生重复 */
+  renameTag(tagId: number, rawName: string): Tag | null {
+    const db = getDb();
+    const name = this.normalizeTagName(rawName);
+    if (!name) return null;
+    const old = this.getTagById(tagId);
+    if (!old) return null;
+    const target = this.getTagByName(name);
+    if (target && target.id !== tagId) {
+      // 合并：旧标签的所有文件关联改指目标标签，再删除旧标签
+      db.prepare(
+        'INSERT OR IGNORE INTO pdf_tags (pdf_id, tag_id) SELECT pdf_id, ? FROM pdf_tags WHERE tag_id = ?',
+      ).run(target.id, tagId);
+      db.prepare('DELETE FROM pdf_tags WHERE tag_id = ?').run(tagId);
+      db.prepare('DELETE FROM tags WHERE id = ?').run(tagId);
+      return target;
+    }
+    db.prepare('UPDATE tags SET name = ? WHERE id = ?').run(name, tagId);
+    return this.getTagById(tagId);
   },
 
   // ---------- notes ----------

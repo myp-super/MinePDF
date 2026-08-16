@@ -1877,12 +1877,13 @@ function PdfRow({
   const selectedPdfIds = useApp((s) => s.selectedPdfIds);
   const setSelectedPdfIds = useApp((s) => s.setSelectedPdfIds);
   const toggleSelectedPdf = useApp((s) => s.toggleSelectedPdf);
+  const setTagFilter = useApp((s) => s.setTagFilter);
   const selected = selectedPdfIds.includes(pdf.id);
   return (
     <div
       role="treeitem"
       tabIndex={0}
-      className={`flex cursor-pointer items-center gap-1.5 rounded-md py-[3px] text-xs transition-colors hover:bg-app-panel2 ${
+      className={`flex cursor-pointer items-start gap-1.5 rounded-md py-[3px] text-xs transition-colors hover:bg-app-panel2 ${
         selected
           ? 'bg-app-accent/20 text-app-text ring-1 ring-inset ring-app-accent/50'
           : activePdfId === pdf.id
@@ -1919,13 +1920,40 @@ function PdfRow({
       }}
       title={`${pdf.filepath}\n${t('sidebar.selectHint')}`}
     >
-      <FileText size={13} className={pdf.status === 'missing' ? 'text-app-danger' : 'text-app-muted'} />
-      <span className={`min-w-0 flex-1 truncate ${pdf.status === 'missing' ? 'text-app-danger/80' : ''}`}>
-        {pdf.title}
-      </span>
-      {pdf.tags.length > 0 && (
-        <span className="shrink-0 pr-1 text-[9.5px] text-app-muted">#{pdf.tags.length}</span>
-      )}
+      <FileText
+        size={13}
+        className={`mt-0.5 shrink-0 ${pdf.status === 'missing' ? 'text-app-danger' : 'text-app-muted'}`}
+      />
+      <div className="min-w-0 flex-1">
+        <div className={`truncate ${pdf.status === 'missing' ? 'text-app-danger/80' : ''}`}>
+          {pdf.title}
+        </div>
+        {pdf.tags.length > 0 && (
+          <div className="mt-0.5 flex flex-nowrap items-center gap-1 overflow-hidden">
+            {pdf.tags.slice(0, 3).map((tg) => (
+              <button
+                key={tg.id}
+                title={tg.name}
+                className="max-w-[64px] min-w-0 shrink truncate rounded-full border border-app-border/70 bg-app-panel2 px-1.5 py-px text-[9px] leading-relaxed text-app-muted transition-colors hover:border-app-accent/40 hover:text-app-accent"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setTagFilter(tg.id);
+                }}
+              >
+                #{tg.name}
+              </button>
+            ))}
+            {pdf.tags.length > 3 && (
+              <span
+                className="shrink-0 rounded-full border border-app-border/70 bg-app-panel2 px-1.5 py-px text-[9px] leading-relaxed text-app-muted"
+                title={pdf.tags.map((tg) => `#${tg.name}`).join(' ')}
+              >
+                +{pdf.tags.length - 3}
+              </span>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

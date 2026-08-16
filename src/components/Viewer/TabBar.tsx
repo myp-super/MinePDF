@@ -22,6 +22,9 @@ export function TabBar({ screen, active }: { screen: ReaderScreen; active: boole
   const reorderTab = useApp((s) => s.reorderTab);
   const splitScreen = useApp((s) => s.splitScreen);
   const unsplitScreen = useApp((s) => s.unsplitScreen);
+  // 标签标题不各自保存快照，统一从 File Metadata 派生（重命名后自动同步）
+  const pdfs = useApp((s) => s.pdfs);
+  const inboxPdfs = useApp((s) => s.inboxPdfs);
   const [menu, setMenu] = useState<{ tabId: string; x: number; y: number } | null>(null);
   // 浏览器标签页式拖拽排序：按下即移动（位移超过极小阈值立即进入拖拽），无长按计时
   const [draggingId, setDraggingId] = useState<string | null>(null);
@@ -99,6 +102,11 @@ export function TabBar({ screen, active }: { screen: ReaderScreen; active: boole
     >
       {screen.tabs.map((tab) => {
         const isTabActive = tab.id === screen.activeTabId;
+        const pdf =
+          tab.kind === 'inbox'
+            ? inboxPdfs.find((p) => p.id === tab.pdfId)
+            : pdfs.find((p) => p.id === tab.pdfId);
+        const tabTitle = pdf?.title || pdf?.filename || '';
         return (
           <div
             key={tab.id}
@@ -124,7 +132,7 @@ export function TabBar({ screen, active }: { screen: ReaderScreen; active: boole
                 e.preventDefault();
                 setMenu({ tabId: tab.id, x: e.clientX, y: e.clientY });
               }}
-              title={tab.title}
+              title={tabTitle}
             >
               {tab.kind === 'inbox' ? (
                 <Inbox size={12} className="shrink-0 text-app-muted" />
@@ -136,7 +144,7 @@ export function TabBar({ screen, active }: { screen: ReaderScreen; active: boole
                   active && isTabActive ? 'text-app-text' : 'text-app-muted'
                 }`}
               >
-                {tab.title}
+                {tabTitle}
               </span>
             </button>
             <button

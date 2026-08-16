@@ -86,6 +86,7 @@ const api: PkmApi = {
   addTag: (pdfId, name) => invoke('tag:add', pdfId, name),
   removeTag: (pdfId, tagId) => invoke('tag:remove', pdfId, tagId),
   deleteTag: (tagId) => invoke('tag:delete', tagId),
+  renameTag: (tagId, newName) => invoke('tag:rename', tagId, newName),
 
   getNote: (pdfId) => invoke('note:get', pdfId),
   saveNote: (pdfId, markdown) => invoke('note:save', pdfId, markdown),
