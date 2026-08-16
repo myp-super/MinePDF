@@ -1,8 +1,8 @@
 {
-  "version": "3.6.3",
-  "url": "https://github.com/myp-super/MinePDF/releases/download/v3.6.3/MinePDF.Setup.3.6.3.exe",
+  "version": "3.6.5",
+  "publishDate": "2026-08-16",
+  "url": "https://github.com/myp-super/MinePDF/releases/download/v3.6.5/MinePDF.Setup.3.6.5.exe",
   "notes": [
-    "3.6.3 - 支持 Windows 原生 Snap 二分/四分屏与自由缩放，窗口最小尺寸降至 480x360"
-  ],
-  "publishDate": "2026-08-15"
+    "3.6.5 - 文件信息与标签系统升级：标题单一数据源全局同步、预设/自定义多标签、标签管理、下拉选择器、左侧栏标签胶囊"
+  ]
 }
