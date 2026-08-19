@@ -1,8 +1,8 @@
 {
-  "version": "3.6.5",
-  "publishDate": "2026-08-16",
-  "url": "https://github.com/myp-super/MinePDF/releases/download/v3.6.5/MinePDF.Setup.3.6.5.exe",
+  "publishDate": "2026-08-19",
   "notes": [
-    "3.6.5 - 文件信息与标签系统升级：标题单一数据源全局同步、预设/自定义多标签、标签管理、下拉选择器、左侧栏标签胶囊"
-  ]
+    "chore: update update.json for v3.6.5"
+  ],
+  "version": "3.6.11",
+  "url": "https://github.com/myp-super/MinePDF/releases/download/v3.6.11/MinePDF.Setup.3.6.11.exe"
 }
