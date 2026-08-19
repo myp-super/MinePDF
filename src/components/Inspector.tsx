@@ -4,7 +4,9 @@ import {
   BookMarked,
   Camera,
   Check,
+  CheckCircle2,
   ChevronDown,
+  Circle,
   Copy,
   ExternalLink,
   FileDown,
@@ -44,6 +46,16 @@ import type {
 } from '../shared/types';
 import type { OutlineNode } from '../lib/pdf';
 import { DEFAULT_TAG_PRESETS, isPresetTag, normalizeTagName } from '../lib/tags';
+import {
+  flushAllLiteratureFields,
+  forceLiteratureClean,
+  markMetadataDirty,
+  markMetadataSaved,
+  registerFieldCleaner,
+  registerFieldDirty,
+  registerFieldFlush,
+  registerLiteratureSave,
+} from '../lib/literatureDirty';
 import { useApp } from '../store';
 import { Button, formatBytes, formatDate, IconButton, Toggle } from './ui';
 import { InspectorOutline } from './InspectorOutline';
@@ -412,6 +424,12 @@ function LiteraturePanel({ pdf }: { pdf: PdfRecord }) {
   const [showAbstract, setShowAbstract] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [review, setReview] = useState<LiteratureReview | null>(null);
+  const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
+  /** 阅读状态行：空间不足时只留图标（稳定探针测量，避免振荡） */
+  const statusRowRef = useRef<HTMLDivElement>(null);
+  const statusProbeRef = useRef<HTMLDivElement>(null);
+  const [statusNarrow, setStatusNarrow] = useState(false);
 
   useEffect(() => setDraft(meta), [meta]);
   useEffect(() => {
@@ -421,24 +439,81 @@ function LiteraturePanel({ pdf }: { pdf: PdfRecord }) {
       .catch(() => undefined);
   }, [pdf.id]);
 
-  const commit = async (patch: Partial<LiteratureMetadata>) => {
+  /** 元数据字段的本地草稿更新（同时登记未保存状态，供关闭前提示） */
+  const patchDraft = (p: Partial<LiteratureMetadata>) => {
+    setDraft((d) => ({ ...(d ?? ({} as LiteratureMetadata)), ...p }));
+    markMetadataDirty();
+  };
+
+  const commit = async (patch: Partial<LiteratureMetadata>): Promise<boolean> => {
     try {
       const updated = await window.pkm.updateLiterature(pdf.id, patch);
       setDraft(updated);
       patchPdfLiterature(pdf.id, updated);
+      markMetadataSaved();
+      return true;
     } catch (err) {
       toast('error', terr(err instanceof Error ? err.message : String(err)));
+      return false;
     }
   };
 
   const status = draft?.readingStatus ?? 'unread';
   const inputCls =
     'h-7 w-full rounded-md border border-app-border bg-app-panel2 px-2 text-[11px] outline-none focus:border-app-accent/70';
-  const statuses: Array<[LiteratureMetadata['readingStatus'], string]> = [
-    ['unread', t('literature.unread')],
-    ['reading', t('literature.reading')],
-    ['read', t('literature.read')],
+  const statusItems: Array<[LiteratureMetadata['readingStatus'], string, React.ReactNode]> = [
+    ['unread', t('literature.unread'), <Circle key="u" size={12} />],
+    ['reading', t('literature.reading'), <BookOpen key="r" size={12} />],
+    ['read', t('literature.read'), <CheckCircle2 key="d" size={12} />],
   ];
+
+  /** 面板级保存：元数据整批提交 + 所有结构化字段 flush */
+  const doSave = useCallback(async () => {
+    if (savingRef.current) return;
+    savingRef.current = true;
+    setSaving(true);
+    try {
+      if (draft) await commit({ ...draft });
+      await flushAllLiteratureFields();
+      forceLiteratureClean();
+      toast('success', t('inspector.saved'));
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
+    }
+  }, [draft, commit, pdf.id, t, toast]);
+  const doSaveRef = useRef(doSave);
+  doSaveRef.current = doSave;
+
+  // 注册为全局保存入口（Ctrl+S / 关闭前“保存并关闭”统一走这里）
+  useEffect(() => {
+    registerLiteratureSave(() => doSaveRef.current());
+    return () => registerLiteratureSave(null);
+  }, []);
+
+  // Ctrl+S 保存文献管理内容
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        void doSaveRef.current();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  // 阅读状态行窄栏判断（探针内容恒定，不会被“隐藏文字→不再溢出”反向影响）
+  useEffect(() => {
+    const el = statusRowRef.current;
+    const probe = statusProbeRef.current;
+    if (!el || !probe) return;
+    const check = () => setStatusNarrow(probe.scrollWidth > el.clientWidth + 4);
+    check();
+    const ro = new ResizeObserver(check);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   const reviewFields: Array<[LiteratureReviewField, string]> = [
     ['background', t('review.background')],
@@ -456,7 +531,24 @@ function LiteraturePanel({ pdf }: { pdf: PdfRecord }) {
   ];
 
   return (
-    <div className="space-y-4 px-3.5 py-3">
+    <div>
+      {/* 顶部操作栏：导出文献 + 保存（始终可见，Ctrl+S 等效） */}
+      <div className="sticky top-0 z-10 flex shrink-0 items-center gap-1.5 border-b border-app-border bg-app-panel px-3.5 py-2">
+        <Button size="sm" variant="outline" onClick={() => setExportOpen(true)}>
+          <FileDown size={12} /> {t('export.title')}
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={saving}
+          onClick={() => void doSaveRef.current()}
+          title={`${t('inspector.save')} (Ctrl+S)`}
+        >
+          {saving ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
+          {saving ? t('common.saving') : t('inspector.save')}
+        </Button>
+      </div>
+      <div className="space-y-4 px-3.5 py-3">
       <section>
         <div className="mb-1.5 text-[10.5px] font-medium uppercase tracking-wide text-app-muted">
           {t('literature.title')}
@@ -466,7 +558,7 @@ function LiteraturePanel({ pdf }: { pdf: PdfRecord }) {
             <input
               className={inputCls}
               value={draft?.title ?? ''}
-              onChange={(e) => setDraft((d) => ({ ...(d ?? ({} as LiteratureMetadata)), title: e.target.value }))}
+              onChange={(e) => patchDraft({ title: e.target.value })}
               onBlur={(e) => void commit({ title: e.target.value.trim() })}
             />
           </Field>
@@ -474,7 +566,7 @@ function LiteraturePanel({ pdf }: { pdf: PdfRecord }) {
             <input
               className={inputCls}
               value={draft?.authors ?? ''}
-              onChange={(e) => setDraft((d) => ({ ...(d ?? ({} as LiteratureMetadata)), authors: e.target.value }))}
+              onChange={(e) => patchDraft({ authors: e.target.value })}
               onBlur={(e) => void commit({ authors: e.target.value.trim() })}
             />
           </Field>
@@ -484,7 +576,7 @@ function LiteraturePanel({ pdf }: { pdf: PdfRecord }) {
                 <input
                   className={inputCls}
                   value={draft?.journal ?? ''}
-                  onChange={(e) => setDraft((d) => ({ ...(d ?? ({} as LiteratureMetadata)), journal: e.target.value }))}
+                  onChange={(e) => patchDraft({ journal: e.target.value })}
                   onBlur={(e) => void commit({ journal: e.target.value.trim() })}
                 />
               </Field>
@@ -494,7 +586,7 @@ function LiteraturePanel({ pdf }: { pdf: PdfRecord }) {
                 <input
                   className={inputCls}
                   value={draft?.conference ?? ''}
-                  onChange={(e) => setDraft((d) => ({ ...(d ?? ({} as LiteratureMetadata)), conference: e.target.value }))}
+                  onChange={(e) => patchDraft({ conference: e.target.value })}
                   onBlur={(e) => void commit({ conference: e.target.value.trim() })}
                 />
               </Field>
@@ -507,7 +599,7 @@ function LiteraturePanel({ pdf }: { pdf: PdfRecord }) {
                   className={inputCls}
                   inputMode="numeric"
                   value={draft?.year ?? ''}
-                  onChange={(e) => setDraft((d) => ({ ...(d ?? ({} as LiteratureMetadata)), year: e.target.value ? Number(e.target.value) : null }))}
+                  onChange={(e) => patchDraft({ year: e.target.value ? Number(e.target.value) : null })}
                   onBlur={(e) => void commit({ year: e.target.value ? Number(e.target.value) : null })}
                 />
               </Field>
@@ -517,7 +609,7 @@ function LiteraturePanel({ pdf }: { pdf: PdfRecord }) {
                 <input
                   className={inputCls}
                   value={draft?.doi ?? ''}
-                  onChange={(e) => setDraft((d) => ({ ...(d ?? ({} as LiteratureMetadata)), doi: e.target.value }))}
+                  onChange={(e) => patchDraft({ doi: e.target.value })}
                   onBlur={(e) => void commit({ doi: e.target.value.trim() })}
                 />
               </Field>
@@ -527,7 +619,7 @@ function LiteraturePanel({ pdf }: { pdf: PdfRecord }) {
             <input
               className={inputCls}
               value={draft?.url ?? ''}
-              onChange={(e) => setDraft((d) => ({ ...(d ?? ({} as LiteratureMetadata)), url: e.target.value }))}
+              onChange={(e) => patchDraft({ url: e.target.value })}
               onBlur={(e) => void commit({ url: e.target.value.trim() })}
             />
           </Field>
@@ -535,7 +627,7 @@ function LiteraturePanel({ pdf }: { pdf: PdfRecord }) {
             <input
               className={inputCls}
               value={draft?.keywords ?? ''}
-              onChange={(e) => setDraft((d) => ({ ...(d ?? ({} as LiteratureMetadata)), keywords: e.target.value }))}
+              onChange={(e) => patchDraft({ keywords: e.target.value })}
               onBlur={(e) => void commit({ keywords: e.target.value.trim() })}
             />
           </Field>
@@ -551,7 +643,7 @@ function LiteraturePanel({ pdf }: { pdf: PdfRecord }) {
               <textarea
                 className="mt-1 h-24 w-full resize-y rounded-md border border-app-border bg-app-panel2 p-2 text-[11px] outline-none focus:border-app-accent/70"
                 value={draft?.abstract ?? ''}
-                onChange={(e) => setDraft((d) => ({ ...(d ?? ({} as LiteratureMetadata)), abstract: e.target.value }))}
+                onChange={(e) => patchDraft({ abstract: e.target.value })}
                 onBlur={(e) => void commit({ abstract: e.target.value })}
               />
             )}
@@ -563,18 +655,37 @@ function LiteraturePanel({ pdf }: { pdf: PdfRecord }) {
         <div className="mb-1.5 text-[10.5px] font-medium uppercase tracking-wide text-app-muted">
           {t('literature.readingStatus')}
         </div>
-        <div className="flex items-center gap-1">
-          {statuses.map(([s, label]) => (
+        <div ref={statusRowRef} className="relative flex flex-nowrap items-center gap-1 overflow-hidden">
+          {/* 稳定测量探针：始终包含完整图标+文字，窄栏判断不会被自身内容变化反向影响 */}
+          <div
+            ref={statusProbeRef}
+            aria-hidden
+            className="invisible pointer-events-none absolute inset-0 flex flex-nowrap items-center gap-1 overflow-hidden"
+          >
+            {statusItems.map(([s, label, icon]) => (
+              <span
+                key={s}
+                className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-transparent px-2 py-0.5 text-[10px]"
+              >
+                {icon}
+                {label}
+              </span>
+            ))}
+          </div>
+          {statusItems.map(([s, label, icon]) => (
             <button
               key={s}
-              className={`rounded-full border px-2 py-0.5 text-[10px] transition-colors ${
+              title={statusNarrow ? label : undefined}
+              aria-label={statusNarrow ? label : undefined}
+              className={`flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-2 py-0.5 text-[10px] transition-colors ${
                 status === s
                   ? 'border-app-accent/60 bg-app-accent/15 text-app-text'
                   : 'border-app-border text-app-muted hover:text-app-text'
               }`}
               onClick={() => void commit({ readingStatus: s })}
             >
-              {label}
+              <span className={status === s ? 'text-app-accent' : ''}>{icon}</span>
+              {!statusNarrow && label}
             </button>
           ))}
           {status !== 'read' && (
@@ -591,13 +702,8 @@ function LiteraturePanel({ pdf }: { pdf: PdfRecord }) {
       <TagSection pdf={pdf} />
 
       <section>
-        <div className="mb-1.5 flex items-center justify-between">
-          <div className="text-[10.5px] font-medium uppercase tracking-wide text-app-muted">
-            {t('literature.review')}
-          </div>
-          <Button size="sm" variant="outline" onClick={() => setExportOpen(true)}>
-            <FileDown size={12} /> {t('export.title')}
-          </Button>
+        <div className="mb-1.5 text-[10.5px] font-medium uppercase tracking-wide text-app-muted">
+          {t('literature.review')}
         </div>
         <div className="space-y-3">
           {reviewFields.map(([field, label]) => (
@@ -607,6 +713,7 @@ function LiteraturePanel({ pdf }: { pdf: PdfRecord }) {
       </section>
 
       <ExportModal open={exportOpen} onClose={() => setExportOpen(false)} currentPdf={pdf} />
+      </div>
     </div>
   );
 }
@@ -625,21 +732,52 @@ function ReviewField({
 }) {
   const [v, setV] = useState(value);
   const dirtyRef = useRef(false);
+  const flushRef = useRef<() => void>(() => undefined);
+  const vRef = useRef(v);
+  vRef.current = v;
   useEffect(() => {
     setV(value);
     dirtyRef.current = false;
   }, [value, pdfId]);
   const flush = () => {
-    if (dirtyRef.current) {
-      dirtyRef.current = false;
-      void window.pkm.saveLiteratureReviewField(pdfId, field, v).catch(() => undefined);
-    }
+    if (!dirtyRef.current) return;
+    dirtyRef.current = false;
+    void window.pkm
+      .saveLiteratureReviewField(pdfId, field, v)
+      .catch(() => {
+        dirtyRef.current = true;
+      });
   };
+  flushRef.current = flush;
+  // 登记到面板级保存编排：全局保存 / 未保存查询 / 放弃修改清理
+  useEffect(() => {
+    const unregFlush = registerFieldFlush(() => flushRef.current());
+    const unregDirty = registerFieldDirty(() => dirtyRef.current);
+    const unregClean = registerFieldCleaner(() => {
+      dirtyRef.current = false;
+    });
+    return () => {
+      unregFlush();
+      unregDirty();
+      unregClean();
+    };
+  }, [pdfId, field]);
+  // 卸载时兜底保存：切换 Tab / 关闭面板时，防抖窗口内的内容不丢失。
+  // 「不保存并关闭」路径会先 forceLiteratureClean 清掉脏标记，因此不会误保存。
+  useEffect(() => {
+    return () => {
+      if (dirtyRef.current) {
+        dirtyRef.current = false;
+        void window.pkm
+          .saveLiteratureReviewField(pdfId, field, vRef.current)
+          .catch(() => undefined);
+      }
+    };
+  }, [pdfId, field]);
   useEffect(() => {
     if (!dirtyRef.current) return;
-    const timer = setTimeout(flush, 400);
+    const timer = setTimeout(() => flushRef.current(), 400);
     return () => clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [v]);
   return (
     <div>
@@ -651,7 +789,7 @@ function ReviewField({
           setV(e.target.value);
           dirtyRef.current = true;
         }}
-        onBlur={flush}
+        onBlur={() => flushRef.current()}
       />
     </div>
   );

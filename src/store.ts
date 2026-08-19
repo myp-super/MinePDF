@@ -9,6 +9,7 @@ import type {
   Tag,
 } from './shared/types';
 import type { OutlineNode } from './lib/pdf';
+import { forceLiteratureClean, flushLiteratureSave, isLiteratureDirty } from './lib/literatureDirty';
 
 export type ViewMode = 'library' | 'settings';
 export type InspectorTab = 'literature' | 'info' | 'outline' | 'notes' | 'annotations';
@@ -18,6 +19,13 @@ export interface Toast {
   kind: 'info' | 'success' | 'error';
   text: string;
 }
+
+/** 关闭标签前的未保存确认（文献管理有未保存内容时挂起，待用户选择保存/放弃） */
+export type PendingTabClose =
+  | { kind: 'tab'; screenId: string; tabId: string }
+  | { kind: 'all'; screenId: string }
+  | { kind: 'other'; screenId: string; tabId: string }
+  | null;
 
 /** 上次阅读会话：用于重启后恢复到关闭前阅读的 PDF 与页码 */
 export interface LastSession {
@@ -172,6 +180,7 @@ interface AppState {
   inspectorWidth: number;
   sidebarCollapsed: boolean;
   toasts: Toast[];
+  pendingTabClose: PendingTabClose;
 
   setReady: (v: boolean) => void;
   refresh: () => Promise<void>;
@@ -183,6 +192,9 @@ interface AppState {
   closeTab: (screenId: string, tabId: string) => void;
   closeAllTabs: (screenId: string) => void;
   closeOtherTabs: (screenId: string, tabId: string) => void;
+  setPendingTabClose: (v: PendingTabClose) => void;
+  /** 未保存确认后的处理：save=true 先保存再关闭；false 放弃修改直接关闭 */
+  resolveTabClose: (save: boolean) => Promise<void>;
   /** 长按拖动排序：把 fromTabId 移到“移除它之后”的 toIndex 位置（实时让位） */
   reorderTab: (screenId: string, fromTabId: string, toIndex: number) => void;
   clearScreens: () => void;
@@ -265,6 +277,7 @@ export const useApp = create<AppState>((set, get) => ({
   inspectorWidth: Number(localStorage.getItem('pkm.inspectorWidth')) || 320,
   sidebarCollapsed: false,
   toasts: [],
+  pendingTabClose: null,
 
   setReady: (v) => set({ ready: v }),
   refresh: async () => {
@@ -465,6 +478,12 @@ export const useApp = create<AppState>((set, get) => ({
   /** 关闭屏内标签；该屏标签清空后屏自动消失（分屏只剩一个屏时回到单屏） */
   closeTab: (screenId, tabId) => {
     const s = get();
+    const screen = s.screens.find((sc) => sc.id === screenId);
+    // 正在编辑文献（有未保存内容）且关闭的是当前激活标签：先弹未保存确认
+    if (s.activeScreenId === screenId && screen?.activeTabId === tabId && isLiteratureDirty()) {
+      set({ pendingTabClose: { kind: 'tab', screenId, tabId } });
+      return;
+    }
     let screens = s.screens.map((sc) => {
       if (sc.id !== screenId) return sc;
       const idx = sc.tabs.findIndex((t) => t.id === tabId);
@@ -491,6 +510,11 @@ export const useApp = create<AppState>((set, get) => ({
   },
   closeAllTabs: (screenId) => {
     const s = get();
+    const screen = s.screens.find((sc) => sc.id === screenId);
+    if (s.activeScreenId === screenId && screen && screen.tabs.length > 0 && isLiteratureDirty()) {
+      set({ pendingTabClose: { kind: 'all', screenId } });
+      return;
+    }
     const screens = s.screens.filter((sc) => sc.id !== screenId);
     let activeScreenId = screens.some((sc) => sc.id === s.activeScreenId)
       ? s.activeScreenId
@@ -507,6 +531,16 @@ export const useApp = create<AppState>((set, get) => ({
   },
   closeOtherTabs: (screenId, tabId) => {
     const s = get();
+    const screen = s.screens.find((sc) => sc.id === screenId);
+    if (
+      s.activeScreenId === screenId &&
+      screen?.activeTabId != null &&
+      screen.activeTabId !== tabId &&
+      isLiteratureDirty()
+    ) {
+      set({ pendingTabClose: { kind: 'other', screenId, tabId } });
+      return;
+    }
     const screens = s.screens.map((sc) =>
       sc.id === screenId
         ? { ...sc, tabs: sc.tabs.filter((t) => t.id === tabId), activeTabId: tabId }
@@ -514,6 +548,18 @@ export const useApp = create<AppState>((set, get) => ({
     );
     const activePdfId = derivePdfId(screens, s.activeScreenId);
     set({ screens, activePdfId });
+  },
+  setPendingTabClose: (v) => set({ pendingTabClose: v }),
+  resolveTabClose: async (save) => {
+    const pending = get().pendingTabClose;
+    if (!pending) return;
+    if (save) await flushLiteratureSave();
+    forceLiteratureClean();
+    set({ pendingTabClose: null });
+    const s = get();
+    if (pending.kind === 'tab') s.closeTab(pending.screenId, pending.tabId);
+    else if (pending.kind === 'all') s.closeAllTabs(pending.screenId);
+    else s.closeOtherTabs(pending.screenId, pending.tabId);
   },
   reorderTab: (screenId, fromTabId, toIndex) => {
     const s = get();

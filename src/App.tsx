@@ -2,6 +2,7 @@ import React, { Fragment, useEffect, useState } from 'react';
 import { AlertTriangle, FolderSearch, Trash2 } from 'lucide-react';
 import { useT, useTError } from './i18n';
 import type { PdfRecord } from './shared/types';
+import { flushLiteratureSave, forceLiteratureClean, isLiteratureDirty } from './lib/literatureDirty';
 import { useApp } from './store';
 import { EmptyState } from './components/EmptyState';
 import { Inspector } from './components/Inspector';
@@ -42,6 +43,22 @@ export default function App() {
   const uiFontScale = settings.uiFontScale ?? 1;
 
   const [missingPdf, setMissingPdf] = useState<PdfRecord | null>(null);
+  const pendingTabClose = useApp((s) => s.pendingTabClose);
+  const setPendingTabClose = useApp((s) => s.setPendingTabClose);
+  const resolveTabClose = useApp((s) => s.resolveTabClose);
+  const [appClosePrompt, setAppClosePrompt] = useState(false);
+
+  // 关闭软件时若有未保存的文献修改：拦截关闭并弹窗确认
+  useEffect(() => {
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (!isLiteratureDirty()) return;
+      e.preventDefault();
+      e.returnValue = '';
+      setAppClosePrompt(true);
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, []);
 
   useEffect(() => {
     void (async () => {
@@ -366,6 +383,66 @@ export default function App() {
         }}
         toast={toast}
       />
+
+      {/* 关闭标签前的未保存确认：保存并关闭 / 放弃修改 / 取消 */}
+      {pendingTabClose && (
+        <Modal open onClose={() => setPendingTabClose(null)} title={t('inspector.closePromptTitle')} width={430}>
+          <p className="text-[12.5px] leading-relaxed text-app-muted">
+            {t('inspector.closePromptMsg')}
+          </p>
+          <div className="mt-5 flex justify-end gap-2">
+            <Button variant="ghost" onClick={() => setPendingTabClose(null)}>
+              {t('common.cancel')}
+            </Button>
+            <Button variant="danger" onClick={() => void resolveTabClose(false)}>
+              {t('inspector.discard')}
+            </Button>
+            <Button variant="primary" onClick={() => void resolveTabClose(true)}>
+              {t('inspector.saveAndClose')}
+            </Button>
+          </div>
+        </Modal>
+      )}
+
+      {/* 关闭软件前的未保存确认：保存并退出 / 不保存退出 / 取消 */}
+      {appClosePrompt && (
+        <Modal open onClose={() => setAppClosePrompt(false)} title={t('inspector.closePromptTitle')} width={430}>
+          <p className="text-[12.5px] leading-relaxed text-app-muted">
+            {t('inspector.closePromptMsg')}
+          </p>
+          <div className="mt-5 flex justify-end gap-2">
+            <Button variant="ghost" onClick={() => setAppClosePrompt(false)}>
+              {t('common.cancel')}
+            </Button>
+            <Button
+              variant="danger"
+              onClick={() => {
+                forceLiteratureClean();
+                void window.pkm.close();
+              }}
+            >
+              {t('inspector.discard')}
+            </Button>
+            <Button
+              variant="primary"
+              onClick={() => {
+                void (async () => {
+                  try {
+                    await flushLiteratureSave();
+                    forceLiteratureClean();
+                    setAppClosePrompt(false);
+                    void window.pkm.close();
+                  } catch {
+                    /* 保存失败：保持弹窗，让用户重试或取消 */
+                  }
+                })();
+              }}
+            >
+              {t('inspector.saveAndClose')}
+            </Button>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }
