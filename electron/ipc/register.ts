@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, screen, shell } from 'electron';
 import { execFile, spawn } from 'child_process';
 import { createHash } from 'crypto';
 import fs from 'fs';
@@ -27,6 +27,7 @@ import { checkForUpdates, downloadUpdate } from '../services/updater';
 import {
   isPdfiumAvailable,
   pdfiumClose,
+  pdfiumDiagInfo,
   pdfiumLinks,
   pdfiumOpen,
   pdfiumPageSizes,
@@ -333,6 +334,19 @@ export function registerIpc(): void {
   handle('window:set-fullscreen', (flag: boolean) => mainWin?.setFullScreen(Boolean(flag)));
   handle('window:is-fullscreen', () => mainWin?.isFullScreen() ?? false);
   handle('window:is-maximized', () => mainWin?.isMaximized() ?? false);
+  // 渲染诊断：核对 Electron/Windows DPR、webContents 缩放与 PDFium DLL 是否一致
+  handle('app:render-diag', () => {
+    const win = mainWin;
+    const disp = win && !win.isDestroyed() ? screen.getDisplayMatching(win.getBounds()) : null;
+    return {
+      screenScaleFactor: screen.getPrimaryDisplay().scaleFactor,
+      windowScaleFactor: disp?.scaleFactor ?? null,
+      windowBounds: win && !win.isDestroyed() ? win.getBounds() : null,
+      zoomFactor: win && !win.isDestroyed() ? win.webContents.getZoomFactor() : null,
+      zoomLevel: win && !win.isDestroyed() ? win.webContents.getZoomLevel() : null,
+      pdfium: pdfiumDiagInfo(),
+    };
+  });
 
   // ---------- 应用信息 ----------
   handle<AppInfo>('app:info', () => ({

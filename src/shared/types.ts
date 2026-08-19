@@ -183,6 +183,16 @@ export interface AppInfo {
   isPackaged: boolean;
 }
 
+/** 渲染诊断：主进程视角的 DPR / 窗口缩放 / PDFium DLL 信息 */
+export interface RenderDiagInfo {
+  screenScaleFactor: number;
+  windowScaleFactor: number | null;
+  windowBounds: { x: number; y: number; width: number; height: number } | null;
+  zoomFactor: number | null;
+  zoomLevel: number | null;
+  pdfium: { available: boolean; dllPath: string | null; version: string };
+}
+
 export type UpdateStatus = 'disabled' | 'checking' | 'up-to-date' | 'available' | 'error';
 
 export interface UpdateInfo {
@@ -306,6 +316,8 @@ export interface PkmApi {
   onMaximizedChange(cb: (v: boolean) => void): () => void;
   /** 主进程通知窗口布局需重排（无边框窗口缩放/最大化后） */
   onWindowRelayout(cb: () => void): () => void;
+  /** 渲染诊断：主进程 DPR / 缩放 / PDFium 信息 */
+  getRenderDiag(): Promise<RenderDiagInfo>;
   onLibraryChanged(cb: () => void): () => void;
   onUpdateAvailable(cb: (r: UpdateResult) => void): () => void;
 

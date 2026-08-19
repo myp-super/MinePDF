@@ -11,6 +11,7 @@ import { Sidebar } from './components/Sidebar';
 import { TitleBar } from './components/TitleBar';
 import { Button, Modal, ResizeHandle } from './components/ui';
 import { ScreenViewer, SplitDivider } from './components/Viewer/ScreenViewer';
+import { RenderDiagOverlay } from './components/Viewer/RenderDiagOverlay';
 
 export default function App() {
   const t = useT();
@@ -329,6 +330,7 @@ export default function App() {
       </div>
 
       <SearchModal />
+      <RenderDiagOverlay />
 
       <div
         aria-live="polite"

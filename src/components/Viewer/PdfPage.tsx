@@ -2,13 +2,14 @@ import React, { useEffect, useRef, useState } from 'react';
 import type { PageViewport, PDFDocumentProxy } from 'pdfjs-dist';
 import type { AnnotationRecord, PdfiumLink, Quad } from '../../shared/types';
 import {
+  effectiveRenderBucket,
   getCachedPage,
   pageCacheKey,
   putCachedPage,
-  renderBucket,
   toImageBitmap,
 } from '../../lib/pageImageCache';
 import { pdfiumRenderQueued } from '../../lib/pdfiumBatcher';
+import { renderDiag } from '../../lib/renderDiag';
 import { hexToRgba, pdfjsLib, type SearchMatch, type ViewportLike } from '../../lib/pdf';
 import { useT } from '../../i18n';
 
@@ -239,7 +240,50 @@ export function PdfPage({
     if (!ctx) return;
     // 1:1 填满画布内部（内部尺寸 = 位图尺寸），CSS 缩放由浏览器处理。
     // 之前误用 cssW/cssH 作为目标尺寸，导致内容被压缩到左上 2/3 区域。
+    // 位图始终 ≥ 显示所需像素，只会缩小/1:1 显示；平滑设置用于兜底一致渲染。
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
     ctx.drawImage(bitmap, 0, 0);
+  }
+
+  /** 记录当前页面渲染链路的真实数据（调试用，未开启时不产生 UI 开销） */
+  function recordDiag(input: {
+    baseW: number;
+    baseH: number;
+    zoom: number;
+    dpr: number;
+    bucket: number;
+    cacheHit: boolean;
+    renderMs: number;
+    engine: 'pdfium' | 'pdfjs';
+  }): void {
+    if (!renderDiag.getState().enabled) return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    renderDiag.record({
+      pageNumber,
+      engine: input.engine,
+      baseW: input.baseW,
+      baseH: input.baseH,
+      zoom: input.zoom,
+      dpr: input.dpr,
+      deviceScale: input.zoom * input.dpr,
+      bucket: input.bucket,
+      cacheHit: input.cacheHit,
+      renderMs: input.renderMs,
+      bitmapW: canvas.width,
+      bitmapH: canvas.height,
+      canvasBackingW: canvas.width,
+      canvasBackingH: canvas.height,
+      canvasClientW: canvas.clientWidth,
+      canvasClientH: canvas.clientHeight,
+      rectW: rect.width,
+      rectH: rect.height,
+      densityX: rect.width > 0 ? canvas.width / rect.width : 0,
+      densityY: rect.height > 0 ? canvas.height / rect.height : 0,
+      ts: Date.now(),
+    });
   }
 
   /** 文本层 + 链接层（PDF.js，两套渲染路径共用） */
@@ -291,17 +335,31 @@ export function PdfPage({
     const cssW = Math.floor(vp.width);
     const cssH = Math.floor(vp.height);
     const deviceScale = vp.scale * dpr;
+    // 页面物理尺寸（pt）：用于与主进程同一公式计算渲染倍率上限，
+    // 保证缓存键与真实渲染尺寸一致
+    const pagePtW = vp.width / vp.scale;
+    const pagePtH = vp.height / vp.scale;
     // 仅首次渲染显示加载动画；缩放/切回时的再渲染直接复用旧位图拉伸过渡
     setPending(!hasRenderedRef.current);
 
     // 1) 同渲染桶缓存直接复用（渲染倍率 ≥ 显示倍率，只会缩小显示，不发虚）
-    const bucket = renderBucket(deviceScale);
+    const bucket = effectiveRenderBucket(deviceScale, pagePtW, pagePtH);
     const hiKey = pageCacheKey(pdfId, pageNumber, bucket);
     const hi = getCachedPage(hiKey);
     if (hi) {
       setPending(false);
       paintBitmap(hi, cssW, cssH);
       hasRenderedRef.current = true;
+      recordDiag({
+        baseW: pagePtW,
+        baseH: pagePtH,
+        zoom: vp.scale,
+        dpr,
+        bucket,
+        cacheHit: true,
+        renderMs: 0,
+        engine: 'pdfium',
+      });
       // 位图命中缓存时仍需渲染文本层/链接层（选词、高亮、交叉引用）
       await renderTextAndAnnots(vp, seq);
       return;
@@ -322,6 +380,16 @@ export function PdfPage({
         paintBitmap(bmp, cssW, cssH);
         hasRenderedRef.current = true;
         setPending(false);
+        recordDiag({
+          baseW: pagePtW,
+          baseH: pagePtH,
+          zoom: vp.scale,
+          dpr,
+          bucket,
+          cacheHit: false,
+          renderMs: res.ms,
+          engine: 'pdfium',
+        });
         await renderTextAndAnnots(vp, seq2);
       } catch {
         if (seq2 === renderSeqRef.current) {
@@ -365,6 +433,17 @@ export function PdfPage({
       dctx.drawImage(offscreen, 0, 0);
       hasRenderedRef.current = true;
       setPending(false);
+      const dprDiag = window.devicePixelRatio || 1;
+      recordDiag({
+        baseW: vp.width / vp.scale,
+        baseH: vp.height / vp.scale,
+        zoom: vp.scale,
+        dpr: dprDiag,
+        bucket: renderScale,
+        cacheHit: false,
+        renderMs: 0,
+        engine: 'pdfjs',
+      });
       await renderTextAndAnnots(vp, seq);
     } catch {
       if (seq === renderSeqRef.current) {

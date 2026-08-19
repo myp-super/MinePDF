@@ -46,10 +46,11 @@ async function flush(): Promise<void> {
   pending.clear();
   if (!items.length) return;
 
-  // 按 (pdfId, 缩放桶) 分组：同组共享一次批量 IPC
+  // 按 (pdfId, 精确倍率) 分组：同组共享一次批量 IPC；
+  // 倍率不再归并到 0.5 桶，避免“组内取最大值”导致部分页面位图被二次缩小
   const groups = new Map<string, Request[]>();
   for (const it of items) {
-    const bucket = Math.max(0.5, Math.round(it.scale * 2) / 2);
+    const bucket = Math.max(0.5, Math.round(it.scale * 1000) / 1000);
     const gk = `${it.pdfId}:${bucket}`;
     const list = groups.get(gk) ?? [];
     list.push(it);
@@ -58,7 +59,8 @@ async function flush(): Promise<void> {
 
   // 串行渲染各组，避免多组大位图并发转换造成主线程峰值卡顿
   for (const list of groups.values()) {
-    const scale = Math.max(...list.map((i) => i.scale));
+    // 组内所有请求倍率一致（精确分组），直接取组内值即可
+    const scale = list[0].scale;
     // 不同屏可能同时请求同一页，按页去重后批量渲染一次即可
     const byPage = new Map<number, Request[]>();
     for (const it of list) {

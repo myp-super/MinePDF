@@ -127,6 +127,7 @@ const api: PkmApi = {
   onMaximizedChange: (cb) => subscribe('window:maximized-changed', (v) => cb(Boolean(v))),
   onWindowRelayout: (cb) => subscribe('window:relayout', () => cb()),
   onLibraryChanged: (cb) => subscribe('library:changed', () => cb()),
+  getRenderDiag: () => invoke('app:render-diag'),
   onUpdateAvailable: (cb) =>
     subscribe('update:available', (v) => cb(v as never)),
 

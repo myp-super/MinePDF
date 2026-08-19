@@ -1,5 +1,6 @@
 import {
   ArrowLeft,
+  Activity,
   BookOpen,
   Database,
   Download,
@@ -27,6 +28,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useT, useTError } from '../i18n';
 import type { AppSettings } from '../shared/types';
 import { DEFAULT_TAG_PRESETS, isPresetTag, normalizeTagName } from '../lib/tags';
+import { renderDiag } from '../lib/renderDiag';
 import { useApp } from '../store';
 import { AboutModal } from './AboutModal';
 import { UpdateModal } from './UpdateModal';
@@ -561,6 +563,28 @@ export function SettingsPage() {
             </div>
             <Button size="sm" variant="primary" onClick={() => setAboutOpen(true)}>
               <Info size={12} /> {t('settings.aboutOpen')}
+            </Button>
+          </div>
+          <div className="mt-3 flex items-center justify-between gap-3 border-t border-app-border pt-3">
+            <div className="min-w-0">
+              <div className="text-[11.5px] text-app-text/90">{t('settings.renderDiag')}</div>
+              <div className="mt-0.5 text-[10.5px] text-app-muted">{t('settings.renderDiagHint')}</div>
+            </div>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                renderDiag.toggle();
+                toast(
+                  'info',
+                  renderDiag.getState().enabled
+                    ? t('settings.renderDiagOn')
+                    : t('settings.renderDiagOff'),
+                );
+              }}
+            >
+              <Activity size={12} />
+              {t('settings.renderDiagToggle')}
             </Button>
           </div>
         </section>

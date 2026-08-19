@@ -16,7 +16,7 @@ import {
   getCachedPage,
   pageCacheKey,
   putCachedPage,
-  renderBucket,
+  effectiveRenderBucket,
   toImageBitmap,
 } from '../../lib/pageImageCache';
 import { pdfiumRenderQueued } from '../../lib/pdfiumBatcher';
@@ -643,9 +643,15 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
   useEffect(() => {
     if (!paneActive || !pdfiumInfo || pageCount <= 1) return;
     const dpr = window.devicePixelRatio || 1;
-    const bucket = renderBucket(scale * dpr);
+    const bucketFor = (n: number) => {
+      const s = pageSizes?.[n - 1];
+      const pw = (s && s.w > 0 ? s.w : baseW) ?? 1;
+      const ph = (s && s.h > 0 ? s.h : baseH) ?? 1;
+      return effectiveRenderBucket(scale * dpr, pw, ph);
+    };
     const prefetch = (n: number) => {
       if (n < 1 || n > pageCount) return;
+      const bucket = bucketFor(n);
       const key = pageCacheKey(pdf.id, n, bucket);
       if (getCachedPage(key)) return;
       pdfiumRenderQueued(paneId, pdf.id, n, bucket)
@@ -657,7 +663,19 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
     };
     prefetch(currentPage + 1);
     if (mode === 'double') prefetch(currentPage + 2);
-  }, [currentPage, scale, mode, pageCount, pdf.id, paneId, paneActive, pdfiumInfo]);
+  }, [
+    currentPage,
+    scale,
+    mode,
+    pageCount,
+    pdf.id,
+    paneId,
+    paneActive,
+    pdfiumInfo,
+    pageSizes,
+    baseW,
+    baseH,
+  ]);
 
   // ---------- Ctrl + wheel zoom（只作用于本屏自己的滚动容器，锚定光标） ----------
   // 监听挂在每个屏独立的滚动容器上：分屏时各屏独立缩放，

@@ -78,7 +78,10 @@ interface PdfiumApi {
 }
 
 // ---------- PDFium 位图格式 / 渲染标志（fpdfview.h） ----------
-const FPDFBitmap_BGRA = 4;
+// 注意：3 才是 FPDFBitmap_BGRA（B,G,R,A）；4 是 FPDFBitmap_BGRa（预乘 alpha），
+// 用 4 会导致 FPDF_LCD_TEXT 亚像素文字抗锯齿被静默关闭（实测 chroma=0），
+// 文字只剩灰度抗锯齿，视觉上明显比 Edge 发虚。
+const FPDFBitmap_BGRA = 3;
 const FPDF_ANNOT = 0x01;
 const FPDF_LCD_TEXT = 0x02;
 const FPDF_REVERSE_BYTE_ORDER = 0x10;
@@ -88,7 +91,8 @@ const RENDER_FLAGS =
 
 /** 单页最大渲染尺寸，防止异常 PDF 撑爆内存（6000px x 4B = 144MB 上限） */
 const MAX_PAGE_DIM = 6000;
-const MAX_SCALE = 4;
+/** 渲染倍率上限：与渲染端 effectiveRenderBucket 保持一致，支持 400% 缩放 × DPR 2 */
+const MAX_SCALE = 8;
 
 const FS_SIZEF = koffi.struct('FS_SIZEF', { width: 'float', height: 'float' });
 const FS_RECTF = koffi.struct('FS_RECTF', {
@@ -200,6 +204,12 @@ function getPdfPath(pdfId: number): string {
 /** PDFium 是否可用（首次调用会触发 DLL 加载） */
 export function isPdfiumAvailable(): boolean {
   return ensureLib() != null;
+}
+
+/** 运行时诊断：PDFium DLL 路径与版本（用于核对打包版与实际渲染用的是同一份） */
+export function pdfiumDiagInfo(): { available: boolean; dllPath: string | null; version: string } {
+  const dllPath = resolveDllPath();
+  return { available: ensureLib() != null, dllPath, version: dllVersion || readVersion() };
 }
 
 /** 打开文档读取基本信息后立即关闭；PDFium 不可用时返回 null */
@@ -460,8 +470,10 @@ export function pdfiumRender(pdfId: number, page: number, scale: number): Pdfium
     koffi.free(sizePtr);
   }
 
-  // 尺寸保护：限制缩放倍数与最大像素尺寸
-  const safeScale = Math.min(MAX_SCALE, scale);
+  // 尺寸保护：渲染端已按 DPR 折算 scale，这里只做上限钳制；
+  // 与渲染端 effectiveRenderBucket 同一公式，保证缓存键 == 真实渲染尺寸
+  const dimCap = MAX_PAGE_DIM / Math.max(1, Math.max(pageW, pageH));
+  const safeScale = Math.min(MAX_SCALE, dimCap, scale);
   const wRaw = Math.max(1, Math.round(pageW * safeScale));
   const hRaw = Math.max(1, Math.round(pageH * safeScale));
   const fit = Math.min(1, MAX_PAGE_DIM / wRaw, MAX_PAGE_DIM / hRaw);
