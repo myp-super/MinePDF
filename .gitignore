@@ -8,3 +8,4 @@ public/cmaps/
 *.log
 .DS_Store
 Thumbs.db
+pdfium-diag/
