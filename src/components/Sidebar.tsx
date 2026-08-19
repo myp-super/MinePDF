@@ -24,7 +24,7 @@ import {
   Settings,
   Trash2,
 } from 'lucide-react';
-import React, { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import React, { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useT, useTError } from '../i18n';
 import type { Folder as FolderType, LibraryRecord, PdfRecord } from '../shared/types';
 import { useApp } from '../store';
@@ -196,6 +196,8 @@ export function Sidebar() {
   /** 折叠/展开时短暂启用宽度过渡（手动拖拽调宽不启用，避免跟手卡顿） */
   const [animateWidth, setAnimateWidth] = useState(false);
   const animTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const asideRef = useRef<HTMLElement | null>(null);
+  const sidebarPanelRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     setAnimateWidth(true);
     if (animTimerRef.current) clearTimeout(animTimerRef.current);
@@ -210,6 +212,17 @@ export function Sidebar() {
       if (autoHideTimer.current) clearTimeout(autoHideTimer.current);
     };
   }, []);
+
+  // 宽度由 ref 直接控制：拖动过程中 ResizeHandle 直接改 DOM 宽度，
+  // React 重渲染（如状态筛选行 ResizeObserver）不会再把宽度“弹回”旧值导致跳闪
+  useLayoutEffect(() => {
+    if (asideRef.current) {
+      asideRef.current.style.width = sidebarCollapsed ? '44px' : `${sidebarWidth}px`;
+    }
+    if (sidebarPanelRef.current) {
+      sidebarPanelRef.current.style.width = `${sidebarWidth}px`;
+    }
+  }, [sidebarWidth, sidebarCollapsed]);
 
   const scheduleAutoHide = () => {
     if (!autoHide) return;
@@ -650,12 +663,10 @@ export function Sidebar() {
 
   return (
     <aside
+      ref={asideRef}
       data-panel="sidebar"
       className="relative shrink-0 overflow-hidden border-r border-app-border bg-app-panel"
-      style={{
-        width: sidebarCollapsed ? 44 : sidebarWidth,
-        transition: animateWidth ? 'width 260ms cubic-bezier(0.4, 0, 0.2, 1)' : 'none',
-      }}
+      style={{ transition: animateWidth ? 'width 260ms cubic-bezier(0.4, 0, 0.2, 1)' : 'none' }}
       onMouseEnter={cancelAutoHide}
       onMouseLeave={scheduleAutoHide}
     >
@@ -686,11 +697,11 @@ export function Sidebar() {
       </div>
       {/* 完整面板层：折叠时淡出并被外层裁切 */}
       <div
+        ref={sidebarPanelRef}
         data-sidebar-panel
         className={`flex h-full flex-col transition-opacity duration-200 ${
           sidebarCollapsed ? 'pointer-events-none opacity-0' : 'opacity-100'
         }`}
-        style={{ width: sidebarWidth }}
         onDoubleClick={(e) => {
           if (!dblClickToggle) return;
           const t = e.target as HTMLElement;
