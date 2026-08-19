@@ -218,7 +218,7 @@ export function Inspector() {
         </div>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
-        {tab === 'literature' && <LiteraturePanel pdf={pdf} />}
+        {tab === 'literature' && <LiteraturePanel key={pdf.id} pdf={pdf} />}
         {tab === 'info' && <InfoPanel pdf={pdf} />}
         {tab === 'outline' && <InspectorOutline items={outline} />}
         {tab === 'notes' && <NotesPanel key={pdf.id} pdf={pdf} />}
@@ -431,7 +431,14 @@ function LiteraturePanel({ pdf }: { pdf: PdfRecord }) {
   const statusProbeRef = useRef<HTMLDivElement>(null);
   const [statusNarrow, setStatusNarrow] = useState(false);
 
-  useEffect(() => setDraft(meta), [meta]);
+  // 不再整份同步 meta 到草稿（会冲掉正在输入的其他字段）：
+  // 面板已按 pdf.id 重挂载，初始草稿即来自 meta；这里只跟随外部“阅读状态”变化
+  useEffect(() => {
+    if (!meta) return;
+    setDraft((d) =>
+      d && d.readingStatus !== meta.readingStatus ? { ...d, readingStatus: meta.readingStatus } : d,
+    );
+  }, [meta?.readingStatus]);
   useEffect(() => {
     window.pkm
       .getLiteratureReview(pdf.id)
@@ -448,7 +455,8 @@ function LiteraturePanel({ pdf }: { pdf: PdfRecord }) {
   const commit = async (patch: Partial<LiteratureMetadata>): Promise<boolean> => {
     try {
       const updated = await window.pkm.updateLiterature(pdf.id, patch);
-      setDraft(updated);
+      // 只把本次提交的字段合并进草稿，避免服务端整份返回覆盖其他字段正在输入的内容
+      setDraft((d) => ({ ...(d ?? ({} as LiteratureMetadata)), ...patch }));
       patchPdfLiterature(pdf.id, updated);
       markMetadataSaved();
       return true;

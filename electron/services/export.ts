@@ -103,9 +103,19 @@ async function writeXlsx(filePath: string, rows: ExportRow[]): Promise<void> {
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet('文献');
   ws.addRow(HEADERS);
-  ws.getRow(1).font = { bold: true };
+  // 字体：含中文的单元格用宋体，纯英文/数字用 Times New Roman
+  const cellFont = (value: string): { name: string } =>
+    /[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff]/.test(value)
+      ? { name: '宋体' }
+      : { name: 'Times New Roman' };
+  ws.getRow(1).eachCell((c) => {
+    c.font = { ...cellFont(String(c.value ?? '')), bold: true };
+  });
   for (const r of rows) {
-    ws.addRow(HEADERS.map((_, i) => cell(r, i)));
+    const row = ws.addRow(HEADERS.map((_, i) => cell(r, i)));
+    row.eachCell((c) => {
+      c.font = cellFont(String(c.value ?? ''));
+    });
   }
   // 自适应列宽：按内容最大长度估算（封顶 50，避免极端长文本撑爆）
   const widths = HEADERS.map((_, c) => {
