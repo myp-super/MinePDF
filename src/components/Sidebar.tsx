@@ -284,18 +284,27 @@ export function Sidebar() {
       : null;
   const statusCount = (s: 'unread' | 'reading' | 'read') =>
     pdfs.filter((p) => (p.literature?.readingStatus ?? 'unread') === s).length;
+  const statusFilters: Array<['all' | 'unread' | 'reading' | 'read', React.ReactNode]> = [
+    ['all', <LayoutList key="i" size={12} />],
+    ['unread', <Circle key="u" size={11} />],
+    ['reading', <BookOpen key="r" size={11} />],
+    ['read', <CheckCircle2 key="d" size={11} />],
+  ];
   /** 状态筛选行：空间不足时只留图标（用实际溢出判断，不换行） */
   const statusRowRef = useRef<HTMLDivElement>(null);
+  /** 稳定测量探针：始终包含完整文字，避免“隐藏文字→不再溢出→又显示文字”的无限振荡 */
+  const statusProbeRef = useRef<HTMLDivElement>(null);
   const [statusNarrow, setStatusNarrow] = useState(false);
   useEffect(() => {
     const el = statusRowRef.current;
-    if (!el) return;
-    const check = () => setStatusNarrow(el.scrollWidth > el.clientWidth + 4);
+    const probe = statusProbeRef.current;
+    if (!el || !probe) return;
+    const check = () => setStatusNarrow(probe.scrollWidth > el.clientWidth + 4);
     check();
     const ro = new ResizeObserver(check);
     ro.observe(el);
     return () => ro.disconnect();
-  }, [sidebarWidth]);
+  }, [sidebarWidth, pdfs.length]);
 
   const toggleExpanded = (id: number) =>
     setExpanded((s) => {
@@ -844,15 +853,28 @@ export function Sidebar() {
           </div>
         ) : (
           <>
-          <div ref={statusRowRef} className="mb-1.5 flex flex-nowrap items-center gap-1 overflow-hidden px-1.5">
-            {(
-              [
-                ['all', <LayoutList key="i" size={12} />],
-                ['unread', <Circle key="u" size={11} />],
-                ['reading', <BookOpen key="r" size={11} />],
-                ['read', <CheckCircle2 key="d" size={11} />],
-              ] as const
-            ).map(([f, icon]) => (
+          <div
+            ref={statusRowRef}
+            className="relative mb-1.5 flex flex-nowrap items-center gap-1 overflow-hidden px-1.5"
+          >
+            {/* 探针：与真实内容同款尺寸，始终完整显示，测量结果不受 statusNarrow 影响 */}
+            <div
+              ref={statusProbeRef}
+              aria-hidden
+              className="invisible pointer-events-none absolute inset-0 flex flex-nowrap items-center gap-1 overflow-hidden px-1.5"
+            >
+              {statusFilters.map(([f, icon]) => (
+                <span
+                  key={f}
+                  className="flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full border border-transparent px-2 py-0.5 text-[10px]"
+                >
+                  {icon}
+                  {t(`literature.${f}`)}
+                  {f !== 'all' && <span className="opacity-70">{statusCount(f)}</span>}
+                </span>
+              ))}
+            </div>
+            {statusFilters.map(([f, icon]) => (
               <button
                 key={f}
                 title={statusNarrow ? t(`literature.${f}`) : undefined}
