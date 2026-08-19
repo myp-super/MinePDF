@@ -1,7 +1,10 @@
 import {
+  BookOpen,
   BookMarked,
+  CheckCircle2,
   ChevronDown,
   ChevronRight,
+  Circle,
   Columns2,
   FileText,
   FilePlus2,
@@ -13,6 +16,7 @@ import {
   Inbox as InboxIcon,
   Library,
   LibraryBig,
+  LayoutList,
   PanelLeftClose,
   PanelLeftOpen,
   Plus,
@@ -145,6 +149,10 @@ export function Sidebar() {
   const setView = useApp((s) => s.setView);
   const tagFilterId = useApp((s) => s.tagFilterId);
   const setTagFilter = useApp((s) => s.setTagFilter);
+  const readingFilter = useApp((s) => s.readingFilter);
+  const setReadingFilter = useApp((s) => s.setReadingFilter);
+  const libraryQuery = useApp((s) => s.libraryQuery);
+  const setLibraryQuery = useApp((s) => s.setLibraryQuery);
   const selectedFolderId = useApp((s) => s.selectedFolderId);
   const setSelectedFolder = useApp((s) => s.setSelectedFolder);
   const openPdf = useApp((s) => s.openPdf);
@@ -161,7 +169,6 @@ export function Sidebar() {
   const inboxPdfs = useApp((s) => s.inboxPdfs);
   const setInboxPdfs = useApp((s) => s.setInboxPdfs);
 
-  const [query, setQuery] = useState('');
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   /** 排序模式：开启后拖拽只用于同级重排，不触发“移入文件夹” */
   const [sortMode, setSortMode] = useState<boolean>(
@@ -247,12 +254,35 @@ export function Sidebar() {
     });
   }, [libraries]);
 
-  const q = query.trim().toLowerCase();
+  const q = libraryQuery.trim().toLowerCase();
   const searchPdfs = q
-    ? pdfs.filter((p) => `${p.title} ${p.filename}`.toLowerCase().includes(q))
+    ? pdfs.filter((p) => {
+        const l = p.literature;
+        return `${p.title} ${p.filename} ${l?.title ?? ''} ${l?.authors ?? ''} ${l?.journal ?? ''} ${l?.conference ?? ''} ${l?.doi ?? ''} ${l?.keywords ?? ''} ${p.tags.map((t) => t.name).join(' ')}`
+          .toLowerCase()
+          .includes(q);
+      })
     : null;
   const tagPdfs =
     tagFilterId != null ? pdfs.filter((p) => p.tags.some((tg) => tg.id === tagFilterId)) : null;
+  const readingPdfs =
+    readingFilter !== 'all'
+      ? pdfs.filter((p) => (p.literature?.readingStatus ?? 'unread') === readingFilter)
+      : null;
+  const statusCount = (s: 'unread' | 'reading' | 'read') =>
+    pdfs.filter((p) => (p.literature?.readingStatus ?? 'unread') === s).length;
+  /** 状态筛选行：空间不足时只留图标（用实际溢出判断，不换行） */
+  const statusRowRef = useRef<HTMLDivElement>(null);
+  const [statusNarrow, setStatusNarrow] = useState(false);
+  useEffect(() => {
+    const el = statusRowRef.current;
+    if (!el) return;
+    const check = () => setStatusNarrow(el.scrollWidth > el.clientWidth + 4);
+    check();
+    const ro = new ResizeObserver(check);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [sidebarWidth]);
 
   const toggleExpanded = (id: number) =>
     setExpanded((s) => {
@@ -720,8 +750,8 @@ export function Sidebar() {
           <input
             className="h-7 w-full rounded-md border border-app-border bg-app-panel2 px-2.5 text-xs outline-none placeholder:text-app-muted focus:border-app-accent/70"
             placeholder={t('sidebar.filter')}
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            value={libraryQuery}
+            onChange={(e) => setLibraryQuery(e.target.value)}
           />
           <IconButton title={t('sidebar.newLibrary')} onClick={() => void createLibraryAndRename()}>
             <LibraryBig size={14} />
@@ -802,6 +832,36 @@ export function Sidebar() {
             ))}
           </div>
         ) : (
+          <>
+          <div ref={statusRowRef} className="mb-1.5 flex flex-nowrap items-center gap-1 overflow-hidden px-1.5">
+            {(
+              [
+                ['all', <LayoutList key="i" size={12} />],
+                ['unread', <Circle key="u" size={11} />],
+                ['reading', <BookOpen key="r" size={11} />],
+                ['read', <CheckCircle2 key="d" size={11} />],
+              ] as const
+            ).map(([f, icon]) => (
+              <button
+                key={f}
+                title={statusNarrow ? t(`literature.${f}`) : undefined}
+                className={`flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full border px-2 py-0.5 text-[10px] transition-colors ${
+                  readingFilter === f
+                    ? 'border-app-accent/60 bg-app-accent/15 text-app-text'
+                    : 'border-app-border text-app-muted hover:text-app-text'
+                }`}
+                onClick={() => setReadingFilter(f)}
+              >
+                {icon}
+                {!statusNarrow && (
+                  <>
+                    {t(`literature.${f}`)}
+                    {f !== 'all' && <span className="opacity-70">{statusCount(f)}</span>}
+                  </>
+                )}
+              </button>
+            ))}
+          </div>
           <div className="mt-0.5">
             {libraries.map((lib) => (
               <Fragment key={lib.id}>
@@ -912,6 +972,7 @@ export function Sidebar() {
               </div>
             )}
           </div>
+          </>
         )}
 
         {tagFilterId != null && (
@@ -936,6 +997,35 @@ export function Sidebar() {
                 onMenu={(x, y) => openPdfMenu(p, x, y)}
               />
             ))}
+          </div>
+        )}
+
+        {readingPdfs != null && (
+          <div className="mt-3 border-t border-app-border pt-2">
+            <div className="flex items-center justify-between px-1.5 pb-1">
+              <span className="text-[11px] font-medium text-app-muted">
+                {t(`literature.${readingFilter}`)}
+              </span>
+              <button
+                className="text-[10.5px] text-app-muted hover:text-app-text"
+                onClick={() => setReadingFilter('all')}
+              >
+                {t('sidebar.filterTag')}
+              </button>
+            </div>
+            {readingPdfs.length === 0 ? (
+              <p className="px-1.5 py-1 text-[10.5px] text-app-muted">{t('literature.emptyFilter')}</p>
+            ) : (
+              readingPdfs.map((p) => (
+                <PdfRow
+                  key={p.id}
+                  pdf={p}
+                  depth={0}
+                  onClick={() => openPdf(p.id)}
+                  onMenu={(x, y) => openPdfMenu(p, x, y)}
+                />
+              ))
+            )}
           </div>
         )}
       </div>

@@ -46,6 +46,94 @@ export interface PdfRecord {
   updatedAt: string;
   status: 'ok' | 'missing';
   tags: Tag[];
+  /** 科研文献元数据（可为空：尚未识别/手动添加） */
+  literature?: LiteratureMetadata | null;
+}
+
+/** 阅读状态：未读 → 阅读中（打开自动）→ 已读（手动标记） */
+export type ReadingStatus = 'unread' | 'reading' | 'read';
+
+/** 科研文献元数据（与 PDF 文件分离；documentId = pdfs.id） */
+export interface LiteratureMetadata {
+  pdfId: number;
+  title: string;
+  authors: string;
+  journal: string;
+  conference: string;
+  year: number | null;
+  volume: string;
+  issue: string;
+  pages: string;
+  doi: string;
+  url: string;
+  abstract: string;
+  keywords: string;
+  readingStatus: ReadingStatus;
+  /** 是否由自动识别产生（用户编辑后仍保留标记，仅作提示） */
+  autoDetected: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** 文献笔记（type: literature=阅读记录 / normal=普通笔记） */
+export interface LiteratureNote {
+  id: number;
+  pdfId: number;
+  type: 'literature' | 'normal';
+  title: string;
+  content: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** 笔记中的高亮引用：点击可跳回对应 PDF 页码（rect 为可选的精确坐标 JSON） */
+export interface NoteReference {
+  id: number;
+  noteId: number;
+  pdfId: number;
+  page: number;
+  text: string;
+  rect: string | null;
+  createdAt: string;
+}
+
+/** 结构化阅读记录：每个科研维度独立字段（便于检索/筛选/导出） */
+export interface LiteratureReview {
+  pdfId: number;
+  background: string;
+  researchQuestion: string;
+  existingMethods: string;
+  existingMethodProblems: string;
+  coreMethod: string;
+  innovations: string;
+  experiments: string;
+  limitations: string;
+  myUnderstanding: string;
+  myQuestions: string;
+  researchImplications: string;
+  oneSentenceSummary: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type LiteratureReviewField = Exclude<keyof LiteratureReview, 'pdfId' | 'createdAt' | 'updatedAt'>;
+export type ExportFormat = 'xlsx' | 'csv';
+
+/** 自动识别结果（可能为空字段，不允许静默覆盖用户已填内容） */
+export interface DetectedLiterature {
+  title?: string;
+  authors?: string;
+  journal?: string;
+  conference?: string;
+  year?: number;
+  volume?: string;
+  issue?: string;
+  pages?: string;
+  doi?: string;
+  abstract?: string;
+  keywords?: string;
+  /** high=DOI 解析成功；low=仅本地启发式 */
+  confidence: 'high' | 'low';
 }
 
 /** Markdown 笔记 */
@@ -280,6 +368,34 @@ export interface PkmApi {
   revealNoteFile(pdfId: number): Promise<void>;
   exportNoteToPdf(payload: { html: string; suggestedName: string }): Promise<string | null>;
   saveNoteImage(pdfId: number, dataUrl: string): Promise<string>;
+
+  getLiterature(pdfId: number): Promise<LiteratureMetadata | null>;
+  updateLiterature(pdfId: number, patch: Partial<LiteratureMetadata>): Promise<LiteratureMetadata>;
+  detectLiterature(pdfId: number): Promise<LiteratureMetadata | null>;
+  setReadingStatus(pdfId: number, status: ReadingStatus): Promise<LiteratureMetadata>;
+  getLiteratureNote(pdfId: number): Promise<LiteratureNote | null>;
+  createLiteratureNote(
+    pdfId: number,
+    title: string,
+    content: string,
+  ): Promise<LiteratureNote>;
+  saveLiteratureNote(id: number, content: string): Promise<LiteratureNote>;
+  listNoteReferences(noteId: number): Promise<NoteReference[]>;
+  addNoteReference(input: {
+    noteId: number;
+    pdfId: number;
+    page: number;
+    text: string;
+    rect: string | null;
+  }): Promise<NoteReference>;
+  getLiteratureReview(pdfId: number): Promise<LiteratureReview | null>;
+  saveLiteratureReviewField(
+    pdfId: number,
+    field: LiteratureReviewField,
+    value: string,
+  ): Promise<void>;
+  /** 导出文献（pdfIds 顺序即导出顺序），返回保存路径或 null（取消） */
+  exportLiterature(pdfIds: number[], format: ExportFormat): Promise<string | null>;
 
   listAnnotations(pdfId: number): Promise<AnnotationRecord[]>;
   createAnnotation(data: NewAnnotation): Promise<AnnotationRecord>;

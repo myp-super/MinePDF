@@ -1,9 +1,17 @@
 import { create } from 'zustand';
-import type { AppSettings, Folder, LibraryRecord, PdfRecord, Tag } from './shared/types';
+import type {
+  AppSettings,
+  Folder,
+  LibraryRecord,
+  LiteratureMetadata,
+  PdfRecord,
+  ReadingStatus,
+  Tag,
+} from './shared/types';
 import type { OutlineNode } from './lib/pdf';
 
 export type ViewMode = 'library' | 'settings';
-export type InspectorTab = 'meta' | 'outline' | 'notes' | 'annotations';
+export type InspectorTab = 'literature' | 'info' | 'outline' | 'notes' | 'annotations';
 
 export interface Toast {
   id: number;
@@ -75,8 +83,8 @@ const nextScreenId = (): string => `scr_${Date.now()}_${++idSeq}`;
 /** 根据书签缓存决定打开 PDF 时信息面板默认页 */
 function tabInspectorTab(s: AppState, pdf: PdfRecord | undefined): InspectorTab {
   const cached = s.outlines[pdf?.id ?? -1];
-  if (cached !== undefined) return cached.length > 0 ? 'outline' : 'notes';
-  return pdf?.hasOutline ? 'outline' : 'notes';
+  if (cached !== undefined) return cached.length > 0 ? 'outline' : 'literature';
+  return pdf?.hasOutline ? 'outline' : 'literature';
 }
 
 function saveSession(kind: 'library' | 'inbox', pdfId: number, page: number): LastSession {
@@ -145,6 +153,10 @@ interface AppState {
   selectedFolderId: number | null;
   selectedPdfIds: number[];
   tagFilterId: number | null;
+  /** 文献库阅读状态筛选：all / unread / reading / read */
+  readingFilter: 'all' | ReadingStatus;
+  /** 文献库搜索关键字（与导出“当前筛选结果”联动） */
+  libraryQuery: string;
   view: ViewMode;
   inspectorTab: InspectorTab;
   inspectorCollapsed: boolean;
@@ -186,6 +198,10 @@ interface AppState {
   toggleSelectedPdf: (id: number) => void;
   clearSelectedPdfs: () => void;
   setTagFilter: (id: number | null) => void;
+  setReadingFilter: (f: 'all' | ReadingStatus) => void;
+  setLibraryQuery: (q: string) => void;
+  /** 乐观更新某 PDF 的文献元数据（不重新拉全量） */
+  patchPdfLiterature: (pdfId: number, patch: Partial<LiteratureMetadata>) => void;
   setView: (v: ViewMode) => void;
   setInspectorTab: (t: InspectorTab) => void;
   toggleInspectorCollapsed: () => void;
@@ -231,8 +247,10 @@ export const useApp = create<AppState>((set, get) => ({
   selectedFolderId: null,
   selectedPdfIds: [],
   tagFilterId: null,
+  readingFilter: 'all',
+  libraryQuery: '',
   view: 'library',
-  inspectorTab: 'meta',
+  inspectorTab: 'literature',
   inspectorCollapsed: false,
   searchOpen: false,
   screenshotMode: false,
@@ -304,12 +322,17 @@ export const useApp = create<AppState>((set, get) => ({
    *  不跳转到其它屏，保证每个屏都能独立打开任意 PDF。 */
   openPdf: (id) => {
     if (id == null) {
-      set({ activePdfId: null, inspectorTab: 'meta' });
+      set({ activePdfId: null, inspectorTab: 'literature' });
       return;
     }
     const s = get();
     const pdf = s.pdfs.find((p) => p.id === id) ?? s.inboxPdfs.find((p) => p.id === id);
     if (!pdf) return;
+    // 科研工作流：未读 → 打开即自动转“阅读中”（不自动标已读）
+    if (pdf.literature?.readingStatus === 'unread') {
+      void window.pkm.setReadingStatus(pdf.id, 'reading').catch(() => undefined);
+      s.patchPdfLiterature(pdf.id, { readingStatus: 'reading' });
+    }
     const kind: 'library' | 'inbox' = s.inboxPdfs.some((p) => p.id === id) ? 'inbox' : 'library';
     // 当前选中屏新建标签；无屏则创建首个屏
     const screen = s.screens.find((sc) => sc.id === s.activeScreenId) ?? s.screens[0];
@@ -666,6 +689,17 @@ export const useApp = create<AppState>((set, get) => ({
     })),
   clearSelectedPdfs: () => set({ selectedPdfIds: [] }),
   setTagFilter: (id) => set({ tagFilterId: id }),
+  setReadingFilter: (f) => set({ readingFilter: f }),
+  setLibraryQuery: (q) => set({ libraryQuery: q }),
+  patchPdfLiterature: (pdfId, patch) =>
+    set((s) => ({
+      pdfs: s.pdfs.map((p) =>
+        p.id === pdfId && p.literature ? { ...p, literature: { ...p.literature, ...patch } } : p,
+      ),
+      inboxPdfs: s.inboxPdfs.map((p) =>
+        p.id === pdfId && p.literature ? { ...p, literature: { ...p.literature, ...patch } } : p,
+      ),
+    })),
   setView: (v) => set({ view: v }),
   setInspectorTab: (t) => set({ inspectorTab: t }),
   toggleInspectorCollapsed: () => set((s) => ({ inspectorCollapsed: !s.inspectorCollapsed })),

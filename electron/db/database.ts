@@ -357,6 +357,203 @@ function migrateNoteFolders(db: Database.Database): void {
 }
 
 /**
+ * user_version < 8：为所有既有 PDF 补一条文献元数据（documentId = pdfs.id），
+ * 标题沿用文件标题，阅读状态默认未读。幂等：已存在的行不重复创建。
+ */
+function backfillLiterature(db: Database.Database): void {
+  const t = new Date().toISOString();
+  db.prepare(
+    `INSERT OR IGNORE INTO literature_metadata
+       (pdf_id, title, reading_status, created_time, updated_time)
+     SELECT id, title, 'unread', ?, ? FROM pdfs`,
+  ).run(t, t);
+}
+
+/** 解析旧版「文献阅读记录」Markdown（尽力而为，失败留空不丢数据） */
+function parseReviewMarkdown(md: string): {
+  fields: Record<string, string>;
+  meta: Record<string, string>;
+} {
+  const fields: Record<string, string> = {};
+  const meta: Record<string, string> = {};
+  const sectionOf: Record<string, string> = {
+    研究背景: 'background',
+    研究问题: 'research_question',
+    现有方法的问题: 'existing_method_problems',
+    现有方法: 'existing_methods',
+    核心方法: 'core_method',
+    主要创新: 'innovations',
+    实验与结果: 'experiments',
+    论文局限: 'limitations',
+    我的理解: 'my_understanding',
+    我的疑问: 'my_questions',
+    对我的研究的启发: 'research_implications',
+    一句话总结: 'one_sentence_summary',
+  };
+  const prompts = [
+    '这篇论文为什么要研究这个问题',
+    '作者真正想解决什么问题',
+    '目前通常采用什么方法',
+    '现有方法有什么不足',
+    '作者提出了什么方法',
+    '作者相比已有工作做了什么改进',
+    '作者存在什么局限',
+    '这篇论文真正解决了什么问题',
+    '我哪里没有完全理解',
+    '这篇论文',
+  ];
+  for (const [cn, field] of Object.entries(sectionOf)) {
+    const re = new RegExp(
+      `##\\s*(?:[一二三四五六七八九十]+、)?${cn}\\s*\\n([\\s\\S]*?)(?=\\n##|\\n#\\s|$)`,
+    );
+    const m = re.exec(md);
+    if (m) {
+      const lines = m[1]
+        .split('\n')
+        .map((l) => l.trim())
+        .filter((l) => l && !prompts.some((p) => l.startsWith(p)));
+      fields[field] = lines.join('\n');
+    }
+  }
+  const metaRe = /\*\*(标题|作者|期刊\s*\/\s*会议|年份|DOI)：\*\*(.+)/g;
+  let mm = metaRe.exec(md);
+  while (mm) {
+    const key = mm[1].replace(/\s+/g, '');
+    const val = mm[2].trim();
+    if (key === '标题') meta.title = val;
+    else if (key === '作者') meta.authors = val;
+    else if (key === '期刊/会议') meta.journal = val;
+    else if (key === '年份') meta.year = val;
+    else if (key === 'DOI') meta.doi = val;
+    mm = metaRe.exec(md);
+  }
+  return { fields, meta };
+}
+
+/**
+ * user_version < 9：
+ * 1) 旧「文献阅读记录」Markdown → 结构化 literature_review（原 Markdown 保留在 literature_notes）；
+ * 2) 解析出的标题/作者/期刊/年份/DOI 填空 literature_metadata；
+ * 3) note_references 改绑 notes 表（尽力保留原引用 id，旧链接不失效）。
+ */
+function migrateStructuredReview(db: Database.Database): void {
+  const t = new Date().toISOString();
+  const litNotes = (
+    db.prepare("SELECT pdf_id, content FROM literature_notes WHERE type = 'literature'").all() as Array<
+      Record<string, unknown>
+    >
+  ).map((r) => ({ pdfId: Number(r.pdf_id), md: String(r.content ?? '') }));
+
+  for (const { pdfId, md } of litNotes) {
+    const { fields, meta } = parseReviewMarkdown(md);
+    const exists = db
+      .prepare('SELECT pdf_id FROM literature_review WHERE pdf_id = ?')
+      .get(pdfId) as Record<string, unknown> | undefined;
+    if (!exists) {
+      db.prepare(
+        `INSERT INTO literature_review
+           (pdf_id, background, research_question, existing_methods, existing_method_problems,
+            core_method, innovations, experiments, limitations, my_understanding, my_questions,
+            research_implications, one_sentence_summary, created_time, updated_time)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        pdfId,
+        fields.background ?? '',
+        fields.research_question ?? '',
+        fields.existing_methods ?? '',
+        fields.existing_method_problems ?? '',
+        fields.core_method ?? '',
+        fields.innovations ?? '',
+        fields.experiments ?? '',
+        fields.limitations ?? '',
+        fields.my_understanding ?? '',
+        fields.my_questions ?? '',
+        fields.research_implications ?? '',
+        fields.one_sentence_summary ?? '',
+        t,
+        t,
+      );
+    }
+    // 解析出的基本信息填空 metadata（不覆盖已有）
+    const row = db
+      .prepare('SELECT * FROM literature_metadata WHERE pdf_id = ?')
+      .get(pdfId) as Record<string, unknown> | undefined;
+    if (row && (meta.title || meta.authors || meta.journal || meta.year || meta.doi)) {
+      db.prepare(
+        `UPDATE literature_metadata SET
+           title = CASE WHEN title IS NULL OR title = '' THEN ? ELSE title END,
+           authors = CASE WHEN authors IS NULL OR authors = '' THEN ? ELSE authors END,
+           journal = CASE WHEN journal IS NULL OR journal = '' THEN ? ELSE journal END,
+           year = CASE WHEN year IS NULL THEN ? ELSE year END,
+           doi = CASE WHEN doi IS NULL OR doi = '' THEN ? ELSE doi END,
+           updated_time = ?
+         WHERE pdf_id = ?`,
+      ).run(
+        meta.title ?? row.title ?? '',
+        meta.authors ?? row.authors ?? '',
+        meta.journal ?? row.journal ?? '',
+        meta.year ? Number(meta.year) : row.year,
+        meta.doi ?? row.doi ?? '',
+        t,
+        pdfId,
+      );
+    }
+    // 旧 Markdown 阅读记录 → 普通笔记（若普通笔记为空），保证旧内容在「笔记」Tab 仍可打开
+    if (md.trim()) {
+      const normal = db
+        .prepare('SELECT markdown FROM notes WHERE pdf_id = ?')
+        .get(pdfId) as Record<string, unknown> | undefined;
+      if (!normal || !String(normal.markdown ?? '').trim()) {
+        db.prepare(
+          `INSERT INTO notes (pdf_id, markdown, updated_time) VALUES (?, ?, ?)
+           ON CONFLICT(pdf_id) DO UPDATE SET markdown = excluded.markdown, updated_time = excluded.updated_time`,
+        ).run(pdfId, md, t);
+      }
+    }
+  }
+
+  // note_references 重建：FK literature_notes → notes，尽力保留原 id
+  const refs = (
+    db.prepare('SELECT * FROM note_references').all() as Array<Record<string, unknown>>
+  ).map((r) => ({
+    id: Number(r.id),
+    noteId: Number(r.note_id),
+    pdfId: Number(r.pdf_id),
+    page: Number(r.page),
+    text: String(r.text ?? ''),
+    rect: r.rect ? String(r.rect) : null,
+    created: String(r.created_time),
+  }));
+  db.exec('DROP TABLE note_references');
+  db.exec(
+    `CREATE TABLE note_references (
+       id INTEGER PRIMARY KEY AUTOINCREMENT,
+       note_id INTEGER NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+       pdf_id INTEGER NOT NULL REFERENCES pdfs(id) ON DELETE CASCADE,
+       page INTEGER NOT NULL,
+       text TEXT NOT NULL DEFAULT '',
+       rect TEXT,
+       created_time TEXT NOT NULL
+     )`,
+  );
+  for (const r of refs) {
+    const oldNote = db
+      .prepare('SELECT pdf_id FROM literature_notes WHERE id = ?')
+      .get(r.noteId) as Record<string, unknown> | undefined;
+    if (!oldNote) continue;
+    const notesRow = db
+      .prepare('SELECT id FROM notes WHERE pdf_id = ?')
+      .get(Number(oldNote.pdf_id)) as Record<string, unknown> | undefined;
+    if (!notesRow) continue;
+    db.prepare(
+      `INSERT INTO note_references (id, note_id, pdf_id, page, text, rect, created_time)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    ).run(r.id, Number(notesRow.id), r.pdfId, r.page, r.text, r.rect, r.created);
+  }
+  db.exec('CREATE INDEX IF NOT EXISTS idx_note_refs_note ON note_references(note_id)');
+}
+
+/**
  * After the legacy data dir (PDFKnowledgeManager) is renamed to MinePDF,
  * rewrite stored pdfs.filepath values that still point at the old root.
  */
@@ -449,6 +646,8 @@ export function initDatabase(): void {
     migrateSchema(db);
     migrateNoteFolders(db);
     remapLegacyPdfPaths(db);
+    if (verBefore < 8) backfillLiterature(db);
+    if (verBefore < 9) migrateStructuredReview(db);
     if (verBefore < 4) materializeLegacyFolders();
   } catch (err) {
     try {
@@ -470,6 +669,8 @@ export function initDatabase(): void {
     migrateSchema(db);
     migrateNoteFolders(db);
     remapLegacyPdfPaths(db);
+    if (verBefore < 8) backfillLiterature(db);
+    if (verBefore < 9) migrateStructuredReview(db);
     if (verBefore < 4) materializeLegacyFolders();
   }
 }

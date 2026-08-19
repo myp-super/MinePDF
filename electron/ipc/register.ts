@@ -7,14 +7,18 @@ import type {
   AnnotationRecord,
   AppInfo,
   AppSettings,
+  ExportFormat,
   ImportResult,
   LibraryRecord,
+  LiteratureMetadata,
+  LiteratureReviewField,
   NewAnnotation,
   PdfRecord,
   PdfiumLink,
   PdfiumChar,
   PdfiumOpenResult,
   PdfiumRenderResult,
+  ReadingStatus,
   SearchResult,
 } from '../../src/shared/types';
 import { getDataDir, getLibraryPdfDir, getLibraryRoot } from '../db/database';
@@ -23,6 +27,8 @@ import { backupData } from '../services/backup';
 import { importPdfs } from '../services/import';
 import { scanLibrary } from '../services/libraryWatcher';
 import { getSettings, updateSettings } from '../services/settings';
+import { detectAndSave } from '../services/literature';
+import { exportLiterature } from '../services/export';
 import { checkForUpdates, downloadUpdate } from '../services/updater';
 import {
   isPdfiumAvailable,
@@ -498,6 +504,35 @@ export function registerIpc(): void {
   handle('tag:remove', (pdfId: number, tagId: number) => repository.removeTagFromPdf(pdfId, tagId));
   handle('tag:delete', (tagId: number) => repository.deleteTag(tagId));
   handle('tag:rename', (tagId: number, newName: string) => repository.renameTag(tagId, newName));
+
+  // ---------- 文献（科研工作流） ----------
+  handle('literature:get', (pdfId: number) => repository.getLiterature(pdfId));
+  handle('literature:update', (pdfId: number, patch: Partial<LiteratureMetadata>) =>
+    repository.upsertLiterature(pdfId, patch),
+  );
+  handle('literature:detect', async (pdfId: number) => detectAndSave(pdfId));
+  handle('literature:set-reading-status', (pdfId: number, status: ReadingStatus) =>
+    repository.setReadingStatus(pdfId, status),
+  );
+  handle('litnote:get', (pdfId: number) => repository.getLiteratureNote(pdfId));
+  handle('litnote:create', (pdfId: number, title: string, content: string) =>
+    repository.createLiteratureNote(pdfId, title, content),
+  );
+  handle('litnote:save', (id: number, content: string) => repository.saveLiteratureNote(id, content));
+  handle('litnote:list-refs', (noteId: number) => repository.listNoteReferences(noteId));
+  handle('litnote:add-ref', (input: Parameters<typeof repository.addNoteReference>[0]) =>
+    repository.addNoteReference(input),
+  );
+  handle('litreview:get', (pdfId: number) => repository.getLiteratureReview(pdfId));
+  handle(
+    'litreview:save-field',
+    (pdfId: number, field: LiteratureReviewField, value: string) =>
+      repository.saveLiteratureReviewField(pdfId, field, value),
+  );
+  handle(
+    'literature:export',
+    async (pdfIds: number[], format: ExportFormat) => exportLiterature(pdfIds, format),
+  );
 
   // ---------- 笔记 ----------
   handle('note:get', (pdfId: number) => repository.getNote(pdfId));

@@ -94,7 +94,7 @@ export async function importPdfs(
       return;
     }
     const st = await fs.promises.stat(filePath);
-    repository.insertPdf({
+    const created = repository.insertPdf({
       filename: path.basename(filePath),
       filepath: filePath,
       title: path.basename(filePath).replace(/\.pdf$/i, ''),

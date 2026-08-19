@@ -94,6 +94,21 @@ const api: PkmApi = {
   exportNoteToPdf: (payload) => invoke('note:export-pdf', payload),
   saveNoteImage: (pdfId, dataUrl) => invoke('note:save-image', pdfId, dataUrl),
 
+  getLiterature: (pdfId) => invoke('literature:get', pdfId),
+  updateLiterature: (pdfId, patch) => invoke('literature:update', pdfId, patch),
+  detectLiterature: (pdfId) => invoke('literature:detect', pdfId),
+  setReadingStatus: (pdfId, status) => invoke('literature:set-reading-status', pdfId, status),
+  getLiteratureNote: (pdfId) => invoke('litnote:get', pdfId),
+  createLiteratureNote: (pdfId, title, content) =>
+    invoke('litnote:create', pdfId, title, content),
+  saveLiteratureNote: (id, content) => invoke('litnote:save', id, content),
+  listNoteReferences: (noteId) => invoke('litnote:list-refs', noteId),
+  addNoteReference: (input) => invoke('litnote:add-ref', input),
+  getLiteratureReview: (pdfId) => invoke('litreview:get', pdfId),
+  saveLiteratureReviewField: (pdfId, field, value) =>
+    invoke('litreview:save-field', pdfId, field, value),
+  exportLiterature: (pdfIds, format) => invoke('literature:export', pdfIds, format),
+
   listAnnotations: (pdfId) => invoke('annotation:list', pdfId),
   createAnnotation: (data) => invoke('annotation:create', data),
   updateAnnotation: (id, patch) => invoke('annotation:update', id, patch),

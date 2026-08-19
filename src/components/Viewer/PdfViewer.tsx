@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronDown } from 'lucide-react';
+import { BookOpen, ChevronDown } from 'lucide-react';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import type { AnnotationRecord, PdfiumOpenResult, PdfRecord, Quad } from '../../shared/types';
 import { useT, useTError } from '../../i18n';
@@ -1305,6 +1305,30 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
     }
   };
 
+  /** 高亮 → 添加到文献阅读记录（自动创建记录，插入原文 + 可回跳引用） */
+  const addHighlightToNote = async (a: AnnotationRecord) => {
+    try {
+      let note = await window.pkm.getNote(pdf.id);
+      if (!note) note = await window.pkm.saveNote(pdf.id, '');
+      const ref = await window.pkm.addNoteReference({
+        noteId: note.id,
+        pdfId: pdf.id,
+        page: a.page,
+        text: a.content,
+        rect: a.position,
+      });
+      await window.pkm.saveNote(
+        pdf.id,
+        `${note.markdown}\n> ${a.content}\n\n[PDF · Page ${a.page}](minepdf://ref/${ref.id})\n`,
+      );
+      useApp.getState().setInspectorTab('notes');
+      useApp.getState().bumpNoteRevision();
+      toast('success', t('viewer.addedToNote'));
+    } catch (err) {
+      toast('error', terr(err instanceof Error ? err.message : String(err)));
+    }
+  };
+
   // Delete/Backspace 删除选中的高亮
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -1682,6 +1706,14 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
           y={annMenu.y}
           onClose={() => setAnnMenu(null)}
           items={[
+            {
+              label: t('viewer.addToNote'),
+              icon: <BookOpen size={12} />,
+              onClick: () => {
+                void addHighlightToNote(annMenu.a);
+                setAnnMenu(null);
+              },
+            },
             {
               label: t('viewer.editNote'),
               onClick: () => {

@@ -4,10 +4,16 @@ import type {
   AnnotationRecord,
   Folder,
   LibraryRecord,
+  LiteratureMetadata,
+  LiteratureNote,
+  LiteratureReview,
+  LiteratureReviewField,
   NewAnnotation,
   NoteRecord,
+  NoteReference,
   PdfRecord,
   Quad,
+  ReadingStatus,
   Tag,
 } from '../../src/shared/types';
 import { getDataDir, getDb, getInboxDir, getLibraryPdfDir } from './database';
@@ -53,6 +59,50 @@ const mapPdf = (r: Row): PdfRecord => ({
   updatedAt: String(r.updated_time),
   status: r.status === 'missing' ? 'missing' : 'ok',
   tags: [],
+});
+
+const mapLiterature = (r: Row): LiteratureMetadata => ({
+  pdfId: Number(r.pdf_id),
+  title: String(r.title ?? ''),
+  authors: String(r.authors ?? ''),
+  journal: String(r.journal ?? ''),
+  conference: String(r.conference ?? ''),
+  year: r.year == null ? null : Number(r.year),
+  volume: String(r.volume ?? ''),
+  issue: String(r.issue ?? ''),
+  pages: String(r.pages ?? ''),
+  doi: String(r.doi ?? ''),
+  url: String(r.url ?? ''),
+  abstract: String(r.abstract ?? ''),
+  keywords: String(r.keywords ?? ''),
+  readingStatus: (
+    ['unread', 'reading', 'read'].includes(String(r.reading_status))
+      ? String(r.reading_status)
+      : 'unread'
+  ) as ReadingStatus,
+  autoDetected: Number(r.auto_detected ?? 0) === 1,
+  createdAt: String(r.created_time),
+  updatedAt: String(r.updated_time),
+});
+
+const mapLiteratureNote = (r: Row): LiteratureNote => ({
+  id: Number(r.id),
+  pdfId: Number(r.pdf_id),
+  type: r.type === 'normal' ? 'normal' : 'literature',
+  title: String(r.title ?? ''),
+  content: String(r.content ?? ''),
+  createdAt: String(r.created_time),
+  updatedAt: String(r.updated_time),
+});
+
+const mapNoteReference = (r: Row): NoteReference => ({
+  id: Number(r.id),
+  noteId: Number(r.note_id),
+  pdfId: Number(r.pdf_id),
+  page: Number(r.page),
+  text: String(r.text ?? ''),
+  rect: r.rect ? String(r.rect) : null,
+  createdAt: String(r.created_time),
 });
 
 function now(): string {
@@ -607,7 +657,30 @@ export const repository = {
       byPdf.get(pid)!.push(mapTag(r));
     }
     for (const p of list) p.tags = byPdf.get(p.id) ?? [];
+    this.attachLiteratureAll(list);
     return list;
+  },
+
+  /** 批量挂载文献元数据（单次查询，避免 N+1） */
+  attachLiteratureAll(pdfs: PdfRecord[]): void {
+    if (!pdfs.length) return;
+    const db = getDb();
+    const placeholders = pdfs.map(() => '?').join(',');
+    const rows = db
+      .prepare(`SELECT * FROM literature_metadata WHERE pdf_id IN (${placeholders})`)
+      .all(...pdfs.map((p) => p.id)) as Row[];
+    const byId = new Map<number, LiteratureMetadata>();
+    for (const r of rows) byId.set(Number(r.pdf_id), mapLiterature(r));
+    for (const p of pdfs) p.literature = byId.get(p.id) ?? null;
+  },
+
+  attachLiterature(pdf: PdfRecord): PdfRecord {
+    const db = getDb();
+    const r = db
+      .prepare('SELECT * FROM literature_metadata WHERE pdf_id = ?')
+      .get(pdf.id) as Row | undefined;
+    pdf.literature = r ? mapLiterature(r) : null;
+    return pdf;
   },
 
   getAllFilepaths(): string[] {
@@ -657,6 +730,7 @@ export const repository = {
     if (!r) return null;
     const pdf = mapPdf(r);
     pdf.tags = this.getTagsForPdf(id);
+    this.attachLiterature(pdf);
     return pdf;
   },
 
@@ -791,6 +865,7 @@ export const repository = {
       db.prepare("SELECT * FROM pdfs WHERE scope = 'inbox' ORDER BY created_time DESC").all() as Row[]
     ).map(mapPdf);
     for (const p of list) p.tags = this.getTagsForPdf(p.id);
+    this.attachLiteratureAll(list);
     return list;
   },
 
@@ -907,6 +982,193 @@ export const repository = {
     }
     db.prepare('UPDATE tags SET name = ? WHERE id = ?').run(name, tagId);
     return this.getTagById(tagId);
+  },
+
+  // ---------- 文献元数据 / 文献笔记 / 引用 ----------
+  getLiterature(pdfId: number): LiteratureMetadata | null {
+    const db = getDb();
+    const r = db
+      .prepare('SELECT * FROM literature_metadata WHERE pdf_id = ?')
+      .get(pdfId) as Row | undefined;
+    return r ? mapLiterature(r) : null;
+  },
+
+  /** 增量更新文献元数据：只覆盖 patch 中出现的字段，不静默清空未提供的字段 */
+  upsertLiterature(pdfId: number, patch: Partial<LiteratureMetadata>): LiteratureMetadata {
+    const db = getDb();
+    const existing = this.getLiterature(pdfId);
+    const t = now();
+    const base = existing ?? {
+      title: '',
+      authors: '',
+      journal: '',
+      conference: '',
+      year: null,
+      volume: '',
+      issue: '',
+      pages: '',
+      doi: '',
+      url: '',
+      abstract: '',
+      keywords: '',
+      readingStatus: 'unread' as ReadingStatus,
+      autoDetected: false,
+    };
+    const next = { ...base, ...patch };
+    db.prepare(
+      `INSERT INTO literature_metadata
+         (pdf_id, title, authors, journal, conference, year, volume, issue, pages,
+          doi, url, abstract, keywords, reading_status, auto_detected, created_time, updated_time)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(pdf_id) DO UPDATE SET
+         title = excluded.title, authors = excluded.authors, journal = excluded.journal,
+         conference = excluded.conference, year = excluded.year, volume = excluded.volume,
+         issue = excluded.issue, pages = excluded.pages, doi = excluded.doi, url = excluded.url,
+         abstract = excluded.abstract, keywords = excluded.keywords,
+         reading_status = excluded.reading_status, auto_detected = excluded.auto_detected,
+         updated_time = excluded.updated_time`,
+    ).run(
+      pdfId,
+      String(next.title ?? ''),
+      String(next.authors ?? ''),
+      String(next.journal ?? ''),
+      String(next.conference ?? ''),
+      next.year == null ? null : Number(next.year),
+      String(next.volume ?? ''),
+      String(next.issue ?? ''),
+      String(next.pages ?? ''),
+      String(next.doi ?? ''),
+      String(next.url ?? ''),
+      String(next.abstract ?? ''),
+      String(next.keywords ?? ''),
+      next.readingStatus ?? 'unread',
+      next.autoDetected ? 1 : 0,
+      existing?.createdAt ?? t,
+      t,
+    );
+    return this.getLiterature(pdfId)!;
+  },
+
+  setReadingStatus(pdfId: number, status: ReadingStatus): LiteratureMetadata {
+    return this.upsertLiterature(pdfId, { readingStatus: status });
+  },
+
+  getLiteratureNote(pdfId: number): LiteratureNote | null {
+    const db = getDb();
+    const r = db
+      .prepare(
+        "SELECT * FROM literature_notes WHERE pdf_id = ? AND type = 'literature' ORDER BY id LIMIT 1",
+      )
+      .get(pdfId) as Row | undefined;
+    return r ? mapLiteratureNote(r) : null;
+  },
+
+  createLiteratureNote(pdfId: number, title: string, content: string): LiteratureNote {
+    const db = getDb();
+    const t = now();
+    const res = db
+      .prepare(
+        `INSERT INTO literature_notes (pdf_id, type, title, content, created_time, updated_time)
+         VALUES (?, 'literature', ?, ?, ?, ?)`,
+      )
+      .run(pdfId, title, content, t, t);
+    const row = db
+      .prepare('SELECT * FROM literature_notes WHERE id = ?')
+      .get(res.lastInsertRowid) as Row;
+    return mapLiteratureNote(row);
+  },
+
+  saveLiteratureNote(id: number, content: string): LiteratureNote {
+    const db = getDb();
+    db.prepare('UPDATE literature_notes SET content = ?, updated_time = ? WHERE id = ?').run(
+      content,
+      now(),
+      id,
+    );
+    const row = db.prepare('SELECT * FROM literature_notes WHERE id = ?').get(id) as Row | undefined;
+    if (!row) throw new Error('文献笔记不存在');
+    return mapLiteratureNote(row);
+  },
+
+  listNoteReferences(noteId: number): NoteReference[] {
+    const db = getDb();
+    const rows = db
+      .prepare('SELECT * FROM note_references WHERE note_id = ? ORDER BY id')
+      .all(noteId) as Row[];
+    return rows.map(mapNoteReference);
+  },
+
+  addNoteReference(input: {
+    noteId: number;
+    pdfId: number;
+    page: number;
+    text: string;
+    rect: string | null;
+  }): NoteReference {
+    const db = getDb();
+    const res = db
+      .prepare(
+        `INSERT INTO note_references (note_id, pdf_id, page, text, rect, created_time)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .run(input.noteId, input.pdfId, input.page, input.text, input.rect, now());
+    const row = db
+      .prepare('SELECT * FROM note_references WHERE id = ?')
+      .get(res.lastInsertRowid) as Row;
+    return mapNoteReference(row);
+  },
+
+  // ---------- 结构化阅读记录 ----------
+  getLiteratureReview(pdfId: number): LiteratureReview | null {
+    const db = getDb();
+    const r = db
+      .prepare('SELECT * FROM literature_review WHERE pdf_id = ?')
+      .get(pdfId) as Row | undefined;
+    if (!r) return null;
+    return {
+      pdfId: Number(r.pdf_id),
+      background: String(r.background ?? ''),
+      researchQuestion: String(r.research_question ?? ''),
+      existingMethods: String(r.existing_methods ?? ''),
+      existingMethodProblems: String(r.existing_method_problems ?? ''),
+      coreMethod: String(r.core_method ?? ''),
+      innovations: String(r.innovations ?? ''),
+      experiments: String(r.experiments ?? ''),
+      limitations: String(r.limitations ?? ''),
+      myUnderstanding: String(r.my_understanding ?? ''),
+      myQuestions: String(r.my_questions ?? ''),
+      researchImplications: String(r.research_implications ?? ''),
+      oneSentenceSummary: String(r.one_sentence_summary ?? ''),
+      createdAt: String(r.created_time),
+      updatedAt: String(r.updated_time),
+    };
+  },
+
+  /** 保存单个结构化字段（白名单映射列名，防注入；无记录则自动创建） */
+  saveLiteratureReviewField(pdfId: number, field: LiteratureReviewField, value: string): void {
+    const db = getDb();
+    const colMap: Record<LiteratureReviewField, string> = {
+      background: 'background',
+      researchQuestion: 'research_question',
+      existingMethods: 'existing_methods',
+      existingMethodProblems: 'existing_method_problems',
+      coreMethod: 'core_method',
+      innovations: 'innovations',
+      experiments: 'experiments',
+      limitations: 'limitations',
+      myUnderstanding: 'my_understanding',
+      myQuestions: 'my_questions',
+      researchImplications: 'research_implications',
+      oneSentenceSummary: 'one_sentence_summary',
+    };
+    const col = colMap[field];
+    if (!col) return;
+    const t = now();
+    db.prepare(
+      `INSERT INTO literature_review (pdf_id, ${col}, created_time, updated_time)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(pdf_id) DO UPDATE SET ${col} = excluded.${col}, updated_time = excluded.updated_time`,
+    ).run(pdfId, value, t, t);
   },
 
   // ---------- notes ----------
@@ -1085,29 +1347,44 @@ export const repository = {
     const like = `%${q}%`;
     const pdfRows = db
       .prepare(
-        `SELECT * FROM pdfs WHERE scope = 'library' AND (title LIKE ? OR filename LIKE ?) ORDER BY updated_time DESC LIMIT 50`,
+        `SELECT p.* FROM pdfs p
+         LEFT JOIN literature_metadata lm ON lm.pdf_id = p.id
+         WHERE p.scope = 'library' AND (
+           p.title LIKE ? OR p.filename LIKE ? OR lm.title LIKE ? OR lm.authors LIKE ?
+           OR lm.journal LIKE ? OR lm.conference LIKE ? OR lm.doi LIKE ? OR lm.keywords LIKE ?
+         )
+         ORDER BY p.updated_time DESC LIMIT 50`,
       )
-      .all(like, like) as Row[];
+      .all(like, like, like, like, like, like, like, like) as Row[];
     const pdfs = pdfRows.map(mapPdf);
     for (const p of pdfs) p.tags = this.getTagsForPdf(p.id);
+    this.attachLiteratureAll(pdfs);
 
-    const noteRows = db
+    const normalNoteRows = db
       .prepare(
         `SELECT p.*, n.markdown AS markdown FROM notes n JOIN pdfs p ON p.id = n.pdf_id AND p.scope = 'library'
          WHERE n.markdown LIKE ? ORDER BY n.updated_time DESC LIMIT 50`,
       )
       .all(like) as Row[];
-    const notes = noteRows.map((r) => {
-      const pdf = mapPdf(r);
-      pdf.tags = this.getTagsForPdf(pdf.id);
-      const md = String(r.markdown);
+    const litNoteRows = db
+      .prepare(
+        `SELECT p.*, ln.content AS markdown FROM literature_notes ln JOIN pdfs p ON p.id = ln.pdf_id AND p.scope = 'library'
+         WHERE ln.content LIKE ? ORDER BY ln.updated_time DESC LIMIT 50`,
+      )
+      .all(like) as Row[];
+    const makeSnippet = (md: string): string => {
       const idx = md.toLowerCase().indexOf(q.toLowerCase());
       const start = Math.max(0, idx - 60);
       const end = Math.min(md.length, idx + q.length + 80);
-      const snippet =
+      return (
         (idx >= 0 ? (start > 0 ? '…' : '') + md.slice(start, end) : md.slice(0, 140)) +
-        (end < md.length ? '…' : '');
-      return { pdf, snippet };
+        (end < md.length ? '…' : '')
+      );
+    };
+    const notes = [...normalNoteRows, ...litNoteRows].map((r) => {
+      const pdf = mapPdf(r);
+      pdf.tags = this.getTagsForPdf(pdf.id);
+      return { pdf, snippet: makeSnippet(String(r.markdown)) };
     });
 
     const tagRows = db

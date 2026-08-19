@@ -70,11 +70,75 @@ CREATE TABLE IF NOT EXISTS annotations (
   updated_time TEXT NOT NULL
 );
 
+-- 文献元数据（科研文献层，与 PDF 文件分离；documentId = pdfs.id）
+CREATE TABLE IF NOT EXISTS literature_metadata (
+  pdf_id INTEGER PRIMARY KEY REFERENCES pdfs(id) ON DELETE CASCADE,
+  title TEXT,
+  authors TEXT,
+  journal TEXT,
+  conference TEXT,
+  year INTEGER,
+  volume TEXT,
+  issue TEXT,
+  pages TEXT,
+  doi TEXT,
+  url TEXT,
+  abstract TEXT,
+  keywords TEXT,
+  reading_status TEXT NOT NULL DEFAULT 'unread',
+  auto_detected INTEGER NOT NULL DEFAULT 0,
+  created_time TEXT NOT NULL,
+  updated_time TEXT NOT NULL
+);
+
+-- 文献笔记（一篇文献可有多份；type: literature=阅读记录 / normal=普通笔记）
+CREATE TABLE IF NOT EXISTS literature_notes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  pdf_id INTEGER NOT NULL REFERENCES pdfs(id) ON DELETE CASCADE,
+  type TEXT NOT NULL DEFAULT 'literature',
+  title TEXT NOT NULL DEFAULT '',
+  content TEXT NOT NULL DEFAULT '',
+  created_time TEXT NOT NULL,
+  updated_time TEXT NOT NULL
+);
+
+-- 笔记中的高亮引用（点击可跳回 PDF 页码，rect 为可选的精确坐标）
+CREATE TABLE IF NOT EXISTS note_references (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  note_id INTEGER NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+  pdf_id INTEGER NOT NULL REFERENCES pdfs(id) ON DELETE CASCADE,
+  page INTEGER NOT NULL,
+  text TEXT NOT NULL DEFAULT '',
+  rect TEXT,
+  created_time TEXT NOT NULL
+);
+
+-- 结构化阅读记录（一篇文献一份，字段独立存储，便于检索/筛选/导出）
+CREATE TABLE IF NOT EXISTS literature_review (
+  pdf_id INTEGER PRIMARY KEY REFERENCES pdfs(id) ON DELETE CASCADE,
+  background TEXT NOT NULL DEFAULT '',
+  research_question TEXT NOT NULL DEFAULT '',
+  existing_methods TEXT NOT NULL DEFAULT '',
+  existing_method_problems TEXT NOT NULL DEFAULT '',
+  core_method TEXT NOT NULL DEFAULT '',
+  innovations TEXT NOT NULL DEFAULT '',
+  experiments TEXT NOT NULL DEFAULT '',
+  limitations TEXT NOT NULL DEFAULT '',
+  my_understanding TEXT NOT NULL DEFAULT '',
+  my_questions TEXT NOT NULL DEFAULT '',
+  research_implications TEXT NOT NULL DEFAULT '',
+  one_sentence_summary TEXT NOT NULL DEFAULT '',
+  created_time TEXT NOT NULL,
+  updated_time TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_pdfs_folder ON pdfs(folder_id);
 CREATE INDEX IF NOT EXISTS idx_pdfs_title ON pdfs(title);
 CREATE INDEX IF NOT EXISTS idx_pdf_tags_pdf ON pdf_tags(pdf_id);
 CREATE INDEX IF NOT EXISTS idx_pdf_tags_tag ON pdf_tags(tag_id);
 CREATE INDEX IF NOT EXISTS idx_notes_pdf ON notes(pdf_id);
 CREATE INDEX IF NOT EXISTS idx_annotations_pdf ON annotations(pdf_id);
-PRAGMA user_version = 7;
+CREATE INDEX IF NOT EXISTS idx_litnotes_pdf ON literature_notes(pdf_id);
+CREATE INDEX IF NOT EXISTS idx_note_refs_note ON note_references(note_id);
+PRAGMA user_version = 9;
 `;

@@ -1,5 +1,6 @@
 import {
   AlertTriangle,
+  BookOpen,
   BookMarked,
   Camera,
   Check,
@@ -18,6 +19,7 @@ import {
   PenLine,
   Pin,
   Plus,
+  RotateCcw,
   Save,
   Search,
   StickyNote,
@@ -31,13 +33,22 @@ import rehypeKatex from 'rehype-katex';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import { useT, useTError } from '../i18n';
-import type { AnnotationRecord, PdfRecord, Tag } from '../shared/types';
+import type {
+  AnnotationRecord,
+  LiteratureMetadata,
+  LiteratureReview,
+  LiteratureReviewField,
+  NoteReference,
+  PdfRecord,
+  Tag,
+} from '../shared/types';
 import type { OutlineNode } from '../lib/pdf';
 import { DEFAULT_TAG_PRESETS, isPresetTag, normalizeTagName } from '../lib/tags';
 import { useApp } from '../store';
 import { Button, formatBytes, formatDate, IconButton, Toggle } from './ui';
 import { InspectorOutline } from './InspectorOutline';
 import { NoteEditor } from './NoteEditor';
+import { ExportModal } from './ExportModal';
 
 /** 导出 PDF 时使用的精简 Markdown 样式 */
 const MD_EXPORT_CSS = `
@@ -81,9 +92,10 @@ export function Inspector() {
   const inspectorWidth = useApp((s) => s.inspectorWidth);
 
   const tabs = [
-    { key: 'meta', label: t('inspector.info'), icon: <Info size={14} /> },
+    { key: 'info', label: t('inspector.info'), icon: <Info size={14} /> },
     { key: 'outline', label: t('inspector.outline'), icon: <BookMarked size={14} /> },
     { key: 'notes', label: t('inspector.notes'), icon: <StickyNote size={14} /> },
+    { key: 'literature', label: t('inspector.literature'), icon: <BookOpen size={14} /> },
   ] as const;
 
   if (!pdf) {
@@ -171,9 +183,10 @@ export function Inspector() {
         <div className="flex gap-0.5 overflow-x-auto">
           {(
             [
-              ['meta', t('inspector.info')],
+              ['info', t('inspector.info')],
               ['outline', t('inspector.outline')],
               ['notes', t('inspector.notes')],
+              ['literature', t('inspector.literature')],
             ] as const
           ).map(([key, label]) => (
             <button
@@ -193,7 +206,8 @@ export function Inspector() {
         </div>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
-        {tab === 'meta' && <MetaPanel pdf={pdf} />}
+        {tab === 'literature' && <LiteraturePanel pdf={pdf} />}
+        {tab === 'info' && <InfoPanel pdf={pdf} />}
         {tab === 'outline' && <InspectorOutline items={outline} />}
         {tab === 'notes' && <NotesPanel key={pdf.id} pdf={pdf} />}
       </div>
@@ -201,15 +215,88 @@ export function Inspector() {
   );
 }
 
-function MetaPanel({ pdf }: { pdf: PdfRecord }) {
+/** 标签区块（信息 / 文献管理共用）：标签胶囊 + 预设/自定义选择器 */
+function TagSection({ pdf }: { pdf: PdfRecord }) {
   const t = useT();
   const terr = useTError();
-  const refresh = useApp((s) => s.refresh);
   const toast = useApp((s) => s.toast);
+  const refresh = useApp((s) => s.refresh);
   const tags = useApp((s) => s.tags);
   const settings = useApp((s) => s.settings);
   const pdfs = useApp((s) => s.pdfs);
   const inboxPdfs = useApp((s) => s.inboxPdfs);
+
+  const addTag = async (raw: string) => {
+    const name = normalizeTagName(raw);
+    if (!name) return;
+    if (pdf.tags.some((x) => normalizeTagName(x.name).toLowerCase() === name.toLowerCase())) return;
+    try {
+      await window.pkm.addTag(pdf.id, name);
+      await refresh();
+    } catch (err) {
+      toast('error', terr(err instanceof Error ? err.message : String(err)));
+    }
+  };
+  const removeTag = async (tagId: number) => {
+    try {
+      await window.pkm.removeTag(pdf.id, tagId);
+      await refresh();
+    } catch (err) {
+      toast('error', terr(err instanceof Error ? err.message : String(err)));
+    }
+  };
+  const deleteTagDef = async (tagId: number) => {
+    try {
+      await window.pkm.deleteTag(tagId);
+      await refresh();
+    } catch (err) {
+      toast('error', terr(err instanceof Error ? err.message : String(err)));
+    }
+  };
+  const customTags = tags.filter((x) => !isPresetTag(x.name));
+  const usageOf = (tagId: number) =>
+    pdfs.filter((p) => p.tags.some((x) => x.id === tagId)).length +
+    inboxPdfs.filter((p) => p.tags.some((x) => x.id === tagId)).length;
+
+  return (
+    <section>
+      <div className="mb-1.5 text-[10.5px] font-medium uppercase tracking-wide text-app-muted">
+        {t('inspector.tags')}
+      </div>
+      <div className="mb-1.5 flex flex-wrap gap-1">
+        {pdf.tags.map((tg) => (
+          <span
+            key={tg.id}
+            className="inline-flex items-center gap-1 rounded-full border border-app-accent/40 bg-app-accent/10 px-2 py-0.5 text-[10.5px]"
+          >
+            <Hash size={9} />
+            {tg.name}
+            <button className="text-app-muted hover:text-app-danger" onClick={() => void removeTag(tg.id)}>
+              <X size={9} />
+            </button>
+          </span>
+        ))}
+      </div>
+      <TagPicker
+        presets={DEFAULT_TAG_PRESETS.filter((p) => !(settings.disabledTagPresets ?? []).includes(p))}
+        custom={customTags}
+        current={pdf.tags}
+        usageOf={usageOf}
+        onAdd={(n) => void addTag(n)}
+        onRemove={(tagId) => void removeTag(tagId)}
+        onCreate={(n) => void addTag(n)}
+        onDelete={(tagId) => void deleteTagDef(tagId)}
+      />
+    </section>
+  );
+}
+
+/** 「信息」Tab：只负责 PDF 文件本身的信息 + 标签 */
+function InfoPanel({ pdf }: { pdf: PdfRecord }) {
+  const t = useT();
+  const terr = useTError();
+  const refresh = useApp((s) => s.refresh);
+  const toast = useApp((s) => s.toast);
   const [title, setTitle] = useState(pdf.title);
 
   useEffect(() => setTitle(pdf.title), [pdf.id, pdf.title]);
@@ -229,48 +316,6 @@ function MetaPanel({ pdf }: { pdf: PdfRecord }) {
   const copyText = (text: string, label: string) => {
     void navigator.clipboard.writeText(text).then(() => toast('success', t('inspector.copied', { label })));
   };
-
-  const addTag = async (raw: string) => {
-    const name = normalizeTagName(raw);
-    if (!name) return;
-    // 同一文件不重复添加规范化后相同的标签
-    if (
-      pdf.tags.some(
-        (t) => normalizeTagName(t.name).toLowerCase() === name.toLowerCase(),
-      )
-    ) {
-      return;
-    }
-    try {
-      await window.pkm.addTag(pdf.id, name);
-      await refresh();
-    } catch (err) {
-      toast('error', terr(err instanceof Error ? err.message : String(err)));
-    }
-  };
-
-  const removeTag = async (tagId: number) => {
-    try {
-      await window.pkm.removeTag(pdf.id, tagId);
-      await refresh();
-    } catch (err) {
-      toast('error', terr(err instanceof Error ? err.message : String(err)));
-    }
-  };
-
-  const deleteTagDef = async (tagId: number) => {
-    try {
-      await window.pkm.deleteTag(tagId);
-      await refresh();
-    } catch (err) {
-      toast('error', terr(err instanceof Error ? err.message : String(err)));
-    }
-  };
-  // 自定义标签库（非内置预设）；标签定义与“文件使用标签”是两层
-  const customTags = tags.filter((t) => !isPresetTag(t.name));
-  const usageOf = (tagId: number) =>
-    pdfs.filter((p) => p.tags.some((t) => t.id === tagId)).length +
-    inboxPdfs.filter((p) => p.tags.some((t) => t.id === tagId)).length;
 
   return (
     <div className="space-y-4 px-3.5 py-3">
@@ -299,7 +344,7 @@ function MetaPanel({ pdf }: { pdf: PdfRecord }) {
 
       <section>
         <div className="mb-1.5 text-[10.5px] font-medium uppercase tracking-wide text-app-muted">
-          {t('inspector.title')}
+          {t('inspector.displayTitle')}
         </div>
         <input
           className="h-8 w-full rounded-md border border-app-border bg-app-panel2 px-2.5 text-xs outline-none focus:border-app-accent/70"
@@ -312,38 +357,7 @@ function MetaPanel({ pdf }: { pdf: PdfRecord }) {
         />
       </section>
 
-      <section>
-        <div className="mb-1.5 text-[10.5px] font-medium uppercase tracking-wide text-app-muted">
-          {t('inspector.tags')}
-        </div>
-        <div className="mb-1.5 flex flex-wrap gap-1">
-          {pdf.tags.length === 0 && (
-            <span className="text-[11px] text-app-muted/70">{t('inspector.noTags')}</span>
-          )}
-          {pdf.tags.map((tg) => (
-            <span
-              key={tg.id}
-              className="inline-flex items-center gap-1 rounded-full border border-app-accent/40 bg-app-accent/10 px-2 py-0.5 text-[10.5px]"
-            >
-              <Hash size={9} />
-              {tg.name}
-              <button className="text-app-muted hover:text-app-danger" onClick={() => void removeTag(tg.id)}>
-                <X size={9} />
-              </button>
-            </span>
-          ))}
-        </div>
-        <TagPicker
-          presets={DEFAULT_TAG_PRESETS.filter((p) => !(settings.disabledTagPresets ?? []).includes(p))}
-          custom={customTags}
-          current={pdf.tags}
-          usageOf={usageOf}
-          onAdd={(n) => void addTag(n)}
-          onRemove={(tagId) => void removeTag(tagId)}
-          onCreate={(n) => void addTag(n)}
-          onDelete={(tagId) => void deleteTagDef(tagId)}
-        />
-      </section>
+      <TagSection pdf={pdf} />
 
       <section>
         <div className="mb-1.5 text-[10.5px] font-medium uppercase tracking-wide text-app-muted">
@@ -370,6 +384,7 @@ function MetaPanel({ pdf }: { pdf: PdfRecord }) {
             label={t('inspector.pages')}
             value={pdf.pageCount != null ? t('inspector.pagesValue', { n: pdf.pageCount }) : '—'}
           />
+          <MetaRow label={t('inspector.fileType')} value="PDF" />
           <MetaRow label={t('inspector.importedAt')} value={formatDate(pdf.createdAt)} />
           <MetaRow label={t('inspector.updatedAt')} value={formatDate(pdf.updatedAt)} />
         </dl>
@@ -383,6 +398,271 @@ function MetaPanel({ pdf }: { pdf: PdfRecord }) {
         </div>
       </section>
     </div>
+  );
+}
+
+/** 「文献管理」Tab：文献档案 + 阅读状态 + 标签 + 结构化阅读记录 + 导出 */
+function LiteraturePanel({ pdf }: { pdf: PdfRecord }) {
+  const t = useT();
+  const terr = useTError();
+  const toast = useApp((s) => s.toast);
+  const patchPdfLiterature = useApp((s) => s.patchPdfLiterature);
+  const meta = pdf.literature ?? null;
+  const [draft, setDraft] = useState<LiteratureMetadata | null>(meta);
+  const [showAbstract, setShowAbstract] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [review, setReview] = useState<LiteratureReview | null>(null);
+
+  useEffect(() => setDraft(meta), [meta]);
+  useEffect(() => {
+    window.pkm
+      .getLiteratureReview(pdf.id)
+      .then(setReview)
+      .catch(() => undefined);
+  }, [pdf.id]);
+
+  const commit = async (patch: Partial<LiteratureMetadata>) => {
+    try {
+      const updated = await window.pkm.updateLiterature(pdf.id, patch);
+      setDraft(updated);
+      patchPdfLiterature(pdf.id, updated);
+    } catch (err) {
+      toast('error', terr(err instanceof Error ? err.message : String(err)));
+    }
+  };
+
+  const status = draft?.readingStatus ?? 'unread';
+  const inputCls =
+    'h-7 w-full rounded-md border border-app-border bg-app-panel2 px-2 text-[11px] outline-none focus:border-app-accent/70';
+  const statuses: Array<[LiteratureMetadata['readingStatus'], string]> = [
+    ['unread', t('literature.unread')],
+    ['reading', t('literature.reading')],
+    ['read', t('literature.read')],
+  ];
+
+  const reviewFields: Array<[LiteratureReviewField, string]> = [
+    ['background', t('review.background')],
+    ['researchQuestion', t('review.researchQuestion')],
+    ['existingMethods', t('review.existingMethods')],
+    ['existingMethodProblems', t('review.existingMethodProblems')],
+    ['coreMethod', t('review.coreMethod')],
+    ['innovations', t('review.innovations')],
+    ['experiments', t('review.experiments')],
+    ['limitations', t('review.limitations')],
+    ['myUnderstanding', t('review.myUnderstanding')],
+    ['myQuestions', t('review.myQuestions')],
+    ['researchImplications', t('review.researchImplications')],
+    ['oneSentenceSummary', t('review.oneSentenceSummary')],
+  ];
+
+  return (
+    <div className="space-y-4 px-3.5 py-3">
+      <section>
+        <div className="mb-1.5 text-[10.5px] font-medium uppercase tracking-wide text-app-muted">
+          {t('literature.title')}
+        </div>
+        <div className="space-y-1.5">
+          <Field label={t('literature.litTitle')}>
+            <input
+              className={inputCls}
+              value={draft?.title ?? ''}
+              onChange={(e) => setDraft((d) => ({ ...(d ?? ({} as LiteratureMetadata)), title: e.target.value }))}
+              onBlur={(e) => void commit({ title: e.target.value.trim() })}
+            />
+          </Field>
+          <Field label={t('literature.authors')}>
+            <input
+              className={inputCls}
+              value={draft?.authors ?? ''}
+              onChange={(e) => setDraft((d) => ({ ...(d ?? ({} as LiteratureMetadata)), authors: e.target.value }))}
+              onBlur={(e) => void commit({ authors: e.target.value.trim() })}
+            />
+          </Field>
+          <div className="flex gap-1.5">
+            <div className="min-w-0 flex-1">
+              <Field label={t('literature.journal')}>
+                <input
+                  className={inputCls}
+                  value={draft?.journal ?? ''}
+                  onChange={(e) => setDraft((d) => ({ ...(d ?? ({} as LiteratureMetadata)), journal: e.target.value }))}
+                  onBlur={(e) => void commit({ journal: e.target.value.trim() })}
+                />
+              </Field>
+            </div>
+            <div className="min-w-0 flex-1">
+              <Field label={t('literature.conference')}>
+                <input
+                  className={inputCls}
+                  value={draft?.conference ?? ''}
+                  onChange={(e) => setDraft((d) => ({ ...(d ?? ({} as LiteratureMetadata)), conference: e.target.value }))}
+                  onBlur={(e) => void commit({ conference: e.target.value.trim() })}
+                />
+              </Field>
+            </div>
+          </div>
+          <div className="flex gap-1.5">
+            <div className="w-16">
+              <Field label={t('literature.year')}>
+                <input
+                  className={inputCls}
+                  inputMode="numeric"
+                  value={draft?.year ?? ''}
+                  onChange={(e) => setDraft((d) => ({ ...(d ?? ({} as LiteratureMetadata)), year: e.target.value ? Number(e.target.value) : null }))}
+                  onBlur={(e) => void commit({ year: e.target.value ? Number(e.target.value) : null })}
+                />
+              </Field>
+            </div>
+            <div className="min-w-0 flex-1">
+              <Field label={t('literature.doi')}>
+                <input
+                  className={inputCls}
+                  value={draft?.doi ?? ''}
+                  onChange={(e) => setDraft((d) => ({ ...(d ?? ({} as LiteratureMetadata)), doi: e.target.value }))}
+                  onBlur={(e) => void commit({ doi: e.target.value.trim() })}
+                />
+              </Field>
+            </div>
+          </div>
+          <Field label={t('literature.url')}>
+            <input
+              className={inputCls}
+              value={draft?.url ?? ''}
+              onChange={(e) => setDraft((d) => ({ ...(d ?? ({} as LiteratureMetadata)), url: e.target.value }))}
+              onBlur={(e) => void commit({ url: e.target.value.trim() })}
+            />
+          </Field>
+          <Field label={t('literature.keywords')}>
+            <input
+              className={inputCls}
+              value={draft?.keywords ?? ''}
+              onChange={(e) => setDraft((d) => ({ ...(d ?? ({} as LiteratureMetadata)), keywords: e.target.value }))}
+              onBlur={(e) => void commit({ keywords: e.target.value.trim() })}
+            />
+          </Field>
+          <div>
+            <button
+              className="flex items-center gap-1 text-[10.5px] text-app-muted transition-colors hover:text-app-text"
+              onClick={() => setShowAbstract((v) => !v)}
+            >
+              <ChevronDown size={11} className={`transition-transform ${showAbstract ? 'rotate-180' : ''}`} />
+              {t('literature.abstract')}
+            </button>
+            {showAbstract && (
+              <textarea
+                className="mt-1 h-24 w-full resize-y rounded-md border border-app-border bg-app-panel2 p-2 text-[11px] outline-none focus:border-app-accent/70"
+                value={draft?.abstract ?? ''}
+                onChange={(e) => setDraft((d) => ({ ...(d ?? ({} as LiteratureMetadata)), abstract: e.target.value }))}
+                onBlur={(e) => void commit({ abstract: e.target.value })}
+              />
+            )}
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <div className="mb-1.5 text-[10.5px] font-medium uppercase tracking-wide text-app-muted">
+          {t('literature.readingStatus')}
+        </div>
+        <div className="flex items-center gap-1">
+          {statuses.map(([s, label]) => (
+            <button
+              key={s}
+              className={`rounded-full border px-2 py-0.5 text-[10px] transition-colors ${
+                status === s
+                  ? 'border-app-accent/60 bg-app-accent/15 text-app-text'
+                  : 'border-app-border text-app-muted hover:text-app-text'
+              }`}
+              onClick={() => void commit({ readingStatus: s })}
+            >
+              {label}
+            </button>
+          ))}
+          {status !== 'read' && (
+            <button
+              className="ml-auto text-[10.5px] text-app-accent hover:underline"
+              onClick={() => void commit({ readingStatus: 'read' })}
+            >
+              {t('literature.markRead')}
+            </button>
+          )}
+        </div>
+      </section>
+
+      <TagSection pdf={pdf} />
+
+      <section>
+        <div className="mb-1.5 flex items-center justify-between">
+          <div className="text-[10.5px] font-medium uppercase tracking-wide text-app-muted">
+            {t('literature.review')}
+          </div>
+          <Button size="sm" variant="outline" onClick={() => setExportOpen(true)}>
+            <FileDown size={12} /> {t('export.title')}
+          </Button>
+        </div>
+        <div className="space-y-3">
+          {reviewFields.map(([field, label]) => (
+            <ReviewField key={field} pdfId={pdf.id} field={field} label={label} value={review?.[field] ?? ''} />
+          ))}
+        </div>
+      </section>
+
+      <ExportModal open={exportOpen} onClose={() => setExportOpen(false)} currentPdf={pdf} />
+    </div>
+  );
+}
+
+/** 结构化阅读记录字段：多行文本框，输入停止后自动保存，失焦强制保存 */
+function ReviewField({
+  pdfId,
+  field,
+  label,
+  value,
+}: {
+  pdfId: number;
+  field: LiteratureReviewField;
+  label: string;
+  value: string;
+}) {
+  const [v, setV] = useState(value);
+  const dirtyRef = useRef(false);
+  useEffect(() => {
+    setV(value);
+    dirtyRef.current = false;
+  }, [value, pdfId]);
+  const flush = () => {
+    if (dirtyRef.current) {
+      dirtyRef.current = false;
+      void window.pkm.saveLiteratureReviewField(pdfId, field, v).catch(() => undefined);
+    }
+  };
+  useEffect(() => {
+    if (!dirtyRef.current) return;
+    const timer = setTimeout(flush, 400);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [v]);
+  return (
+    <div>
+      <div className="mb-0.5 text-[11px] font-medium text-app-text/90">{label}</div>
+      <textarea
+        className="min-h-[56px] w-full resize-y rounded-md border border-app-border bg-app-panel2 p-2 text-[11.5px] leading-relaxed outline-none focus:border-app-accent/70"
+        value={v}
+        onChange={(e) => {
+          setV(e.target.value);
+          dirtyRef.current = true;
+        }}
+        onBlur={flush}
+      />
+    </div>
+  );
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <label className="block">
+      <span className="mb-0.5 block text-[9.5px] text-app-muted">{label}</span>
+      {children}
+    </label>
   );
 }
 
@@ -665,6 +945,9 @@ function NotesPanel({ pdf }: { pdf: PdfRecord }) {
   const [saving, setSaving] = useState(false);
   const [noteFile, setNoteFile] = useState<string | null>(null);
   const [noteDir, setNoteDir] = useState<string | null>(null);
+  const [refs, setRefs] = useState<NoteReference[]>([]);
+  const refsRef = useRef<NoteReference[]>([]);
+  refsRef.current = refs;
   const [notesDir, setNotesDir] = useState('');
   const noteRevision = useApp((s) => s.noteRevision);
   const [exporting, setExporting] = useState(false);
@@ -686,6 +969,7 @@ function NotesPanel({ pdf }: { pdf: PdfRecord }) {
           setMd(note.markdown);
           setNoteFile(note.noteFile ?? null);
           setNoteDir(note.noteDir ?? null);
+          setRefs(await window.pkm.listNoteReferences(note.id));
         }
       } catch {
         /* ignore */
@@ -695,6 +979,23 @@ function NotesPanel({ pdf }: { pdf: PdfRecord }) {
       setLoading(false);
     })();
   }, [pdf.id, noteRevision]);
+
+  const onRefClick = (refId: number) => {
+    const ref = refsRef.current.find((r) => r.id === refId);
+    if (!ref) return;
+    const s = useApp.getState();
+    s.openPdf(ref.pdfId);
+    let top: number | null = null;
+    if (ref.rect) {
+      try {
+        const quads = JSON.parse(ref.rect) as Array<{ y: number }>;
+        if (Array.isArray(quads) && quads.length) top = Math.min(...quads.map((q) => q.y));
+      } catch {
+        /* ignore */
+      }
+    }
+    s.requestJump(ref.page, top);
+  };
 
   useEffect(() => {
     void window.pkm
@@ -879,6 +1180,29 @@ function NotesPanel({ pdf }: { pdf: PdfRecord }) {
               className="md-body"
               components={{
                 img: ({ src, alt }) => <img src={resolveAsset(src)} alt={alt ?? ''} />,
+                a: ({ href, children }) => {
+                  const m = /^minepdf:\/\/ref\/(\d+)$/.exec(href ?? '');
+                  if (m) {
+                    return (
+                      <a
+                        href="#"
+                        title={t('literature.jumpRef')}
+                        className="cursor-pointer rounded border border-app-accent/30 bg-app-accent/10 px-1 py-px text-[10px] font-medium text-app-accent no-underline transition-colors hover:bg-app-accent/20"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          onRefClick(Number(m[1]));
+                        }}
+                      >
+                        {children}
+                      </a>
+                    );
+                  }
+                  return (
+                    <a href={href} target="_blank" rel="noreferrer">
+                      {children}
+                    </a>
+                  );
+                },
               }}
             >
               {md}
