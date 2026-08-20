@@ -679,6 +679,12 @@ function LiteraturePanel({ pdf }: { pdf: PdfRecord }) {
                 {label}
               </span>
             ))}
+            {status !== 'read' && (
+              <span className="flex shrink-0 items-center gap-1 whitespace-nowrap rounded-md border border-transparent px-2 py-0.5 text-[10px]">
+                <CheckCircle2 size={12} />
+                {t('literature.markRead')}
+              </span>
+            )}
           </div>
           {statusItems.map(([s, label, icon]) => (
             <button
@@ -698,10 +704,17 @@ function LiteraturePanel({ pdf }: { pdf: PdfRecord }) {
           ))}
           {status !== 'read' && (
             <button
-              className="ml-auto text-[10.5px] text-app-accent hover:underline"
+              title={statusNarrow ? t('literature.markRead') : undefined}
+              aria-label={statusNarrow ? t('literature.markRead') : undefined}
+              className={`ml-auto flex shrink-0 items-center gap-1 whitespace-nowrap rounded-md border px-2 py-0.5 text-[10px] text-app-accent transition-colors ${
+                statusNarrow
+                  ? 'border-transparent hover:bg-app-panel2'
+                  : 'border-app-border hover:bg-app-panel2'
+              }`}
               onClick={() => void commit({ readingStatus: 'read' })}
             >
-              {t('literature.markRead')}
+              <CheckCircle2 size={12} />
+              {!statusNarrow && t('literature.markRead')}
             </button>
           )}
         </div>

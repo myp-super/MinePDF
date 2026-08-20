@@ -39,7 +39,10 @@ Reporting a Vulnerability
 请不要在公开 Issue 中直接贴出 Cookie、Token、账号信息、私密链接或可复现的敏感数据。`;
 
 /** 最近版本更新内容 */
-const CHANGELOG_TEXT = `3.9.1（当前版本）
+const CHANGELOG_TEXT = `3.9.2（当前版本）
+• 阅读状态「标记为已读」改为图标+文字，面板变窄时自动只留图标（悬停有提示）
+
+3.9.1
 • 文献导出新增「摘要」列；Excel 表头与列宽按中英文实际显示宽度自适应（中文全角按 2 计）
 
 3.9.0
