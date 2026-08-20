@@ -32,6 +32,7 @@ const HEADERS = [
   'DOI',
   'URL',
   '关键词',
+  '摘要',
   '标签',
   '阅读状态',
   '研究背景',
@@ -66,6 +67,7 @@ function cell(row: ExportRow, idx: number): string {
     l?.doi ?? '',
     l?.url ?? '',
     l?.keywords ?? '',
+    l?.abstract ?? '',
     tags.map((t) => t.name).join(', '),
     STATUS_LABEL[status] ?? status,
     r?.background ?? '',
@@ -117,10 +119,10 @@ async function writeXlsx(filePath: string, rows: ExportRow[]): Promise<void> {
       c.font = cellFont(String(c.value ?? ''));
     });
   }
-  // 自适应列宽：按内容最大长度估算（封顶 50，避免极端长文本撑爆）
+  // 自适应列宽：按“显示宽度”估算（中文全角字符按 2 计，表头/单元格同规则），封顶 50
   const widths = HEADERS.map((_, c) => {
-    let max = HEADERS[c].length;
-    for (const r of rows) max = Math.max(max, cell(r, c).length);
+    let max = displayWidth(HEADERS[c]);
+    for (const r of rows) max = Math.max(max, displayWidth(cell(r, c)));
     return Math.min(50, Math.max(10, max + 2));
   });
   ws.columns = widths.map((w) => ({ width: w }));
@@ -131,14 +133,20 @@ async function writeXlsx(filePath: string, rows: ExportRow[]): Promise<void> {
   }
   ws.eachRow((row, rowNum) => {
     if (rowNum === 1) {
-      row.height = 20;
+      // 表头也按显示宽度自适应行高（中文表头换行时给足高度）
+      let headerLines = 1;
+      row.eachCell({ includeEmpty: true }, (cellEl, colNum) => {
+        const w = widths[colNum - 1] ?? 12;
+        headerLines = Math.max(headerLines, Math.ceil(displayWidth(String(cellEl.value ?? '')) / Math.max(1, w * 0.9)));
+      });
+      row.height = Math.min(60, Math.max(20, headerLines * 18));
       return;
     }
     let lines = 1;
     row.eachCell({ includeEmpty: true }, (cellEl, colNum) => {
       const w = widths[colNum - 1] ?? 12;
       const v = String(cellEl.value ?? '');
-      lines = Math.max(lines, Math.ceil(v.length / Math.max(1, w * 0.85)));
+      lines = Math.max(lines, Math.ceil(displayWidth(v) / Math.max(1, w * 0.85)));
     });
     row.height = Math.min(220, Math.max(15, lines * 14));
   });
@@ -146,6 +154,25 @@ async function writeXlsx(filePath: string, rows: ExportRow[]): Promise<void> {
   ws.views = [{ state: 'frozen', ySplit: 1 }];
   ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: Math.max(2, rows.length + 1), column: HEADERS.length } };
   await wb.xlsx.writeFile(filePath);
+}
+
+/** 显示宽度：中文/全角字符按 2 个半角宽计，其余按 1（与 Excel 列宽单位一致） */
+function displayWidth(s: string): number {
+  let w = 0;
+  for (const ch of s) {
+    const code = ch.codePointAt(0) ?? 0;
+    const wide =
+      (code >= 0x1100 && code <= 0x115f) ||
+      (code >= 0x2e80 && code <= 0xa4cf) ||
+      (code >= 0xac00 && code <= 0xd7a3) ||
+      (code >= 0xf900 && code <= 0xfaff) ||
+      (code >= 0xfe30 && code <= 0xfe4f) ||
+      (code >= 0xff00 && code <= 0xff60) ||
+      (code >= 0xffe0 && code <= 0xffe6) ||
+      (code >= 0x20000 && code <= 0x2fffd);
+    w += wide ? 2 : 1;
+  }
+  return w;
 }
 
 function csvEscape(v: string): string {
