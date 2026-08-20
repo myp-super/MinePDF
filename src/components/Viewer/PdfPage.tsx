@@ -11,6 +11,7 @@ import {
 import { pdfiumRenderQueued } from '../../lib/pdfiumBatcher';
 import { renderDiag } from '../../lib/renderDiag';
 import { hexToRgba, pdfjsLib, type SearchMatch, type ViewportLike } from '../../lib/pdf';
+import type { PageTextIndex } from '../../lib/textIndex';
 import { useT } from '../../i18n';
 
 /** Minimal link service used by the PDF.js annotation layer. */
@@ -42,6 +43,8 @@ interface PdfPageProps {
   liveHighlightsColor?: string;
   /** 普通模式已选中的连续选区（PDF 坐标，蓝色） */
   selectionQuads?: Quad[];
+  /** 选词几何调试索引（Ctrl+Shift+E 开启）：显示列/行/字符边界 */
+  debugIndex?: PageTextIndex | null;
   linkService: PdfLinkService;
   /** PDFium 已给出的页面物理尺寸（doc 未就绪时用于占位布局） */
   fallbackW: number | null;
@@ -88,6 +91,7 @@ export function PdfPage({
   highlightColor,
   liveHighlightsColor,
   selectionQuads,
+  debugIndex,
   linkService,
   fallbackW,
   fallbackH,
@@ -470,6 +474,45 @@ export function PdfPage({
       <canvas ref={canvasRef} className="block" />
       <div ref={textRef} className="textLayer" />
       <div ref={annRef} className="annotationLayer" />
+
+      {/* 选词几何调试覆盖层（Ctrl+Shift+E 开关）：蓝=列 绿=行 红=字符 */}
+      {debugIndex && viewport && (
+        <div className="pointer-events-none absolute inset-0 z-20">
+          {debugIndex.columns.map((c) => {
+            const [lx, ly] = viewport.convertToViewportPoint(c.minX, c.minY + (c.maxY - c.minY));
+            const [rx, ry] = viewport.convertToViewportPoint(c.maxX, c.minY);
+            return (
+              <div
+                key={`col-${c.id}`}
+                className="absolute border-[1.5px] border-blue-500/80"
+                style={{ left: lx, top: ly, width: Math.max(1, rx - lx), height: Math.max(1, ry - ly) }}
+              />
+            );
+          })}
+          {debugIndex.lines.map((l, i) => {
+            const [lx, ly] = viewport.convertToViewportPoint(l.minX, l.minY + (l.maxY - l.minY));
+            const [rx, ry] = viewport.convertToViewportPoint(l.maxX, l.minY);
+            return (
+              <div
+                key={`line-${i}`}
+                className="absolute border border-green-500/70"
+                style={{ left: lx, top: ly, width: Math.max(1, rx - lx), height: Math.max(1, ry - ly) }}
+              />
+            );
+          })}
+          {debugIndex.items.map((it, i) => {
+            const [lx, ly] = viewport.convertToViewportPoint(it.x, it.y + it.h);
+            const [rx, ry] = viewport.convertToViewportPoint(it.x + it.w, it.y);
+            return (
+              <div
+                key={`it-${i}`}
+                className="absolute border border-red-500/50"
+                style={{ left: lx, top: ly, width: Math.max(1, rx - lx), height: Math.max(1, ry - ly) }}
+              />
+            );
+          })}
+        </div>
+      )}
 
       {/* PDFium 原生链接层：首帧位图渲染即出现，点击跳转/打开外链，不依赖 pdf.js */}
       {viewport &&

@@ -16,6 +16,8 @@ export interface TextItemQuad {
   /** 基线 y（PDF 用户空间），用于按行分组 */
   baseline: number;
   str: string;
+  /** 字符旋转角（度，量化 0/90/180/270）；非 0 一律视为独立文本区域 */
+  rot: number;
 }
 
 /** 一行文本的垂直带（同一视觉行内基线抖动由容差吸收，中文/英文/上下标不再拆块） */
@@ -30,6 +32,12 @@ export interface LineBand {
   row: number;
   /** 在“读序数组”中的下标（读序：从上到下、从左到右） */
   indices: number[];
+  /** 字符旋转角（该行内所有字符一致） */
+  rot: number;
+  /** 视觉列 id（同旋转、横向同列的文本行聚合为一列） */
+  col: number;
+  /** 文本块 id（同一列内按纵向间隙切块：页眉/页脚/图注/段落大间距独立成块） */
+  block: number;
 }
 
 export interface PageTextIndex {
@@ -39,6 +47,8 @@ export interface PageTextIndex {
   lines: LineBand[];
   /** 视觉行序号 -> 该行内所有 line 的下标（供按列匹配） */
   rowLines: number[][];
+  /** 视觉列汇总（调试覆盖层用） */
+  columns: { id: number; rot: number; minX: number; maxX: number; minY: number; maxY: number }[];
 }
 
 const textCache = new Map<string, TextItemQuad[]>();
@@ -64,7 +74,7 @@ export async function getPageTextQuads(
     // 跳过 pdfium 的占位符（\u0001/空串）：它们没有可见字形，会让行内索引与可见文字错位
     if (c.str === '\u0001' || c.str === '') continue;
     const h = c.h > 0 ? c.h : 1;
-    items.push({ x: c.x, y: c.y, w, h, baseline: c.y + h, str: c.str });
+    items.push({ x: c.x, y: c.y, w, h, baseline: c.y + h, str: c.str, rot: c.rot ?? 0 });
   }
   items.sort((a, b) => b.baseline - a.baseline || a.x - b.x);
   textCache.set(key, items);
@@ -86,13 +96,20 @@ export function buildPageLines(items: TextItemQuad[]): LineBand[] {
   // 列间距通常远大于字符/单词间距：以中位字宽为基准设自适应阈值，避免硬编码像素
   const colGap = Math.max(medianW * 2.2, 6);
 
-  type RawBand = { baseline: number; minY: number; maxY: number; indices: number[] };
+  type RawBand = {
+    baseline: number;
+    minY: number;
+    maxY: number;
+    rot: number;
+    indices: number[];
+  };
   const bands: RawBand[] = [];
   for (let i = 0; i < items.length; i++) {
     const it = items[i];
     let target = -1;
     for (let bi = bands.length - 1; bi >= 0; bi--) {
-      if (Math.abs(bands[bi].baseline - it.baseline) <= tol) {
+      // 旋转不同的字符绝不并入同一行带（旋转文本 = 独立文本区域）
+      if (bands[bi].rot === it.rot && Math.abs(bands[bi].baseline - it.baseline) <= tol) {
         target = bi;
         break;
       }
@@ -103,7 +120,7 @@ export function buildPageLines(items: TextItemQuad[]): LineBand[] {
       b.minY = Math.min(b.minY, it.y);
       b.maxY = Math.max(b.maxY, it.y + it.h);
     } else {
-      bands.push({ baseline: it.baseline, minY: it.y, maxY: it.y + it.h, indices: [i] });
+      bands.push({ baseline: it.baseline, minY: it.y, maxY: it.y + it.h, rot: it.rot, indices: [i] });
     }
   }
   // 按基线从高到低（视觉从上到下）排序，保证 row 序号稳定
@@ -144,7 +161,67 @@ export function buildPageLines(items: TextItemQuad[]): LineBand[] {
         maxX,
         row: r,
         indices: seg,
+        rot: band.rot,
+        col: -1,
+        block: -1,
       });
+    }
+  }
+
+  // ---------- 视觉列聚类 ----------
+  // 同一旋转、横向中心接近的文本行聚为一列；旋转文本天然独立成列。
+  // 全宽页眉/页脚中心位于页面中部，不会并入左右正文列。
+  const colTol = Math.max(medianW * 4, 14);
+  const columns: { id: number; rot: number; minX: number; maxX: number; minY: number; maxY: number }[] = [];
+  for (const line of lines) {
+    const cx = (line.minX + line.maxX) / 2;
+    let best = -1;
+    let bestD = Infinity;
+    for (let ci = 0; ci < columns.length; ci++) {
+      const c = columns[ci];
+      if (c.rot !== line.rot) continue;
+      const d = Math.abs(cx - (c.minX + c.maxX) / 2);
+      if (d < bestD) {
+        bestD = d;
+        best = ci;
+      }
+    }
+    if (best >= 0 && bestD <= colTol) {
+      const c = columns[best];
+      c.minX = Math.min(c.minX, line.minX);
+      c.maxX = Math.max(c.maxX, line.maxX);
+      c.minY = Math.min(c.minY, line.minY);
+      c.maxY = Math.max(c.maxY, line.maxY);
+      line.col = c.id;
+    } else {
+      const id = columns.length;
+      columns.push({ id, rot: line.rot, minX: line.minX, maxX: line.maxX, minY: line.minY, maxY: line.maxY });
+      line.col = id;
+    }
+  }
+
+  // ---------- 文本块切分 ----------
+  // 同一列内，相邻行的纵向空隙超过阈值（约 2.5 倍行高）即切为独立文本块：
+  // 正文段落保持同块可连续选择；页眉/页脚/页码/图注/大幅留白前后独立成块。
+  const blockGap = Math.max(medianH * 2.5, 20);
+  const byCol = new Map<number, LineBand[]>();
+  for (const line of lines) {
+    const arr = byCol.get(line.col) ?? [];
+    arr.push(line);
+    byCol.set(line.col, arr);
+  }
+  for (const colLines of byCol.values()) {
+    colLines.sort((a, b) => a.row - b.row);
+    let block = 0;
+    for (let i = 0; i < colLines.length; i++) {
+      const l = colLines[i];
+      l.block = block;
+      const next = colLines[i + 1];
+      if (next) {
+        // y-up：上一行底边与下一行顶边的距离
+        const gap = l.minY - next.maxY;
+        if (gap > blockGap) block++;
+      }
     }
   }
   return lines;
@@ -167,7 +244,20 @@ export async function getPageTextIndex(
     const r = lines[i].row;
     (rowLines[r] ||= []).push(i);
   }
-  return { items, lines, rowLines };
+  const columns: { id: number; rot: number; minX: number; maxX: number; minY: number; maxY: number }[] = [];
+  for (const line of lines) {
+    let c = columns.find((cc) => cc.id === line.col);
+    if (!c) {
+      c = { id: line.col, rot: line.rot, minX: line.minX, maxX: line.maxX, minY: line.minY, maxY: line.maxY };
+      columns.push(c);
+    } else {
+      c.minX = Math.min(c.minX, line.minX);
+      c.maxX = Math.max(c.maxX, line.maxX);
+      c.minY = Math.min(c.minY, line.minY);
+      c.maxY = Math.max(c.maxY, line.maxY);
+    }
+  }
+  return { items, lines, rowLines, columns };
 }
 
 /**
@@ -274,5 +364,5 @@ function unionRect(
 
 function unionItem(a: TextItemQuad, b: TextItemQuad): TextItemQuad {
   const u = unionRect(a, b);
-  return { ...u, baseline: a.baseline, str: a.str + b.str };
+  return { ...u, baseline: a.baseline, str: a.str + b.str, rot: a.rot };
 }

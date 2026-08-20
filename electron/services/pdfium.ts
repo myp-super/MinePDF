@@ -74,6 +74,7 @@ interface PdfiumApi {
   textClose: (tp: unknown) => void;
   textCount: (tp: unknown) => number;
   textCharBox: (tp: unknown, index: number, rect: unknown) => number;
+  textCharAngle: (tp: unknown, index: number, matrix: unknown) => number;
   textUnicode: (tp: unknown, index: number) => number;
 }
 
@@ -178,6 +179,7 @@ function ensureLib(): PdfiumApi | null {
       textClose: k.func('void FPDFText_ClosePage(void *text)'),
       textCount: k.func('int FPDFText_CountChars(void *text)'),
       textCharBox: k.func('int FPDFText_GetLooseCharBox(void *text, int index, FS_RECTF *rect)'),
+      textCharAngle: k.func('int FPDFText_GetCharAngle(void *text, int index, float *matrix)'),
       textUnicode: k.func('unsigned int FPDFText_GetUnicode(void *text, int index)'),
     };
     lib.init();
@@ -391,6 +393,7 @@ export function pdfiumTextChars(pdfId: number, pageNumber: number): PdfiumChar[]
     try {
       const count = api.textCount(tp);
       const boxPtr = koffi.alloc(FS_RECTF, 1);
+      const matPtr = koffi.alloc('float', 6);
       try {
         for (let i = 0; i < count; i++) {
           if (api.textCharBox(tp, i, boxPtr)) {
@@ -404,17 +407,31 @@ export function pdfiumTextChars(pdfId: number, pageNumber: number): PdfiumChar[]
             const h = Math.max(0, b.top - b.bottom);
             if (w < 0.01 || h < 0.01) continue; // 换行/空框
             const u = api.textUnicode(tp, i);
+            // 字符旋转矩阵：FS_MATRIX = [a,b,c,d,e,f]，角度 = atan2(b,a)（量化到 0/90/180/270）
+            let rot = 0;
+            try {
+              if (api.textCharAngle(tp, i, matPtr)) {
+                const m = koffi.decode(matPtr, 'float', 6) as number[];
+                const deg = (Math.atan2(m[1], m[0]) * 180) / Math.PI;
+                const norm = ((deg % 360) + 360) % 360;
+                rot = Math.round(norm / 90) % 4 * 90;
+              }
+            } catch {
+              rot = 0;
+            }
             out.push({
               x: b.left,
               y: b.bottom,
               w,
               h,
               str: u ? String.fromCodePoint(u) : '',
+              rot,
             });
           }
         }
       } finally {
         koffi.free(boxPtr);
+        koffi.free(matPtr);
       }
     } finally {
       api.textClose(tp);

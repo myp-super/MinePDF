@@ -256,6 +256,8 @@ export interface PdfiumChar {
   w: number;
   h: number;
   str: string;
+  /** 字符旋转角（度，量化为 0/90/180/270；正文为 0） */
+  rot: number;
 }
 
 export interface SearchResult {
