@@ -384,6 +384,51 @@ body {
   padding: 4px 0;
 }
 
+.translation-note-card {
+  position: relative;
+  margin: 12px 0;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--app-accent) 28%, var(--app-border));
+  border-left: 3px solid var(--app-accent);
+  border-radius: 11px;
+  background:
+    linear-gradient(145deg, color-mix(in srgb, var(--app-accent) 8%, var(--app-panel)) 0%, var(--app-panel) 54%);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+  padding: 12px 13px 11px;
+}
+.translation-note-card::after {
+  position: absolute;
+  top: -26px;
+  right: -20px;
+  width: 78px;
+  height: 78px;
+  border: 1px solid color-mix(in srgb, var(--app-accent) 16%, transparent);
+  border-radius: 999px;
+  content: '';
+  pointer-events: none;
+}
+.translation-note-card__badge {
+  display: inline-flex;
+  align-items: center;
+  margin-bottom: 4px;
+  color: var(--app-accent);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.translation-note-card > .md-body > :first-child {
+  margin-top: 0;
+}
+.translation-note-card > .md-body > :last-child {
+  margin-bottom: 0;
+}
+.translation-note-card .md-body strong {
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--app-muted);
+}
+
 /* ---------- PDF page sheet ---------- */
 .pdf-page-sheet {
   box-shadow:

@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { createHash } from 'crypto';
 import type {
   AnnotationRecord,
   Folder,
@@ -7,6 +8,7 @@ import type {
   LiteratureMetadata,
   LiteratureNote,
   LiteratureReview,
+  LiteratureReviewCustomValue,
   LiteratureReviewField,
   NewAnnotation,
   NoteRecord,
@@ -15,6 +17,10 @@ import type {
   Quad,
   ReadingStatus,
   Tag,
+  GlossaryEntry,
+  GlossaryEntryInput,
+  TranslationCacheStats,
+  TranslationResult,
 } from '../../src/shared/types';
 import { getDataDir, getDb, getInboxDir, getLibraryPdfDir } from './database';
 
@@ -103,6 +109,17 @@ const mapNoteReference = (r: Row): NoteReference => ({
   text: String(r.text ?? ''),
   rect: r.rect ? String(r.rect) : null,
   createdAt: String(r.created_time),
+});
+
+const mapGlossary = (r: Row): GlossaryEntry => ({
+  id: Number(r.id),
+  term: String(r.term),
+  translation: String(r.translation),
+  domain: String(r.domain ?? ''),
+  note: String(r.note ?? ''),
+  enabled: Number(r.enabled ?? 0) === 1,
+  createdAt: String(r.created_time),
+  updatedAt: String(r.updated_time),
 });
 
 function now(): string {
@@ -1171,6 +1188,34 @@ export const repository = {
     ).run(pdfId, value, t, t);
   },
 
+  getLiteratureReviewCustomValues(pdfId: number): LiteratureReviewCustomValue[] {
+    const db = getDb();
+    return (db
+      .prepare(
+        'SELECT field_id, value FROM literature_review_custom_values WHERE pdf_id = ? ORDER BY field_id',
+      )
+      .all(pdfId) as Row[]).map((r) => ({
+      fieldId: String(r.field_id),
+      value: String(r.value ?? ''),
+    }));
+  },
+
+  saveLiteratureReviewCustomValue(pdfId: number, fieldId: string, value: string): void {
+    if (!/^custom-[a-z0-9_-]{6,80}$/i.test(fieldId)) throw new Error('无效的自定义字段');
+    const db = getDb();
+    const t = now();
+    db.prepare(
+      `INSERT INTO literature_review_custom_values (pdf_id, field_id, value, updated_time)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(pdf_id, field_id) DO UPDATE SET value = excluded.value, updated_time = excluded.updated_time`,
+    ).run(pdfId, fieldId, value, t);
+  },
+
+  deleteLiteratureReviewCustomField(fieldId: string): void {
+    if (!/^custom-[a-z0-9_-]{6,80}$/i.test(fieldId)) throw new Error('无效的自定义字段');
+    getDb().prepare('DELETE FROM literature_review_custom_values WHERE field_id = ?').run(fieldId);
+  },
+
   // ---------- notes ----------
   getNote(pdfId: number): NoteRecord | null {
     const db = getDb();
@@ -1339,6 +1384,123 @@ export const repository = {
     const current = db.prepare('SELECT pdf_id FROM annotations WHERE id = ?').get(id) as Row | undefined;
     db.prepare('DELETE FROM annotations WHERE id = ?').run(id);
     if (current) writeAnnotationMirror(Number(current.pdf_id), this.listAnnotations(Number(current.pdf_id)));
+  },
+
+  // ---------- translation glossary/cache ----------
+  listTranslationGlossary(): GlossaryEntry[] {
+    return (getDb().prepare('SELECT * FROM translation_glossary ORDER BY term COLLATE NOCASE').all() as Row[]).map(
+      mapGlossary,
+    );
+  },
+
+  createTranslationGlossary(input: GlossaryEntryInput): GlossaryEntry {
+    const term = input.term.trim();
+    const translation = input.translation.trim();
+    if (!term || !translation) throw new Error('术语和译文不能为空');
+    const t = now();
+    const result = getDb()
+      .prepare(
+        `INSERT INTO translation_glossary (term, translation, domain, note, enabled, created_time, updated_time)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(term, translation, input.domain?.trim() ?? '', input.note?.trim() ?? '', input.enabled === false ? 0 : 1, t, t);
+    return mapGlossary(getDb().prepare('SELECT * FROM translation_glossary WHERE id = ?').get(result.lastInsertRowid) as Row);
+  },
+
+  updateTranslationGlossary(id: number, patch: Partial<GlossaryEntryInput>): GlossaryEntry {
+    const db = getDb();
+    const current = db.prepare('SELECT * FROM translation_glossary WHERE id = ?').get(id) as Row | undefined;
+    if (!current) throw new Error('术语不存在');
+    const term = patch.term === undefined ? String(current.term) : patch.term.trim();
+    const translation = patch.translation === undefined ? String(current.translation) : patch.translation.trim();
+    if (!term || !translation) throw new Error('术语和译文不能为空');
+    const t = now();
+    db.prepare(
+      `UPDATE translation_glossary SET term = ?, translation = ?, domain = ?, note = ?, enabled = ?, updated_time = ? WHERE id = ?`,
+    ).run(
+      term,
+      translation,
+      patch.domain === undefined ? String(current.domain ?? '') : patch.domain.trim(),
+      patch.note === undefined ? String(current.note ?? '') : patch.note.trim(),
+      patch.enabled === undefined ? Number(current.enabled ?? 0) : patch.enabled ? 1 : 0,
+      t,
+      id,
+    );
+    return mapGlossary(db.prepare('SELECT * FROM translation_glossary WHERE id = ?').get(id) as Row);
+  },
+
+  deleteTranslationGlossary(id: number): void {
+    getDb().prepare('DELETE FROM translation_glossary WHERE id = ?').run(id);
+  },
+
+  getTranslationGlossaryVersion(): string {
+    const rows = getDb().prepare('SELECT id, term, translation, domain, enabled, updated_time FROM translation_glossary ORDER BY id').all() as Row[];
+    return createHash('sha256').update(JSON.stringify(rows)).digest('hex');
+  },
+
+  getEnabledTranslationGlossary(): GlossaryEntry[] {
+    return (getDb().prepare('SELECT * FROM translation_glossary WHERE enabled = 1 ORDER BY term COLLATE NOCASE').all() as Row[]).map(mapGlossary);
+  },
+
+  getTranslationCache(cacheKey: string): TranslationResult | null {
+    const db = getDb();
+    const r = db.prepare('SELECT * FROM translation_cache WHERE cache_key = ?').get(cacheKey) as Row | undefined;
+    if (!r) return null;
+    db.prepare('UPDATE translation_cache SET accessed_time = ? WHERE cache_key = ?').run(now(), cacheKey);
+    return {
+      requestId: '',
+      translatedText: String(r.translated_text),
+      provider: String(r.provider) as TranslationResult['provider'],
+      providerName: String(r.provider_name),
+      providerModel: String(r.provider_model ?? ''),
+      sourceLanguage: String(r.source_language),
+      targetLanguage: String(r.target_language),
+      detectedLanguage: r.detected_language ? String(r.detected_language) : undefined,
+      cached: true,
+      usage: r.input_tokens == null && r.output_tokens == null ? undefined : {
+        inputTokens: r.input_tokens == null ? undefined : Number(r.input_tokens),
+        outputTokens: r.output_tokens == null ? undefined : Number(r.output_tokens),
+      },
+    };
+  },
+
+  putTranslationCache(cacheKey: string, result: TranslationResult): void {
+    const db = getDb();
+    const t = now();
+    const bytes = Buffer.byteLength(result.translatedText, 'utf8');
+    db.prepare(
+      `INSERT INTO translation_cache
+       (cache_key, translated_text, provider, provider_name, provider_model, source_language, target_language,
+        detected_language, input_tokens, output_tokens, byte_size, created_time, accessed_time)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(cache_key) DO UPDATE SET translated_text = excluded.translated_text,
+        provider_name = excluded.provider_name, provider_model = excluded.provider_model,
+        detected_language = excluded.detected_language, input_tokens = excluded.input_tokens,
+        output_tokens = excluded.output_tokens, byte_size = excluded.byte_size, accessed_time = excluded.accessed_time`,
+    ).run(
+      cacheKey, result.translatedText, result.provider, result.providerName, result.providerModel,
+      result.sourceLanguage, result.targetLanguage, result.detectedLanguage ?? null,
+      result.usage?.inputTokens ?? null, result.usage?.outputTokens ?? null, bytes, t, t,
+    );
+    this.pruneTranslationCache();
+  },
+
+  pruneTranslationCache(maxEntries = 500, maxBytes = 32 * 1024 * 1024): void {
+    const db = getDb();
+    while (true) {
+      const stats = db.prepare('SELECT COUNT(*) AS entries, COALESCE(SUM(byte_size), 0) AS bytes FROM translation_cache').get() as Row;
+      if (Number(stats.entries) <= maxEntries && Number(stats.bytes) <= maxBytes) break;
+      db.prepare('DELETE FROM translation_cache WHERE cache_key = (SELECT cache_key FROM translation_cache ORDER BY accessed_time ASC LIMIT 1)').run();
+    }
+  },
+
+  getTranslationCacheStats(): TranslationCacheStats {
+    const r = getDb().prepare('SELECT COUNT(*) AS entries, COALESCE(SUM(byte_size), 0) AS bytes FROM translation_cache').get() as Row;
+    return { entries: Number(r.entries), bytes: Number(r.bytes) };
+  },
+
+  clearTranslationCache(): void {
+    getDb().prepare('DELETE FROM translation_cache').run();
   },
 
   // ---------- search ----------

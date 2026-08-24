@@ -13,6 +13,7 @@ import { startLibraryWatcher, stopLibraryWatcher } from './services/libraryWatch
 import { checkForUpdates } from './services/updater';
 import { getSettings } from './services/settings';
 import { pdfiumShutdown } from './services/pdfium';
+import { translationManager } from './services/translation/manager';
 
 const devServerUrl = process.env.VITE_DEV_SERVER_URL ?? '';
 const isDev = Boolean(devServerUrl);
@@ -522,6 +523,51 @@ async function createMainWindow(): Promise<BrowserWindow> {
           await step('bridge', async () => typeof window.pkm.getSnapshot === 'function');
           await step('updateCheck', async () => (await window.pkm.checkForUpdates()).status === 'disabled');
           const snap = await step('snapshot', () => window.pkm.getSnapshot());
+          await step('translationProviders', async () => {
+            const providers = await window.pkm.getTranslationProviders();
+            const mymemory = providers.find((p) => p.id === 'mymemory');
+            const niu = providers.find((p) => p.id === 'niutrans');
+            const openai = providers.find((p) => p.id === 'openai-compatible');
+            const google = providers.find((p) => p.id === 'google');
+            const transmart = providers.find((p) => p.id === 'transmart');
+            const youdao = providers.find((p) => p.id === 'youdao');
+            return !!mymemory && mymemory.implemented && mymemory.state === 'available' && mymemory.requiresCredential === false
+              && !!niu && niu.implemented && !!openai && openai.implemented
+              && !!google && google.implemented && google.state === 'available' && google.experimental === true
+              && !!transmart && transmart.implemented && transmart.state === 'available' && transmart.freeWithoutKey === true
+              && !!youdao && youdao.implemented && youdao.state === 'available' && youdao.freeWithoutKey === true;
+          });
+          await step('translationStructuredError', async () => {
+            const result = await window.pkm.translate({ requestId: '', pdfId: 0, page: 0, text: '' });
+            return result.ok === false
+              && result.error.code === 'INVALID_REQUEST'
+              && !result.error.message.includes('Unexpected end of JSON input');
+          });
+          await step('translationCache', async () => {
+            const before = await window.pkm.getTranslationCacheStats();
+            await window.pkm.clearTranslationCache();
+            const after = await window.pkm.getTranslationCacheStats();
+            return before.entries >= 0 && after.entries === 0 && after.bytes === 0;
+          });
+          await step('literatureReviewFields', async () => {
+            const original = (snap.settings.literatureReviewFieldConfigs || []).map((item) => ({ ...item }));
+            const customId = 'custom-smoke-' + Date.now();
+            const updated = await window.pkm.updateSettings({
+              literatureReviewFieldConfigs: [
+                { id: 'oneSentenceSummary', kind: 'preset', field: 'oneSentenceSummary', label: '结论', enabled: true },
+                { id: customId, kind: 'custom', label: '复现结果', enabled: true },
+                { id: 'background', kind: 'preset', field: 'background', label: '', enabled: false },
+              ],
+            });
+            const configs = updated.literatureReviewFieldConfigs;
+            const ok = configs[0]?.id === 'oneSentenceSummary'
+              && configs[0]?.label === '结论'
+              && configs[1]?.id === customId
+              && configs[1]?.kind === 'custom'
+              && configs.find((item) => item.id === 'background')?.enabled === false;
+            await window.pkm.updateSettings({ literatureReviewFieldConfigs: original });
+            return ok;
+          });
           const rootId = snap && snap.libraries && snap.libraries[0]
             ? snap.libraries[0].rootFolderId
             : null;
@@ -531,6 +577,15 @@ async function createMainWindow(): Promise<BrowserWindow> {
           const pdf = snap2 && snap2.pdfs.find(p => folder && p.folderId === folder.id);
           out.pdfFound = !!pdf;
           if (pdf) {
+            await step('literatureReviewCustomValues', async () => {
+              const fieldId = 'custom-smoke-' + Date.now();
+              await window.pkm.saveLiteratureReviewCustomValue(pdf.id, fieldId, '独立字段内容');
+              const saved = await window.pkm.getLiteratureReviewCustomValues(pdf.id);
+              const ok = saved.some((item) => item.fieldId === fieldId && item.value === '独立字段内容');
+              await window.pkm.deleteLiteratureReviewCustomField(fieldId);
+              const removed = await window.pkm.getLiteratureReviewCustomValues(pdf.id);
+              return ok && !removed.some((item) => item.fieldId === fieldId);
+            });
             await step('copiedToLibrary', () => pdf.filepath.toLowerCase().indexOf('minepdf') > -1 && path.indexOf(pdf.filepath.toLowerCase()) === -1);
             await step('folderRealDir', () => pdf.filepath.toLowerCase().indexOf('\u5192\u70df\u6d4b\u8bd5') > -1);
             await step('movePdfToRoot', async () => {
@@ -1244,14 +1299,137 @@ async function createMainWindow(): Promise<BrowserWindow> {
                       maximizedDuring: during.maximized === true,
                       zoom121: Math.abs(during.scale - 1.21) < 0.02,
                       restoredW: Math.abs(after.sidebarW - before.sidebarW) < 5,
-                      // 退出后窗口还原会触发自动适配宽度，scale 变化是预期行为
-                      restoredScale: after.scale > 0.3,
+                      restoredScale: Math.abs(after.scale - before.scale) < 0.02,
                       restoredMax: after.maximized === before.maximized,
                       before, during, after,
                     };
                   })()
                 `);
                 console.log('[capture] immersiveDiag', JSON.stringify(immersiveDiag));
+                const ctrlWheelZoomDiag = await win.webContents.executeJavaScript(`
+                  (async () => {
+                    const snap = await window.pkm.getSnapshot();
+                    const pdf = snap.pdfs.find((p) => p.filename === 'PID-Tuning-Methods.pdf');
+                    if (!pdf) return { pdf: false };
+                    window.__pkmOpenPdf(pdf.id);
+                    await new Promise((r) => setTimeout(r, 1500));
+                    const sc = document.querySelector('[data-pan-scroll]');
+                    if (!sc) return { sc: false };
+                    sc.scrollTop = Math.min(sc.scrollHeight - sc.clientHeight, 1900);
+                    await new Promise((r) => setTimeout(r, 500));
+                    const sr = sc.getBoundingClientRect();
+                    const centerY = sr.top + sr.height * 0.48;
+                    const sheets = [...document.querySelectorAll('.pdf-page-sheet')];
+                    const sheet = sheets
+                      .filter((el) => {
+                        const r = el.getBoundingClientRect();
+                        return r.bottom > sr.top && r.top < sr.bottom;
+                      })
+                      .sort((a, b) => {
+                        const ar = a.getBoundingClientRect();
+                        const br = b.getBoundingClientRect();
+                        return Math.abs((ar.top + ar.bottom) / 2 - centerY)
+                          - Math.abs((br.top + br.bottom) / 2 - centerY);
+                      })[0];
+                    if (!sheet) return { sheet: false };
+                    const beforeRect = sheet.getBoundingClientRect();
+                    const x = Math.max(beforeRect.left + 8, Math.min(beforeRect.right - 8, sr.left + sr.width / 2));
+                    const y = Math.max(beforeRect.top + 8, Math.min(beforeRect.bottom - 8, centerY));
+                    const page = sheet.getAttribute('data-page-number');
+                    const beforeRatio = (y - beforeRect.top) / Math.max(1, beforeRect.height);
+                    const beforeWidth = beforeRect.width;
+                    const beforeCurrent = window.__pkmStore().currentPage;
+                    sc.dispatchEvent(new WheelEvent('wheel', {
+                      bubbles: true,
+                      cancelable: true,
+                      ctrlKey: true,
+                      deltaY: -120,
+                      clientX: x,
+                      clientY: y,
+                    }));
+                    await new Promise((r) => setTimeout(r, 700));
+                    const afterSheet = [...document.querySelectorAll('.pdf-page-sheet')].find(
+                      (el) => el.getAttribute('data-page-number') === page,
+                    );
+                    if (!afterSheet) return {
+                      page,
+                      afterSheet: false,
+                      reader: window.__pkmReaderPosition ? window.__pkmReaderPosition() : null,
+                      mounted: [...document.querySelectorAll('.pdf-page-sheet')]
+                        .map((el) => el.getAttribute('data-page-number')),
+                    };
+                    const afterRect = afterSheet.getBoundingClientRect();
+                    const afterRatio = (y - afterRect.top) / Math.max(1, afterRect.height);
+                    const afterCurrent = window.__pkmStore().currentPage;
+                    return {
+                      page,
+                      zoomed: afterRect.width > beforeWidth + 5,
+                      anchorStable: Math.abs(afterRatio - beforeRatio) < 0.035,
+                      pageStable: Math.abs(afterCurrent - beforeCurrent) <= 1,
+                      beforeRatio,
+                      afterRatio,
+                      beforeCurrent,
+                      afterCurrent,
+                    };
+                  })()
+                `);
+                console.log('[capture] ctrlWheelZoomDiag', JSON.stringify(ctrlWheelZoomDiag));
+                const windowResizePositionDiag = await win.webContents.executeJavaScript(`
+                  (async () => {
+                    const snap = await window.pkm.getSnapshot();
+                    const pdf = snap.pdfs.find((p) => p.filename === 'PID-Tuning-Methods.pdf');
+                    if (!pdf) return { pdf: false };
+                    if (await window.pkm.isMaximized()) {
+                      await window.pkm.toggleMaximize();
+                      await new Promise((r) => setTimeout(r, 900));
+                    }
+                    window.__pkmOpenPdf(pdf.id);
+                    await new Promise((r) => setTimeout(r, 1400));
+                    let sc = document.querySelector('[data-pan-scroll]');
+                    if (!sc) return { sc: false };
+                    sc.scrollTop = Math.min(sc.scrollHeight - sc.clientHeight, 1900);
+                    await new Promise((r) => setTimeout(r, 500));
+                    const sample = () => {
+                      sc = document.querySelector('[data-pan-scroll]');
+                      if (!sc) return null;
+                      const sr = sc.getBoundingClientRect();
+                      const probe = sr.top + Math.min(120, sr.height * 0.18);
+                      const sheet = [...document.querySelectorAll('.pdf-page-sheet')].find((el) => {
+                        const r = el.getBoundingClientRect();
+                        return r.top <= probe && r.bottom > probe;
+                      });
+                      if (!sheet) return { page: window.__pkmStore().currentPage, ratio: null, scrollTop: sc.scrollTop };
+                      const r = sheet.getBoundingClientRect();
+                      return {
+                        page: Number(sheet.getAttribute('data-page-number')),
+                        ratio: (probe - r.top) / Math.max(1, r.height),
+                        scrollTop: sc.scrollTop,
+                        sheetHeight: r.height,
+                        reader: window.__pkmReaderPosition ? window.__pkmReaderPosition() : null,
+                      };
+                    };
+                    const before = sample();
+                    await window.pkm.toggleMaximize();
+                    await new Promise((r) => setTimeout(r, 1100));
+                    const maximized = sample();
+                    await window.pkm.toggleMaximize();
+                    await new Promise((r) => setTimeout(r, 1100));
+                    const restored = sample();
+                    const same = (a, b) => a && b && a.page === b.page &&
+                      a.ratio != null && b.ratio != null && Math.abs(a.ratio - b.ratio) < 0.035;
+                    return {
+                      maximizeStable: same(before, maximized),
+                      restoreStable: same(before, restored),
+                      scaleStable: before && maximized && restored &&
+                        before.reader?.scale === maximized.reader?.scale &&
+                        before.reader?.scale === restored.reader?.scale,
+                      before,
+                      maximized,
+                      restored,
+                    };
+                  })()
+                `);
+                console.log('[capture] windowResizePositionDiag', JSON.stringify(windowResizePositionDiag));
                 await new Promise((r) => setTimeout(r, 600));
                 const image = await win.webContents.capturePage();
                 const outDir = path.join(process.cwd(), 'docs');
@@ -2363,13 +2541,24 @@ async function createMainWindow(): Promise<BrowserWindow> {
                         const added = after.filter((x) => !before.some((y) => y.id === x.id));
                         return added.length === 1 ? added[0].content || '' : null;
                       };
-                      // 向下：A行中间 -> B行中间；期望 = A[mid..] + B[..mid]
+                      // 期望文本：与生产高亮内容完全一致（用同一套 itemsToText 补全字形间距空格）
+                      const expected = (() => {
+                        const arrA =
+                          (typeof window.__pkmSelItems === 'function' && window.__pkmSelItems(page, 0, midA, A.n)) || [];
+                        const arrB =
+                          (typeof window.__pkmSelItems === 'function' && window.__pkmSelItems(page, 1, 0, midB + 1)) ||
+                          [];
+                        return typeof window.__pkmItemsToText === 'function'
+                          ? window.__pkmItemsToText(arrA.concat(arrB))
+                          : '';
+                      })();
+                      // 向下：A行中间 -> B行中间；期望 = A[mid..] + B[..mid]（文档顺序）
                       const down = await run(0, midA, 1, midB);
-                      const downOk = !!down && down === A.text.slice(midA) + B.text.slice(0, midB + 1);
+                      const downOk = !!down && down === expected;
                       // 向上：B行中间 -> A行中间；选区范围应与向下完全对称（内容按文档顺序输出）
                       const up = await run(1, midB, 0, midA);
-                      const upOk = !!up && up === A.text.slice(midA) + B.text.slice(0, midB + 1);
-                      return { pdf: true, page, aText: A.text, bText: B.text, midA, midB, down: down || null, downOk, up: up || null, upOk };
+                      const upOk = !!up && up === expected;
+                      return { pdf: true, page, aText: A.text, bText: B.text, midA, midB, expected, down: down || null, downOk, up: up || null, upOk };
                     })()
                   `);
                   console.log('[capture] selPreciseDiag', JSON.stringify(selPreciseDiag));
@@ -2911,6 +3100,7 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', () => {
+  translationManager.cancelAll();
   stopLibraryWatcher();
   pdfiumShutdown();
   closeDb();

@@ -1,4 +1,8 @@
 import { create } from 'zustand';
+import {
+  DEFAULT_LITERATURE_REVIEW_FIELD_CONFIGS,
+  LITERATURE_REVIEW_FIELD_ORDER,
+} from './shared/types';
 import type {
   AppSettings,
   Folder,
@@ -9,6 +13,7 @@ import type {
   Tag,
 } from './shared/types';
 import type { OutlineNode } from './lib/pdf';
+import type { ReadingAnchor } from './lib/pagePosition';
 import { forceLiteratureClean, flushLiteratureSave, isLiteratureDirty } from './lib/literatureDirty';
 
 export type ViewMode = 'library' | 'settings';
@@ -32,13 +37,20 @@ export interface LastSession {
   kind: 'library' | 'inbox';
   pdfId: number;
   page: number;
+  /** 页内阅读比例；旧会话没有该字段时按页首恢复。 */
+  offsetRatio?: number;
   ts: number;
 }
 
 /** 完整会话快照：恢复全部打开的标签页与分屏布局（3.2.1） */
 interface RestoredSession {
   screens: Array<{
-    tabs: Array<{ kind: 'library' | 'inbox'; pdfId: number }>;
+    tabs: Array<{
+      kind: 'library' | 'inbox';
+      pdfId: number;
+      page?: number;
+      offsetRatio?: number;
+    }>;
     activeTabIndex: number;
   }>;
   activeScreenIndex: number;
@@ -80,6 +92,23 @@ const DEFAULT_SETTINGS: AppSettings = {
   dblClickTogglePanels: true,
   uiFontScale: 1,
   disabledTagPresets: [],
+  literatureReviewFields: [...LITERATURE_REVIEW_FIELD_ORDER],
+  literatureReviewFieldConfigs: DEFAULT_LITERATURE_REVIEW_FIELD_CONFIGS.map((item) => ({ ...item })),
+  translation: {
+    enabled: true,
+    shortcutEnabled: false,
+    shortcutKeys: ['Alt', 'KeyT'],
+    provider: 'transmart',
+    defaultProviderRevision: 5,
+    sourceLanguage: 'auto',
+    targetLanguage: 'zh-CN',
+    contextMode: 'auto',
+    cacheEnabled: true,
+    timeoutMs: 20_000,
+    maxSelectedCharacters: 500_000,
+    longSelectionCharacters: 3_000,
+    openAICompatible: { name: 'OpenAI Compatible', endpoint: '', model: '' },
+  },
   libraryPath: '',
   libraryPdfDir: '',
 };
@@ -95,8 +124,27 @@ function tabInspectorTab(s: AppState, pdf: PdfRecord | undefined): InspectorTab 
   return pdf?.hasOutline ? 'outline' : 'literature';
 }
 
-function saveSession(kind: 'library' | 'inbox', pdfId: number, page: number): LastSession {
-  const sess: LastSession = { kind, pdfId, page, ts: Date.now() };
+function normalizeReadingAnchor(value: number | ReadingAnchor | undefined): ReadingAnchor {
+  if (typeof value === 'number') return { page: Math.max(1, Math.floor(value)), offsetRatio: 0 };
+  return {
+    page: Math.max(1, Math.floor(value?.page ?? 1)),
+    offsetRatio: Math.min(1, Math.max(0, value?.offsetRatio ?? 0)),
+  };
+}
+
+function saveSession(
+  kind: 'library' | 'inbox',
+  pdfId: number,
+  position: number | ReadingAnchor,
+): LastSession {
+  const anchor = normalizeReadingAnchor(position);
+  const sess: LastSession = {
+    kind,
+    pdfId,
+    page: anchor.page,
+    offsetRatio: anchor.offsetRatio,
+    ts: Date.now(),
+  };
   try {
     localStorage.setItem('pkm.lastSession', JSON.stringify(sess));
   } catch {
@@ -126,6 +174,16 @@ function openTabInScreen(screen: ReaderScreen, tab: DocTab): ReaderScreen {
   const existing = screen.tabs.find((t) => t.pdfId === tab.pdfId);
   if (existing) return { ...screen, activeTabId: existing.id };
   return { ...screen, tabs: [...screen.tabs, tab], activeTabId: tab.id };
+}
+
+function positionForTab(s: AppState, tab: DocTab | undefined): ReadingAnchor {
+  if (!tab) return normalizeReadingAnchor(s.currentPage);
+  return normalizeReadingAnchor(
+    s.tabPositions[tab.id]
+      ?? (s.lastSession?.pdfId === tab.pdfId
+        ? { page: s.lastSession.page, offsetRatio: s.lastSession.offsetRatio ?? 0 }
+        : s.tabPages[tab.pdfId]),
+  );
 }
 
 /** 「阅读时自动折叠知识库」：打开 PDF 时收起侧栏 */
@@ -225,11 +283,15 @@ interface AppState {
   setOutlineFor: (pdfId: number, nodes: OutlineNode[]) => void;
   requestJump: (page: number, top?: number | null) => void;
   consumeJump: () => void;
-  setCurrentPage: (page: number) => void;
+  setCurrentPage: (pdfId: number, page: number) => void;
+  /** 按标签保存精确阅读锚点；同一 PDF 在不同分屏中不会互相覆盖。 */
+  setReadingPosition: (tabId: string, pdfId: number, position: ReadingAnchor) => void;
   /** 记录某份 PDF 的阅读页码（标签切换/卸载时保留） */
   rememberTabPage: (pdfId: number, page: number) => void;
+  rememberTabPosition: (tabId: string, pdfId: number, position: ReadingAnchor) => void;
   /** 每份 PDF 上次阅读页码（按 pdfId 记忆，切标签/重开时恢复） */
   tabPages: Record<number, number>;
+  tabPositions: Record<string, ReadingAnchor>;
   setSidebarWidth: (w: number) => void;
   setInspectorWidth: (w: number) => void;
   toggleSidebarCollapsed: () => void;
@@ -273,6 +335,7 @@ export const useApp = create<AppState>((set, get) => ({
   jumpTop: null,
   currentPage: 1,
   tabPages: {},
+  tabPositions: {},
   sidebarWidth: Number(localStorage.getItem('pkm.sidebarWidth')) || 268,
   inspectorWidth: Number(localStorage.getItem('pkm.inspectorWidth')) || 320,
   sidebarCollapsed: false,
@@ -449,11 +512,13 @@ export const useApp = create<AppState>((set, get) => ({
     const pdfId = derivePdfId(s.screens, screenId);
     if (pdfId == null) return;
     const tab = screen.tabs.find((t) => t.id === screen.activeTabId) ?? screen.tabs[0];
+    const position = positionForTab(s, tab);
     set({
       activeScreenId: screenId,
       activePdfId: pdfId,
       // 记录当前阅读页码，关闭后重启可恢复到该页
-      lastSession: saveSession(tab?.kind ?? 'library', pdfId, s.tabPages[pdfId] ?? s.currentPage),
+      currentPage: position.page,
+      lastSession: saveSession(tab?.kind ?? 'library', pdfId, position),
     });
   },
   activateTab: (screenId, tabId) => {
@@ -464,11 +529,13 @@ export const useApp = create<AppState>((set, get) => ({
     const tab = screens
       .find((sc) => sc.id === screenId)
       ?.tabs.find((t) => t.id === tabId);
+    const position = positionForTab(s, tab);
     set({
       screens,
       activeScreenId: screenId,
       activePdfId: tab?.pdfId ?? null,
-      lastSession: tab ? saveSession(tab.kind, tab.pdfId, s.tabPages[tab.pdfId] ?? 1) : undefined,
+      currentPage: tab ? position.page : undefined,
+      lastSession: tab ? saveSession(tab.kind, tab.pdfId, position) : undefined,
       inspectorTab:
         tab?.pdfId != null
           ? tabInspectorTab(s, s.pdfs.find((p) => p.id === tab.pdfId) ?? s.inboxPdfs.find((p) => p.id === tab.pdfId))
@@ -601,6 +668,10 @@ export const useApp = create<AppState>((set, get) => ({
         screens: [...s.screens, newScreen],
         splitLayout: layout,
         splitRatio: 0.5,
+        tabPositions: {
+          ...s.tabPositions,
+          [tab.id]: positionForTab(s, curTab),
+        },
       });
       return;
     }
@@ -648,6 +719,8 @@ export const useApp = create<AppState>((set, get) => ({
       try {
         const snap = JSON.parse(rawSnap) as RestoredSession;
         const screens: ReaderScreen[] = [];
+        const restoredTabPages: Record<number, number> = {};
+        const restoredTabPositions: Record<string, ReadingAnchor> = {};
         let activeScreenId: string | null = null;
         (snap.screens ?? []).forEach((sc, idx) => {
           const tabs: DocTab[] = [];
@@ -657,7 +730,14 @@ export const useApp = create<AppState>((set, get) => ({
                 ? s.inboxPdfs.find((p) => p.id === t.pdfId)
                 : s.pdfs.find((p) => p.id === t.pdfId);
             if (!pdf) continue;
-            tabs.push({ id: nextTabId(), kind: t.kind, pdfId: t.pdfId });
+            const tab = { id: nextTabId(), kind: t.kind, pdfId: t.pdfId } satisfies DocTab;
+            tabs.push(tab);
+            const position = normalizeReadingAnchor({
+              page: t.page ?? 1,
+              offsetRatio: t.offsetRatio ?? 0,
+            });
+            restoredTabPositions[tab.id] = position;
+            restoredTabPages[t.pdfId] = position.page;
           }
           if (!tabs.length) return;
           const activeTabId =
@@ -670,7 +750,11 @@ export const useApp = create<AppState>((set, get) => ({
           const activeScreen = screens.find((sc) => sc.id === activeScreenId) ?? screens[0];
           const activeTab =
             activeScreen.tabs.find((t) => t.id === activeScreen.activeTabId) ?? activeScreen.tabs[0];
-          const page = Math.max(1, Math.floor(snap.page ?? 1));
+          const activePosition = normalizeReadingAnchor(
+            restoredTabPositions[activeTab.id]
+              ?? { page: snap.page ?? 1, offsetRatio: 0 },
+          );
+          restoredTabPages[activeTab.pdfId] = activePosition.page;
           const splitLayout: SplitLayout = screens.length <= 1 ? 'single' : snap.splitLayout;
           set({
             screens,
@@ -678,10 +762,12 @@ export const useApp = create<AppState>((set, get) => ({
             activePdfId: activeTab.pdfId,
             splitLayout,
             splitRatio: snap.splitRatio ?? 0.5,
-            lastSession: saveSession(activeTab.kind, activeTab.pdfId, page),
+            tabPages: { ...s.tabPages, ...restoredTabPages },
+            tabPositions: { ...s.tabPositions, ...restoredTabPositions },
+            currentPage: activePosition.page,
+            lastSession: saveSession(activeTab.kind, activeTab.pdfId, activePosition),
             ...sidebarPatchOnOpen(s),
           });
-          if (page > 1) s.requestJump(page);
           return;
         }
       } catch {
@@ -715,14 +801,22 @@ export const useApp = create<AppState>((set, get) => ({
     }
     s.openPdf(sess.pdfId);
     // openPdf 会把记录重置为第 1 页，这里恢复为上次阅读页码，保证记忆准确
-    const restored: LastSession = { ...sess, ts: Date.now() };
+    const restored: LastSession = {
+      ...sess,
+      page: Math.max(1, Math.floor(sess.page)),
+      offsetRatio: Math.min(1, Math.max(0, sess.offsetRatio ?? 0)),
+      ts: Date.now(),
+    };
     try {
       localStorage.setItem('pkm.lastSession', JSON.stringify(restored));
     } catch {
       /* ignore */
     }
-    set({ lastSession: restored });
-    if (sess.page > 1) s.requestJump(sess.page);
+    set({
+      lastSession: restored,
+      currentPage: Math.max(1, restored.page),
+      tabPages: { ...get().tabPages, [restored.pdfId]: Math.max(1, restored.page) },
+    });
   },
   setSelectedFolder: (id) => set({ selectedFolderId: id }),
   setInboxPdfs: (items) => set({ inboxPdfs: items }),
@@ -758,24 +852,54 @@ export const useApp = create<AppState>((set, get) => ({
     set((s) => ({ outlines: { ...s.outlines, [pdfId]: nodes } })),
   requestJump: (page, top) => set({ jumpPage: page, jumpTop: top ?? null }),
   consumeJump: () => set({ jumpPage: null, jumpTop: null }),
-  setCurrentPage: (page) => {
+  setCurrentPage: (pdfId, page) => {
     const s = get();
-    const pdfId = s.activePdfId ?? -1;
-    const tabPages = { ...s.tabPages, [pdfId]: page };
-    if (s.lastSession) {
-      const sess = { ...s.lastSession, page, ts: Date.now() };
+    const safePage = Math.max(1, Math.floor(page));
+    const tabPages = { ...s.tabPages, [pdfId]: safePage };
+    if (s.activePdfId === pdfId) {
+      const kind: LastSession['kind'] = s.inboxPdfs.some((item) => item.id === pdfId)
+        ? 'inbox'
+        : 'library';
+      const sess: LastSession = { kind, pdfId, page: safePage, ts: Date.now() };
       try {
         localStorage.setItem('pkm.lastSession', JSON.stringify(sess));
       } catch {
         /* ignore */
       }
-      set({ currentPage: page, lastSession: sess, tabPages });
+      set({ currentPage: safePage, lastSession: sess, tabPages });
     } else {
-      set({ currentPage: page, tabPages });
+      set({ tabPages });
+    }
+  },
+  setReadingPosition: (tabId, pdfId, position) => {
+    const s = get();
+    const anchor = normalizeReadingAnchor(position);
+    const tabPositions = { ...s.tabPositions, [tabId]: anchor };
+    const tabPages = { ...s.tabPages, [pdfId]: anchor.page };
+    const activeScreen = s.screens.find((screen) => screen.id === s.activeScreenId);
+    const activeTab = activeScreen?.tabs.find((tab) => tab.id === activeScreen.activeTabId);
+    if (activeTab?.id === tabId) {
+      const sess = saveSession(activeTab.kind, pdfId, anchor);
+      set({
+        currentPage: anchor.page,
+        lastSession: sess,
+        tabPages,
+        tabPositions,
+      });
+    } else {
+      set({ tabPages, tabPositions });
     }
   },
   rememberTabPage: (pdfId, page) =>
     set((s) => ({ tabPages: { ...s.tabPages, [pdfId]: Math.max(1, page) } })),
+  rememberTabPosition: (tabId, pdfId, position) =>
+    set((s) => {
+      const anchor = normalizeReadingAnchor(position);
+      return {
+        tabPages: { ...s.tabPages, [pdfId]: anchor.page },
+        tabPositions: { ...s.tabPositions, [tabId]: anchor },
+      };
+    }),
   setSidebarWidth: (w) => {
     const v = Math.min(420, Math.max(180, Math.round(w)));
     localStorage.setItem('pkm.sidebarWidth', String(v));
@@ -822,6 +946,8 @@ useApp.subscribe((s, prev) => {
   if (
     s.screens === prev.screens &&
     s.lastSession === prev.lastSession &&
+    s.tabPages === prev.tabPages &&
+    s.tabPositions === prev.tabPositions &&
     s.splitLayout === prev.splitLayout &&
     s.splitRatio === prev.splitRatio
   ) {
@@ -836,7 +962,15 @@ useApp.subscribe((s, prev) => {
       SESSION_KEY,
       JSON.stringify({
         screens: s.screens.map((sc) => ({
-          tabs: sc.tabs.map((t) => ({ kind: t.kind, pdfId: t.pdfId })),
+          tabs: sc.tabs.map((t) => {
+            const position = positionForTab(s, t);
+            return {
+              kind: t.kind,
+              pdfId: t.pdfId,
+              page: position.page,
+              offsetRatio: position.offsetRatio,
+            };
+          }),
           activeTabIndex: Math.max(0, sc.tabs.findIndex((t) => t.id === sc.activeTabId)),
         })),
         activeScreenIndex,

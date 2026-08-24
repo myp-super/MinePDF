@@ -1,8 +1,8 @@
 {
-  "version": "3.6.11",
-  "publishDate": "2026-08-16",
-  "url": "https://github.com/myp-super/MinePDF/releases/download/v3.6.11/MinePDF.Setup.3.6.11.exe",
+  "version": "3.12.4",
+  "publishDate": "2026-08-24",
+  "url": "https://github.com/myp-super/MinePDF/releases/download/v3.12.4/MinePDF.Setup.3.12.4.exe",
   "notes": [
-    "3.6.11 - PDF 渲染清晰度修复（LCD 亚像素抗锯齿、精确 DPI 渲染、高缩放/高 DPI 不再发虚）+ PDF 渲染诊断面板（可拖动、跟随主题）"
+    "3.12.4 - 修复最大化、还原小窗口及全屏切换时 PDF 阅读位置跳动；窗口变化不再自动改变 PDF 缩放，精确保持页码、页内位置和滚动位置；完善按标签保存阅读位置、页码跳转与重启恢复；并包含翻译、设置、笔记卡片、文献管理和高清截图等近期功能改进"
   ]
 }

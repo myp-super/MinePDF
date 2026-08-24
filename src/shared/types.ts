@@ -117,6 +117,45 @@ export interface LiteratureReview {
 }
 
 export type LiteratureReviewField = Exclude<keyof LiteratureReview, 'pdfId' | 'createdAt' | 'updatedAt'>;
+export const LITERATURE_REVIEW_FIELD_ORDER: LiteratureReviewField[] = [
+  'background',
+  'researchQuestion',
+  'existingMethods',
+  'existingMethodProblems',
+  'coreMethod',
+  'innovations',
+  'experiments',
+  'limitations',
+  'myUnderstanding',
+  'myQuestions',
+  'researchImplications',
+  'oneSentenceSummary',
+];
+
+/** 文献阅读记录表单项。内置项沿用结构化列，自定义项按 field id 独立存储。 */
+export interface LiteratureReviewFieldConfig {
+  id: string;
+  kind: 'preset' | 'custom';
+  /** 仅内置项存在；id 与 field 保持一致。 */
+  field?: LiteratureReviewField;
+  /** 空字符串表示内置项使用当前界面语言的默认名称。 */
+  label: string;
+  enabled: boolean;
+}
+
+export const DEFAULT_LITERATURE_REVIEW_FIELD_CONFIGS: LiteratureReviewFieldConfig[] =
+  LITERATURE_REVIEW_FIELD_ORDER.map((field) => ({
+    id: field,
+    kind: 'preset',
+    field,
+    label: '',
+    enabled: true,
+  }));
+
+export interface LiteratureReviewCustomValue {
+  fieldId: string;
+  value: string;
+}
 export type ExportFormat = 'xlsx' | 'csv';
 
 /** 自动识别结果（可能为空字段，不允许静默覆盖用户已填内容） */
@@ -201,6 +240,12 @@ export interface AppSettings {
   uiFontScale: number;
   /** 被用户隐藏的默认标签名（推荐列表不再显示，可通过“恢复默认标签”还原） */
   disabledTagPresets: string[];
+  /** @deprecated 兼容 3.11 及更早配置；新界面使用 literatureReviewFieldConfigs。 */
+  literatureReviewFields: LiteratureReviewField[];
+  /** 文献管理阅读记录的字段定义、顺序、名称与启用状态。 */
+  literatureReviewFieldConfigs: LiteratureReviewFieldConfig[];
+  /** 翻译仅发送选中文本、可选上下文和启用的术语，不上传 PDF 文件。 */
+  translation: TranslationSettings;
   /** 知识库根目录（Documents/PDFKnowledgeManager） */
   libraryPath: string;
   /** PDF 库文件夹：所有 PDF 的统一存放目录（Obsidian 式） */
@@ -235,6 +280,135 @@ export interface PdfiumRenderResult {
   h: number;
   data: ArrayBuffer;
   ms: number;
+}
+
+export type TranslationProviderId =
+  | 'mymemory'
+  | 'edge'
+  | 'transmart'
+  | 'youdao'
+  | 'bing'
+  | 'niutrans'
+  | 'openai-compatible'
+  | 'google'
+  | 'deepl'
+  | 'qwen'
+  | 'custom';
+
+export interface TranslationSettings {
+  enabled: boolean;
+  shortcutEnabled: boolean;
+  /** One or two normalized KeyboardEvent.code values. */
+  shortcutKeys: string[];
+  provider: TranslationProviderId;
+  defaultProviderRevision: number;
+  sourceLanguage: string;
+  targetLanguage: string;
+  contextMode: 'none' | 'auto';
+  cacheEnabled: boolean;
+  timeoutMs: number;
+  maxSelectedCharacters: number;
+  longSelectionCharacters: number;
+  openAICompatible: {
+    name: string;
+    endpoint: string;
+    model: string;
+  };
+}
+
+export type TranslationProviderState =
+  | 'available'
+  | 'configured'
+  | 'not-configured'
+  | 'unavailable'
+  | 'error';
+
+export interface TranslationProviderStatus {
+  id: TranslationProviderId;
+  name: string;
+  state: TranslationProviderState;
+  implemented: boolean;
+  requiresCredential: boolean;
+  freeWithoutKey?: boolean;
+  experimental?: boolean;
+  detail?: string;
+}
+
+export type TranslationErrorCode =
+  | 'ABORTED'
+  | 'TIMEOUT'
+  | 'NETWORK'
+  | 'UNAUTHORIZED'
+  | 'RATE_LIMITED'
+  | 'PROVIDER_UNAVAILABLE'
+  | 'NOT_CONFIGURED'
+  | 'TEXT_TOO_LONG'
+  | 'EMPTY_RESULT'
+  | 'INVALID_REQUEST'
+  | 'PROVIDER_ERROR';
+
+export interface TranslationErrorPayload {
+  code: TranslationErrorCode;
+  message: string;
+  retryable: boolean;
+  status?: number;
+}
+
+export interface TranslateRequest {
+  requestId: string;
+  pdfId: number;
+  page: number;
+  text: string;
+  sourceLanguage?: string;
+  targetLanguage?: string;
+  context?: string;
+  provider?: TranslationProviderId;
+}
+
+export interface TranslationResult {
+  requestId: string;
+  translatedText: string;
+  provider: TranslationProviderId;
+  providerName: string;
+  providerModel: string;
+  sourceLanguage: string;
+  targetLanguage: string;
+  detectedLanguage?: string;
+  cached: boolean;
+  usage?: { inputTokens?: number; outputTokens?: number };
+}
+
+export type TranslationInvokeResult =
+  | { ok: true; data: TranslationResult }
+  | { ok: false; error: TranslationErrorPayload };
+
+export interface GlossaryEntry {
+  id: number;
+  term: string;
+  translation: string;
+  domain: string;
+  note: string;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface GlossaryEntryInput {
+  term: string;
+  translation: string;
+  domain?: string;
+  note?: string;
+  enabled?: boolean;
+}
+
+export interface ProviderCredentialInput {
+  provider: Extract<TranslationProviderId, 'niutrans' | 'openai-compatible'>;
+  apiKey: string;
+}
+
+export interface TranslationCacheStats {
+  entries: number;
+  bytes: number;
 }
 
 /** PDFium 原生提取的页内链接（坐标使用 PDF 用户空间，y 轴向上，与高亮四元组一致） */
@@ -396,6 +570,9 @@ export interface PkmApi {
     field: LiteratureReviewField,
     value: string,
   ): Promise<void>;
+  getLiteratureReviewCustomValues(pdfId: number): Promise<LiteratureReviewCustomValue[]>;
+  saveLiteratureReviewCustomValue(pdfId: number, fieldId: string, value: string): Promise<void>;
+  deleteLiteratureReviewCustomField(fieldId: string): Promise<void>;
   /** 导出文献（pdfIds 顺序即导出顺序），返回保存路径或 null（取消） */
   exportLiterature(pdfIds: number[], format: ExportFormat): Promise<string | null>;
 
@@ -411,6 +588,13 @@ export interface PkmApi {
 
   getSettings(): Promise<AppSettings>;
   updateSettings(patch: Partial<AppSettings>): Promise<AppSettings>;
+  translate(input: TranslateRequest): Promise<TranslationInvokeResult>;
+  cancelTranslation(requestId: string): Promise<boolean>;
+  getTranslationProviders(): Promise<TranslationProviderStatus[]>;
+  saveProviderCredential(input: ProviderCredentialInput): Promise<void>;
+  deleteProviderCredential(provider: ProviderCredentialInput['provider']): Promise<void>;
+  getTranslationCacheStats(): Promise<TranslationCacheStats>;
+  clearTranslationCache(): Promise<void>;
   checkForUpdates(): Promise<UpdateResult>;
   downloadUpdate(url: string): Promise<{ filePath: string; size: number }>;
   onDownloadProgress(cb: (percent: number) => void): () => void;
@@ -432,6 +616,8 @@ export interface PkmApi {
   isMaximized(): Promise<boolean>;
   onFullScreenChange(cb: (v: boolean) => void): () => void;
   onMaximizedChange(cb: (v: boolean) => void): () => void;
+  /** 最大化、还原或全屏改变窗口边界前触发，供阅读器冻结当前位置。 */
+  onViewportWillChange(cb: () => void): () => void;
   /** 主进程通知窗口布局需重排（无边框窗口缩放/最大化后） */
   onWindowRelayout(cb: () => void): () => void;
   /** 渲染诊断：主进程 DPR / 缩放 / PDFium 信息 */

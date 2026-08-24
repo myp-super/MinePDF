@@ -20,6 +20,10 @@ import type {
   PdfiumRenderResult,
   ReadingStatus,
   SearchResult,
+  ProviderCredentialInput,
+  TranslateRequest,
+  TranslationErrorPayload,
+  TranslationResult,
 } from '../../src/shared/types';
 import { getDataDir, getLibraryPdfDir, getLibraryRoot } from '../db/database';
 import { repository } from '../db/repository';
@@ -30,6 +34,9 @@ import { getSettings, updateSettings } from '../services/settings';
 import { detectAndSave } from '../services/literature';
 import { exportLiterature } from '../services/export';
 import { checkForUpdates, downloadUpdate } from '../services/updater';
+import { credentialStore } from '../services/translation/credentialStore';
+import { normalizeTranslationError } from '../services/translation/errors';
+import { translationManager } from '../services/translation/manager';
 import {
   isPdfiumAvailable,
   pdfiumClose,
@@ -329,6 +336,8 @@ export function registerIpc(): void {
   handle('window:minimize', () => mainWin?.minimize());
   handle('window:toggle-maximize', () => {
     if (!mainWin) return false;
+    // 在原生窗口边界开始变化前通知阅读器冻结位置；maximize/unmaximize 事件本身已经太晚。
+    mainWin.webContents.send('window:viewport-will-change');
     if (mainWin.isMaximized()) {
       mainWin.unmaximize();
       return false;
@@ -337,7 +346,10 @@ export function registerIpc(): void {
     return true;
   });
   handle('window:close', () => mainWin?.close());
-  handle('window:set-fullscreen', (flag: boolean) => mainWin?.setFullScreen(Boolean(flag)));
+  handle('window:set-fullscreen', (flag: boolean) => {
+    mainWin?.webContents.send('window:viewport-will-change');
+    mainWin?.setFullScreen(Boolean(flag));
+  });
   handle('window:is-fullscreen', () => mainWin?.isFullScreen() ?? false);
   handle('window:is-maximized', () => mainWin?.isMaximized() ?? false);
   // 渲染诊断：核对 Electron/Windows DPR、webContents 缩放与 PDFium DLL 是否一致
@@ -529,6 +541,15 @@ export function registerIpc(): void {
     (pdfId: number, field: LiteratureReviewField, value: string) =>
       repository.saveLiteratureReviewField(pdfId, field, value),
   );
+  handle('litreview:get-custom-values', (pdfId: number) =>
+    repository.getLiteratureReviewCustomValues(pdfId),
+  );
+  handle('litreview:save-custom-value', (pdfId: number, fieldId: string, value: string) =>
+    repository.saveLiteratureReviewCustomValue(pdfId, fieldId, value),
+  );
+  handle('litreview:delete-custom-field', (fieldId: string) =>
+    repository.deleteLiteratureReviewCustomField(fieldId),
+  );
   handle(
     'literature:export',
     async (pdfIds: number[], format: ExportFormat) => exportLiterature(pdfIds, format),
@@ -610,6 +631,26 @@ export function registerIpc(): void {
   // ---------- 设置与数据 ----------
   handle<AppSettings>('settings:get', () => getSettings());
   handle<AppSettings>('settings:update', (patch: Partial<AppSettings>) => updateSettings(patch));
+  ipcMain.handle('translation:translate', async (_event, input: TranslateRequest): Promise<
+    | { ok: true; data: TranslationResult }
+    | { ok: false; error: TranslationErrorPayload }
+  > => {
+    try {
+      return { ok: true, data: await translationManager.translate(input) };
+    } catch (error) {
+      return { ok: false, error: normalizeTranslationError(error).toPayload() };
+    }
+  });
+  handle('translation:cancel', (requestId: string) => translationManager.cancel(requestId));
+  handle('translation:providers', () => translationManager.listProviders());
+  handle('translation:credential-save', (input: ProviderCredentialInput) => {
+    credentialStore.save(input.provider, input.apiKey);
+  });
+  handle('translation:credential-delete', (provider: ProviderCredentialInput['provider']) =>
+    credentialStore.delete(provider),
+  );
+  handle('translation:cache-stats', () => repository.getTranslationCacheStats());
+  handle('translation:cache-clear', () => repository.clearTranslationCache());
   handle<string | null>('settings:choose-dir', async (title: string) => {
     const res = await dialog.showOpenDialog(mainWin!, {
       title,

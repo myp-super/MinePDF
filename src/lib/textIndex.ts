@@ -169,24 +169,34 @@ export function buildPageLines(items: TextItemQuad[]): LineBand[] {
   }
 
   // ---------- 视觉列聚类 ----------
-  // 同一旋转、横向中心接近的文本行聚为一列；旋转文本天然独立成列。
-  // 全宽页眉/页脚中心位于页面中部，不会并入左右正文列。
-  const colTol = Math.max(medianW * 4, 14);
+  // 按行顺序（上→下）处理：同一视觉列的相邻行（纵向间隙 ≤ blockGap）且横向重叠
+  // ≥ 较小宽度一半的并入同一列；页眉/页脚/大段留白因纵向间隙过大而独立成列。
+  // 一条行同时对行宽有实质覆盖（≥ 行宽 1/4）的列不止一个（全宽跨栏标题/公式），
+  // 则独立成列，避免把左右两栏桥接成同一栏。旋转文本天然独立成列。
+  const blockGap = Math.max(medianH * 2.5, 20);
   const columns: { id: number; rot: number; minX: number; maxX: number; minY: number; maxY: number }[] = [];
   for (const line of lines) {
-    const cx = (line.minX + line.maxX) / 2;
+    const lineW = line.maxX - line.minX;
     let best = -1;
-    let bestD = Infinity;
+    let bestOverlap = -1;
+    let matched = 0;
     for (let ci = 0; ci < columns.length; ci++) {
       const c = columns[ci];
       if (c.rot !== line.rot) continue;
-      const d = Math.abs(cx - (c.minX + c.maxX) / 2);
-      if (d < bestD) {
-        bestD = d;
+      const overlap = Math.min(line.maxX, c.maxX) - Math.max(line.minX, c.minX);
+      const colW = Math.max(c.maxX - c.minX, 1);
+      if (overlap < Math.max(2, 0.5 * Math.min(lineW, colW))) continue;
+      // 纵向相邻：行与列之间的空白不超过文本块阈值（垂直重叠视为 0）
+      const gap = line.maxY < c.minY ? c.minY - line.maxY : line.minY > c.maxY ? line.minY - c.maxY : 0;
+      if (gap > blockGap) continue;
+      if (overlap >= 0.25 * lineW) matched++;
+      if (overlap > bestOverlap) {
+        bestOverlap = overlap;
         best = ci;
       }
     }
-    if (best >= 0 && bestD <= colTol) {
+    // 同时实质覆盖多个列 → 独立成列；否则并入重叠最多的列
+    if (best >= 0 && matched <= 1) {
       const c = columns[best];
       c.minX = Math.min(c.minX, line.minX);
       c.maxX = Math.max(c.maxX, line.maxX);
@@ -203,7 +213,6 @@ export function buildPageLines(items: TextItemQuad[]): LineBand[] {
   // ---------- 文本块切分 ----------
   // 同一列内，相邻行的纵向空隙超过阈值（约 2.5 倍行高）即切为独立文本块：
   // 正文段落保持同块可连续选择；页眉/页脚/页码/图注/大幅留白前后独立成块。
-  const blockGap = Math.max(medianH * 2.5, 20);
   const byCol = new Map<number, LineBand[]>();
   for (const line of lines) {
     const arr = byCol.get(line.col) ?? [];
@@ -227,18 +236,9 @@ export function buildPageLines(items: TextItemQuad[]): LineBand[] {
   return lines;
 }
 
-/** 取整页文本索引（读序项 + 行带），缓存 */
-export async function getPageTextIndex(
-  pdfId: number,
-  pageNumber: number,
-): Promise<PageTextIndex> {
-  const items = await getPageTextQuads(pdfId, pageNumber);
-  const key = `${pdfId}:${pageNumber}`;
-  let lines = lineCache.get(key);
-  if (!lines) {
-    lines = buildPageLines(items);
-    lineCache.set(key, lines);
-  }
+/** 由文本项构建整页文本索引（读序项 + 行带 + 视觉行 + 列汇总）；可传入缓存行带跳过聚类 */
+export function buildPageIndex(items: TextItemQuad[], cachedLines?: LineBand[]): PageTextIndex {
+  const lines = cachedLines ?? buildPageLines(items);
   const rowLines: number[][] = [];
   for (let i = 0; i < lines.length; i++) {
     const r = lines[i].row;
@@ -258,6 +258,19 @@ export async function getPageTextIndex(
     }
   }
   return { items, lines, rowLines, columns };
+}
+
+/** 取整页文本索引（读序项 + 行带），缓存 */
+export async function getPageTextIndex(
+  pdfId: number,
+  pageNumber: number,
+): Promise<PageTextIndex> {
+  const items = await getPageTextQuads(pdfId, pageNumber);
+  const key = `${pdfId}:${pageNumber}`;
+  const cached = lineCache.get(key);
+  const index = buildPageIndex(items, cached);
+  if (!cached) lineCache.set(key, index.lines);
+  return index;
 }
 
 /**

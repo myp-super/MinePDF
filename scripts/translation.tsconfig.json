@@ -1,0 +1,37 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM"],
+    "module": "CommonJS",
+    "moduleResolution": "node",
+    "outDir": "../work/translation-test-out",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "types": ["node"]
+  },
+  "include": [
+    "translation.test.ts",
+    "../electron/services/translation/cache.ts",
+    "../electron/services/translation/errors.ts",
+    "../electron/services/translation/glossary.ts",
+    "../electron/services/translation/http.ts",
+    "../electron/services/translation/prompt.ts",
+    "../electron/services/translation/providerStatus.ts",
+    "../electron/services/translation/quality.ts",
+    "../electron/services/translation/scheduler.ts",
+    "../electron/services/translation/providers/openAICompatible.ts",
+    "../electron/services/translation/providers/niuTrans.ts",
+    "../electron/services/translation/providers/googleWeb.ts",
+    "../electron/services/translation/providers/edgeWeb.ts",
+    "../electron/services/translation/providers/transmartWeb.ts",
+    "../electron/services/translation/providers/youdaoWeb.ts",
+    "../electron/services/translation/providers/myMemory.ts",
+    "../electron/services/translation/providers/textChunks.ts",
+    "../electron/services/translation/types.ts",
+    "../src/lib/translation.ts",
+    "../src/lib/noteReference.ts",
+    "../src/lib/shortcut.ts",
+    "../src/shared/types.ts"
+  ]
+}

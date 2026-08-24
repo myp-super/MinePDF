@@ -1,7 +1,7 @@
 {
   "name": "mine-pdf",
   "productName": "MinePDF",
-  "version": "3.9.2",
+  "version": "3.12.4",
   "description": "MinePDF",
   "author": "MinePDF Team",
   "license": "MIT",
@@ -17,6 +17,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.electron.json --noEmit",
     "pdfium:download": "node scripts/download-pdfium.mjs",
     "test:sel": "tsc -p scripts/selregression.tsconfig.json && node work/selregression-out/scripts/selregression.js",
+    "test:translation": "tsc -p scripts/translation.tsconfig.json && node --test work/translation-test-out/scripts/translation.test.js",
     "dist": "npm run build && electron-builder --win nsis portable --config electron-builder.yml --publish never",
     "dist:dir": "npm run build && electron-builder --win dir --config electron-builder.yml",
     "postinstall": "electron-builder install-app-deps"

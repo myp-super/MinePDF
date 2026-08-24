@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronRight, Copyright, FileText, Info, Shield, ShieldCheck } from 'lucide-react';
+import { ChevronDown, Copyright, FileText, Info, Shield, ShieldCheck } from 'lucide-react';
 import React, { useEffect, useState } from 'react';
 import { useT } from '../i18n';
 import { Modal } from './ui';
@@ -39,7 +39,72 @@ Reporting a Vulnerability
 请不要在公开 Issue 中直接贴出 Cookie、Token、账号信息、私密链接或可复现的敏感数据。`;
 
 /** 最近版本更新内容 */
-const CHANGELOG_TEXT = `3.9.2（当前版本）
+const CHANGELOG_TEXT = `3.12.4（当前版本）
+• 修复最大化和还原小窗口时视口高度变化再次改写当前阅读页的问题
+• 窗口尺寸变化不再自动改变 PDF 缩放比例，避免连续两轮布局造成跳页
+• 增加视口尾部缓冲，阅读到文档末尾时最大化窗口也不会因滚动上限变化而被推回上一页
+
+3.12.3
+• 统一 PDF 阅读锚点，修复全屏、窗口变化和标签切回后阅读位置跳动
+• 修复输入页码跳转不准确，以及跳转后滚动时页码显示被冻结的问题
+• 会话按标签保存页码与页内位置，重新打开应用可准确回到上次阅读处
+• 同一 PDF 在不同分屏中可分别保持各自阅读位置
+
+3.12.2
+• 修复 Ctrl + 滚轮缩放时阅读画面被二次校正、意外跳页的问题
+• 缩放现在只以鼠标位置为锚点，鼠标下的 PDF 内容在放大缩小时保持不动
+
+3.12.1
+• 修复进入/退出沉浸全屏或界面重排后 PDF 阅读位置来回跳动
+• 页码改为基于完整虚拟布局实时计算，滚动后页码不再固定或错误回到第 1 页
+• 修复输入页码后跳转不准确，并在用户滚动时立即停止后台对齐，避免页面被锁住
+• 会话快照现在保存每个标签的阅读页码，重新打开应用可恢复上次阅读位置
+
+3.12.0
+• 关于页的更新内容、许可协议与安全说明改为默认折叠，减少页面长度
+• 文献阅读记录字段支持新增、重命名与删除，自定义字段内容按每篇文献独立保存
+• 阅读记录字段改为长按拖拽手柄排序，并提供按压与拖动状态反馈
+
+3.11.0
+• 文库设置新增文献阅读记录表单配置，可启用、隐藏并调整 12 个结构化字段的顺序
+• 关于 MinePDF 改为在设置页直接完整展示，不再通过按钮打开或折叠内容
+• 笔记截图改用 PDFium 约 3× 像素密度重新渲染，显著提升图片与导出 PDF 的清晰度
+• 修复高亮导入笔记后预览链接无法跳回 PDF，并修正高亮顶部坐标定位
+
+3.10.1
+• 修复翻译卡片错误包含后续普通笔记内容的问题；旧版翻译卡片现在精确截止到时间行
+
+3.10.0
+• 设置页重构为左侧分类导航 + 右侧详细设置，减少查找设置时的长距离滚动
+• 笔记面板新增可折叠 Markdown 入门教程，覆盖标题、公式、表格、链接及 C / Python 代码块
+• Add to Note 的翻译内容在预览与 PDF 导出中显示为独立卡片，同时保持 Markdown 可编辑和旧笔记兼容
+
+3.9.8
+• 修复翻译结果 Add to Note 后英文原文词间空格丢失的问题
+• “关于 MinePDF”补齐近期版本更新记录
+
+3.9.7
+• 翻译结果弹窗移除具体翻译服务、在线来源和缓存状态显示，操作区更简洁
+
+3.9.6
+• 新增 Tencent TranSmart 与 Youdao Web 两个免 Key 翻译源
+• 免 Key 服务改为短延迟竞速与自动切换，失败源临时熔断，减少等待和手动 Retry
+• 增加异常译文质量检查，并修正备用服务结果的缓存复用
+
+3.9.5
+• 翻译快捷键支持自行录制，可设置任意单键或同时按下的两个键
+• 分屏模式下快捷键仅作用于当前活动阅读窗格
+
+3.9.4
+• 翻译结果弹窗支持拖动，Providers 默认折叠，需密钥的服务改为点击后配置
+• 删除科研术语表，新增翻译缓存说明、统计和清空按钮
+• Add to Note 自动增加 Translation 序号；移除低质量的全文翻译模式
+
+3.9.3
+• 修复翻译失败时出现 Unexpected end of JSON input 的问题
+• 长选区翻译改为完整分块处理，避免只翻译前半部分
+
+3.9.2
 • 阅读状态「标记为已读」改为图标+文字，面板变窄时自动只留图标（悬停有提示）
 
 3.9.1
@@ -177,24 +242,80 @@ function ExpandableBlock({
 }) {
   const [open, setOpen] = useState(false);
   return (
-    <div className="rounded-lg border border-app-border bg-app-panel2 px-3.5 py-3">
-      <div className="flex items-center gap-2 text-[12px] font-semibold text-app-text">
-        {icon}
-        {title}
-      </div>
-      <p className="mt-1.5 text-[11.5px] leading-relaxed text-app-text/80">{summary}</p>
+    <div className="overflow-hidden rounded-lg border border-app-border bg-app-panel2">
       <button
-        className="mt-1.5 flex items-center gap-1 text-[11.5px] text-app-accent transition-colors hover:text-app-text"
-        onClick={() => setOpen((v) => !v)}
+        type="button"
+        className="flex w-full items-start gap-2 px-3.5 py-3 text-left transition-colors hover:bg-app-base/25"
+        onClick={() => setOpen((value) => !value)}
+        aria-expanded={open}
       >
-        {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-        {open ? '收起' : '查看完整内容'}
+        <span className="mt-0.5 shrink-0">{icon}</span>
+        <span className="min-w-0 flex-1">
+          <span className="block text-[12px] font-semibold text-app-text">{title}</span>
+          <span className="mt-1 block text-[11.5px] leading-relaxed text-app-text/80">{summary}</span>
+        </span>
+        <ChevronDown
+          size={14}
+          className={`mt-0.5 shrink-0 text-app-muted transition-transform ${open ? 'rotate-180' : ''}`}
+        />
       </button>
       {open && (
-        <pre className="mt-2 max-h-56 overflow-y-auto whitespace-pre-wrap rounded-md bg-app-base/60 px-3 py-2 text-[10.5px] leading-relaxed text-app-text/75">
+        <pre className="mx-3.5 mb-3 max-h-72 overflow-y-auto whitespace-pre-wrap rounded-md bg-app-base/60 px-3 py-2 text-[10.5px] leading-relaxed text-app-text/75">
           {full}
         </pre>
       )}
+    </div>
+  );
+}
+
+export function AboutContent({ appVersion }: { appVersion: string }) {
+  const t = useT();
+  return (
+    <div className="space-y-4">
+      <div className="rounded-lg border border-app-border bg-app-panel2 px-3.5 py-3">
+        <div className="flex items-center gap-2 text-[12px] font-semibold text-app-text">
+          <Info size={13} className="shrink-0 text-app-accent" />
+          {t('about.version')}
+        </div>
+        <div className="mt-2">
+          <span className="rounded border border-app-border px-1.5 py-0.5 text-[11px] tabular-nums text-app-text/90">
+            MinePDF v{appVersion || '—'}
+          </span>
+        </div>
+      </div>
+
+      <ExpandableBlock
+        title={t('about.changelog')}
+        icon={<Info size={13} className="shrink-0 text-app-accent" />}
+        summary={t('about.changelogSummary')}
+        full={CHANGELOG_TEXT}
+      />
+      <ExpandableBlock
+        title={t('about.license')}
+        icon={<FileText size={13} className="shrink-0 text-app-accent" />}
+        summary={t('about.licenseBody')}
+        full={MIT_LICENSE}
+      />
+      <ExpandableBlock
+        title={t('about.security')}
+        icon={<Shield size={13} className="shrink-0 text-app-accent" />}
+        summary={t('about.securityBody')}
+        full={SECURITY_TEXT}
+      />
+      <div className="rounded-lg border border-app-border bg-app-panel2 px-3.5 py-3">
+        <div className="flex items-center gap-2 text-[12px] font-semibold text-app-text">
+          <ShieldCheck size={13} className="shrink-0 text-app-accent" />
+          {t('about.privacy')}
+        </div>
+        <p className="mt-1.5 text-[11.5px] leading-relaxed text-app-text/80">{t('about.privacyBody')}</p>
+      </div>
+      <div className="rounded-lg border border-app-border bg-app-panel2 px-3.5 py-3">
+        <div className="flex items-center gap-2 text-[12px] font-semibold text-app-text">
+          <Copyright size={13} className="shrink-0 text-app-accent" />
+          {t('about.copyright')}
+        </div>
+        <p className="mt-1.5 text-[11.5px] leading-relaxed text-app-text/80">{t('about.copyrightBody')}</p>
+      </div>
     </div>
   );
 }
@@ -215,61 +336,8 @@ export function AboutModal({ open, onClose }: { open: boolean; onClose: () => vo
 
   return (
     <Modal open={open} onClose={onClose} title={t('about.title')} width={520}>
-      <div className="max-h-[62vh] space-y-4 overflow-y-auto py-1 pr-0.5">
-        {/* 版本信息 */}
-        <div className="rounded-lg border border-app-border bg-app-panel2 px-3.5 py-3">
-          <div className="flex items-center gap-2 text-[12px] font-semibold text-app-text">
-            <Info size={13} className="shrink-0 text-app-accent" />
-            {t('about.version')}
-          </div>
-          <div className="mt-2">
-            <span className="rounded border border-app-border px-1.5 py-0.5 text-[11px] tabular-nums text-app-text/90">
-              MinePDF v{appVersion || '—'}
-            </span>
-          </div>
-        </div>
-
-        {/* 更新内容 */}
-        <ExpandableBlock
-          title={t('about.changelog')}
-          icon={<Info size={13} className="shrink-0 text-app-accent" />}
-          summary={t('about.changelogSummary')}
-          full={CHANGELOG_TEXT}
-        />
-
-        {/* 许可协议 */}
-        <ExpandableBlock
-          title={t('about.license')}
-          icon={<FileText size={13} className="shrink-0 text-app-accent" />}
-          summary={t('about.licenseBody')}
-          full={MIT_LICENSE}
-        />
-
-        {/* 安全说明 */}
-        <ExpandableBlock
-          title={t('about.security')}
-          icon={<Shield size={13} className="shrink-0 text-app-accent" />}
-          summary={t('about.securityBody')}
-          full={SECURITY_TEXT}
-        />
-
-        {/* 隐私说明 */}
-        <div className="rounded-lg border border-app-border bg-app-panel2 px-3.5 py-3">
-          <div className="flex items-center gap-2 text-[12px] font-semibold text-app-text">
-            <ShieldCheck size={13} className="shrink-0 text-app-accent" />
-            {t('about.privacy')}
-          </div>
-          <p className="mt-1.5 text-[11.5px] leading-relaxed text-app-text/80">{t('about.privacyBody')}</p>
-        </div>
-
-        {/* 版权归属 */}
-        <div className="rounded-lg border border-app-border bg-app-panel2 px-3.5 py-3">
-          <div className="flex items-center gap-2 text-[12px] font-semibold text-app-text">
-            <Copyright size={13} className="shrink-0 text-app-accent" />
-            {t('about.copyright')}
-          </div>
-          <p className="mt-1.5 text-[11.5px] leading-relaxed text-app-text/80">{t('about.copyrightBody')}</p>
-        </div>
+      <div className="max-h-[62vh] overflow-y-auto py-1 pr-0.5">
+        <AboutContent appVersion={appVersion} />
       </div>
     </Modal>
   );

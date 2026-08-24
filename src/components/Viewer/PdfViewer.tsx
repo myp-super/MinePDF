@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { BookOpen, ChevronDown } from 'lucide-react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { BookOpen, ChevronDown, Languages } from 'lucide-react';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import type { AnnotationRecord, PdfiumOpenResult, PdfRecord, Quad } from '../../shared/types';
 import { useT, useTError } from '../../i18n';
@@ -21,34 +21,40 @@ import {
 } from '../../lib/pageImageCache';
 import { pdfiumRenderQueued } from '../../lib/pdfiumBatcher';
 import {
+  readingAnchorAtScrollPosition,
+  readingProbeOffset,
+  remapScrollPositionAtViewport,
+  scrollPositionForReadingAnchor,
+  type ReadingAnchor,
+} from '../../lib/pagePosition';
+import {
   getPageTextIndex,
   mergeSelectionItems,
   type PageTextIndex,
   type TextItemQuad,
 } from '../../lib/textIndex';
+import {
+  computeRowSelection,
+  itemsToText,
+  makeSelectionContext,
+  pointToRowChar,
+  type SelCtx,
+  type SelPoint,
+} from '../../lib/selection';
 import { useApp } from '../../store';
+import { formatTranslationNote, isCurrentTranslationRequest, nextTranslationNoteNumber, parseTranslationError, translationSelectionId } from '../../lib/translation';
+import { normalizeShortcutCode, sanitizeShortcutKeys, shortcutMatches } from '../../lib/shortcut';
 import { ContextMenu } from '../ui';
 import { AnnotationNotePopup, type NoteTarget } from './AnnotationNotePopup';
-
-/** 选区上下文：按下鼠标时锁定“页 + 旋转 + 视觉列 + 文本块”，拖拽只在其中取候选文本 */
-interface SelCtx {
-  page: number;
-  rot: number;
-  col: number;
-  block: number;
-  /** 起始列横向中心（跨行/跨页按此对齐，禁止跨栏） */
-  cx: number;
-  /** 列亲和容差：候选行中心与 cx 的距离上限 */
-  affinity: number;
-  minX: number;
-  maxX: number;
-}
 import { PdfPage, type PdfLinkService } from './PdfPage';
 import { PdfSearchBar } from './PdfSearchBar';
 import { PdfToolbar } from './PdfToolbar';
+import { TranslationPopup, type TranslationPopupStatus } from './TranslationPopup';
 
 interface PdfViewerProps {
   pdf: PdfRecord;
+  /** 标签唯一标识：阅读位置按标签隔离，同一 PDF 可在两个分屏中停在不同位置。 */
+  tabId: string;
   /** 阅读屏唯一标识：分屏时用于区分各屏的渲染请求，避免互相覆盖 */
   paneId: string;
   onMissing: (pdf: PdfRecord) => void;
@@ -83,7 +89,13 @@ function cacheDoc(id: number, doc: PDFDocumentProxy | null): void {
 }
 
 /** PDF viewer: load, zoom, single/double page, search and text highlights. */
-export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfViewerProps) {
+export function PdfViewer({
+  pdf,
+  tabId,
+  paneId,
+  onMissing,
+  paneActive = true,
+}: PdfViewerProps) {
   const t = useT();
   const terr = useTError();
   const toast = useApp((s) => s.toast);
@@ -91,11 +103,12 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
   const toggleInspectorCollapsed = useApp((s) => s.toggleInspectorCollapsed);
   /** 右键拖拽平移开关：开启时鼠标保持系统箭头，按住右键拖动平移（左键留给链接/选词） */
   const rightDragPan = useApp((s) => s.settings.rightDragPan);
+  const translationSettings = useApp((s) => s.settings.translation);
   const setStoreOutline = useApp((s) => s.setOutline);
   const jumpPage = useApp((s) => s.jumpPage);
   const jumpTop = useApp((s) => s.jumpTop);
   const consumeJump = useApp((s) => s.consumeJump);
-  const setStoreCurrentPage = useApp((s) => s.setCurrentPage);
+  const setStoreReadingPosition = useApp((s) => s.setReadingPosition);
   const outlineCount = useApp((s) => s.outline.length);
   const screenshotMode = useApp((s) => s.screenshotMode);
   const setScreenshotMode = useApp((s) => s.setScreenshotMode);
@@ -104,7 +117,21 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
   const [loadError, setLoadError] = useState<string | null>(null);
   const [scale, setScale] = useState(1);
   const [mode, setMode] = useState<'single' | 'double'>('single');
-  const [currentPage, setCurrentPage] = useState(1);
+  const initialReadingAnchorRef = useRef<ReadingAnchor | null>(null);
+  if (initialReadingAnchorRef.current == null) {
+    const state = useApp.getState();
+    const stored = state.tabPositions[tabId];
+    initialReadingAnchorRef.current = stored ?? {
+      page: Math.max(
+        1,
+        state.tabPages[pdf.id]
+          ?? (state.lastSession?.pdfId === pdf.id ? state.lastSession.page : 1),
+      ),
+      offsetRatio:
+        state.lastSession?.pdfId === pdf.id ? Math.max(0, state.lastSession.offsetRatio ?? 0) : 0,
+    };
+  }
+  const [currentPage, setCurrentPage] = useState(initialReadingAnchorRef.current.page);
   const immersive = useApp((s) => s.immersive);
   const setImmersive = useApp((s) => s.setImmersive);
   const immersiveTopOpen = useApp((s) => s.immersiveTopOpen);
@@ -123,9 +150,9 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
   /** 当前拖拽模式：高亮 / 普通选词 */
   const selModeRef = useRef<'highlight' | 'select' | null>(null);
   /** 选词起点：按下时的（页, 行, 行内 line 下标, 行内字符索引）+ 锁定选区上下文 */
-  const hlStartRef = useRef<{ page: number; row: number; line: number; idx: number; ctx: SelCtx } | null>(null);
+  const hlStartRef = useRef<(SelPoint & { ctx: SelCtx }) | null>(null);
   /** 选词当前点：鼠标最新所在（页, 行, 行内 line 下标, 行内字符索引） */
-  const hlCurRef = useRef<{ page: number; row: number; line: number; idx: number } | null>(null);
+  const hlCurRef = useRef<SelPoint | null>(null);
   /** 客户端起点坐标：用于“单击不选”的移动阈值 */
   const hlStartPtRef = useRef<{ x: number; y: number } | null>(null);
   const hlLastMoveRef = useRef<{ x: number; y: number } | null>(null);
@@ -157,6 +184,8 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
   const [selectedAnnotationId, setSelectedAnnotationId] = useState<number | null>(null);
   const [baseW, setBaseW] = useState(0);
   const [baseH, setBaseH] = useState(0);
+  /** 滚动视口高度用于提供等高尾部缓冲，使最大化/还原时最大 scrollTop 保持不变。 */
+  const [scrollViewportHeight, setScrollViewportHeight] = useState(0);
   /** 所有页的真实物理尺寸（pt）：虚拟滚动精确布局用；PDFium 一次性返回 */
   const [pageSizes, setPageSizes] = useState<{ w: number; h: number }[] | null>(null);
   const [annMenu, setAnnMenu] = useState<{
@@ -182,10 +211,35 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
   } | null>(null);
   /** 普通选词右键菜单 */
   const [selMenu, setSelMenu] = useState<{ x: number; y: number } | null>(null);
+  const [translationPopup, setTranslationPopup] = useState<{
+    x: number;
+    y: number;
+    page: number;
+    original: string;
+    context?: string;
+    selectionId: string;
+    requestId: string | null;
+    status: TranslationPopupStatus;
+  } | null>(null);
+  const activeTranslationRef = useRef<string | null>(null);
+  const pressedTranslationKeysRef = useRef<Set<string>>(new Set());
+  const translationShortcutFiredRef = useRef(false);
 
   const scrollRef = useRef<HTMLDivElement>(null);
-  /** 页码/书签跳转的校正循环句柄：新跳转会取消上一次循环，避免互相抢滚动位置 */
-  const scrollAlignRef = useRef(0);
+  /** 唯一权威阅读锚点；滚动、跳页、缩放、全屏和重启恢复都读写它。 */
+  const readingAnchorRef = useRef<ReadingAnchor>(initialReadingAnchorRef.current);
+  const viewportResizeAnchorRef = useRef<ReadingAnchor | null>(null);
+  const viewportWillChangeRef = useRef<{ anchor: ReadingAnchor; expiresAt: number } | null>(null);
+  const viewportWillChangeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scrollViewportHeightRef = useRef(0);
+  const persistPositionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const zoomAnchorRef = useRef<{
+    viewportX: number;
+    viewportY: number;
+    scrollTop: number;
+    contentXRatio: number;
+  } | null>(null);
+  const currentPageRef = useRef(currentPage);
   const pageRefs = useRef<Map<number, HTMLDivElement>>(new Map());
   const viewportsRef = useRef<Map<number, ViewportLike>>(new Map());
   const scaleRef = useRef(scale);
@@ -214,6 +268,10 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
   }, [scale]);
 
   useEffect(() => {
+    currentPageRef.current = currentPage;
+  }, [currentPage]);
+
+  useEffect(() => {
     docRef.current = doc;
   }, [doc]);
 
@@ -233,6 +291,18 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
       const [vx, vy] = vp.convertToViewportPoint(it.x + it.w / 2, it.y + it.h / 2);
       return { x: r.left + vx, y: r.top + vy, str: it.str };
     };
+    // 取某行 [from, to) 的字符项（供自动化诊断按“与生产相同的补空格逻辑”计算期望文本）
+    w.__pkmSelItems = (page: number, lineIdx: number, from: number, to: number) => {
+      const index = textIndexRef.current.get(page);
+      const line = index?.lines[lineIdx];
+      if (!line) return null;
+      const out: TextItemQuad[] = [];
+      for (let i = Math.max(0, from); i < Math.min(to, line.indices.length); i++) {
+        out.push(index.items[line.indices[i]]);
+      }
+      return out;
+    };
+    w.__pkmItemsToText = (items: unknown) => itemsToText(items as TextItemQuad[]);
     w.__pkmSelLineInfo = (page: number, lineIdx: number) => {
       const index = textIndexRef.current.get(page);
       if (!index || !index.lines[lineIdx]) return null;
@@ -251,6 +321,18 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
     const el = scrollRef.current;
     if (!el) return;
     const update = () => {
+      const nextHeight = Math.max(0, el.clientHeight);
+      if (nextHeight !== scrollViewportHeightRef.current) {
+        // ResizeObserver 在绘制前触发；先冻结旧阅读锚点，再让尾部缓冲适配新视口。
+        const pending = viewportWillChangeRef.current;
+        viewportResizeAnchorRef.current = {
+          ...(pending && pending.expiresAt >= performance.now()
+            ? pending.anchor
+            : readingAnchorRef.current),
+        };
+        scrollViewportHeightRef.current = nextHeight;
+        setScrollViewportHeight(nextHeight);
+      }
       const overflow =
         el.scrollWidth > el.clientWidth + 2 || el.scrollHeight > el.clientHeight + 2;
       canPanRef.current = overflow;
@@ -266,6 +348,26 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
       window.removeEventListener('resize', update);
     };
   }, [doc, scale, mode, pdf.id]);
+
+  useEffect(() => {
+    const off = window.pkm.onViewportWillChange(() => {
+      // 该通知早于任何 resize/scroll 事件，确保不会冻结到窗口变化后的错误页。
+      const pending = {
+        anchor: { ...readingAnchorRef.current },
+        expiresAt: performance.now() + 1600,
+      };
+      viewportWillChangeRef.current = pending;
+      if (viewportWillChangeTimerRef.current) clearTimeout(viewportWillChangeTimerRef.current);
+      viewportWillChangeTimerRef.current = setTimeout(() => {
+        if (viewportWillChangeRef.current === pending) viewportWillChangeRef.current = null;
+        viewportWillChangeTimerRef.current = null;
+      }, 1700);
+    });
+    return () => {
+      off();
+      if (viewportWillChangeTimerRef.current) clearTimeout(viewportWillChangeTimerRef.current);
+    };
+  }, []);
 
   const onPanMouseDown = (e: React.MouseEvent) => {
     if (screenshotMode || !canPanRef.current) return;
@@ -319,16 +421,7 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
     let loadingTask: ReturnType<typeof pdfjsLib.getDocument> | null = null;
     let owned: PDFDocumentProxy | null = null;
     let finished = false;
-    let restored = false;
-    // 记录该 PDF 上次阅读页码：切标签/重开后恢复（须在 setCurrentPage(1) 重置前读取）
-    const savedPage = useApp.getState().tabPages[pdf.id] ?? 1;
-    const restorePage = () => {
-      if (restored) return;
-      restored = true;
-      if (savedPage > 1 && currentPdfIdRef.current === pdf.id) {
-        useApp.getState().requestJump(savedPage);
-      }
-    };
+    const savedAnchor = initialReadingAnchorRef.current ?? { page: 1, offsetRatio: 0 };
     // 每次打开 PDF 只应用一次默认面板：有书签默认书签页，无书签默认笔记页
     let outlineTabApplied = false;
     const applyOutline = (tree: Awaited<ReturnType<typeof getOutlineTree>>) => {
@@ -353,13 +446,14 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
     setStoreOutline([]);
     setSearchMatches([]);
     setSearchCurrent(0);
-    setCurrentPage(1);
+    readingAnchorRef.current = savedAnchor;
+    setCurrentPage(savedAnchor.page);
+    currentPageRef.current = savedAnchor.page;
 
     const cached = DOC_CACHE.get(pdf.id);
     if (cached && !DESTROYED.has(pdf.id)) {
       DESTROYED.delete(pdf.id);
       setDoc(cached);
-      restorePage();
       void window.pkm
         .pdfiumOpen(pdf.id)
         .then((info) => {
@@ -411,8 +505,6 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
             })
             .catch(() => undefined);
         }
-        // 位图布局已就绪，提前恢复上次阅读页码，不必等 pdf.js 解析完
-        restorePage();
         const buf = await window.pkm.readPdf(pdf.id);
         if (cancelled) return;
         loadingTask = pdfjsLib.getDocument({
@@ -429,7 +521,6 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
         finished = true;
         cacheDoc(pdf.id, owned);
         setDoc(owned);
-        restorePage();
         void getOutlineTree(owned).then((tree) => {
           if (!cancelled) applyOutline(tree);
         });
@@ -486,7 +577,6 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
 
   // PDFium 打开即给出页数：pdf.js 文档就绪前也能先渲染页面（秒出首帧）
   const pageCount = doc?.numPages ?? pdfiumInfo?.pageCount ?? 0;
-
   // ---------- 虚拟滚动布局（SumatraPDF 式：只挂载可视区附近的行） ----------
   // 大文件不再为每一页创建 DOM，只渲染视口 ± 预载行，打开/滚动/缩放都保持轻量。
   interface PageLayout {
@@ -498,6 +588,12 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
   }
   const layout = useMemo<PageLayout>(() => {
     const sizes = pageSizes;
+    const hasMeasuredPage = sizes?.some((size) => size.w > 0 && size.h > 0) ?? false;
+    // 缓存 PDF 可能先返回页数、稍后才返回尺寸。此窗口内绝不能创建“高度为 0”的假布局，
+    // 否则视口探针会瞬间命中最后一页并覆盖真正的恢复锚点。
+    if (pageCount <= 0 || (!hasMeasuredPage && !(baseW > 0 && baseH > 0))) {
+      return { rows: [], tops: [], rowHs: [], totalH: 1, contentW: 1 };
+    }
     const rowCount = mode === 'double' ? Math.ceil(pageCount / 2) : pageCount;
     const rows: number[][] = [];
     const tops: number[] = [];
@@ -537,6 +633,27 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
 
   const layoutRef = useRef(layout);
   layoutRef.current = layout;
+  const committedLayoutRef = useRef<PageLayout>(layout);
+  useEffect(() => {
+    if (!window.location.hash.includes('capture')) return;
+    const w = window as unknown as Record<string, unknown>;
+    w.__pkmReaderPosition = () => {
+      const el = scrollRef.current;
+      const anchor = readingAnchorRef.current;
+      const row = layoutRef.current.rows.findIndex((item) => item.includes(anchor.page));
+      return {
+        scale: scaleRef.current,
+        scrollTop: el?.scrollTop ?? -1,
+        clientHeight: el?.clientHeight ?? -1,
+        anchor: { ...anchor },
+        rowTop: row >= 0 ? layoutRef.current.tops[row] : null,
+        rowHeight: row >= 0 ? layoutRef.current.rowHs[row] : null,
+      };
+    };
+    return () => {
+      delete w.__pkmReaderPosition;
+    };
+  }, []);
   const [virtualRange, setVirtualRange] = useState<{ start: number; end: number } | null>(null);
   const rangeRef = useRef<{ start: number; end: number } | null>(null);
   const updateVirtual = useCallback(() => {
@@ -574,6 +691,59 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
     }
   }, []);
 
+  // 所有布局变化都从同一个阅读锚点恢复；首次挂载也在浏览器绘制前恢复上次页内位置。
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    const previous = committedLayoutRef.current;
+    committedLayoutRef.current = layout;
+    if (!el || !layout.rows.length) return;
+    const zoomAnchor = zoomAnchorRef.current;
+    zoomAnchorRef.current = null;
+    if (zoomAnchor && previous.rows.length) {
+      // Ctrl+滚轮只执行这一套鼠标锚定，不再叠加普通布局位置校正。
+      const mapped = remapScrollPositionAtViewport(
+        previous,
+        layout,
+        zoomAnchor.scrollTop,
+        zoomAnchor.viewportY,
+      );
+      el.scrollTop = mapped;
+      el.scrollLeft = Math.max(
+        0,
+        zoomAnchor.contentXRatio * layout.contentW - zoomAnchor.viewportX,
+      );
+      readingAnchorRef.current = readingAnchorAtScrollPosition(
+        layout,
+        el.scrollTop,
+        el.clientHeight,
+      );
+    } else {
+      // 不再从“已经变化后的窗口高度 + 旧 scrollTop”反推锚点；那会在最大化/还原时改错页。
+      const anchor = readingAnchorRef.current;
+      readingAnchorRef.current = anchor;
+      const mapped = scrollPositionForReadingAnchor(layout, anchor, el.clientHeight);
+      if (Math.abs(mapped - el.scrollTop) > 0.5) el.scrollTop = mapped;
+    }
+    const page = readingAnchorRef.current.page;
+    if (page !== currentPageRef.current) {
+      currentPageRef.current = page;
+      setCurrentPage(page);
+    }
+    updateVirtual();
+  }, [layout, updateVirtual]);
+
+  // 仅视口尺寸变化、PDF 布局本身不变时，同样恢复变化前冻结的阅读锚点。
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    const anchor = viewportResizeAnchorRef.current;
+    if (!el || !anchor || !layoutRef.current.rows.length) return;
+    readingAnchorRef.current = anchor;
+    const target = scrollPositionForReadingAnchor(layoutRef.current, anchor, el.clientHeight);
+    if (Math.abs(el.scrollTop - target) > 0.5) el.scrollTop = target;
+    viewportResizeAnchorRef.current = null;
+    updateVirtual();
+  }, [scrollViewportHeight, updateVirtual]);
+
   // 布局（页数/尺寸/缩放/模式）变化后重算可视窗口
   useEffect(() => {
     updateVirtual();
@@ -595,12 +765,8 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
     }
   }, [pdfiumInfo, virtualRange, pdf.id, layout]);
 
-  // 宽度自适应策略（3.2.1）：
-  // - 打开文档时适配一次；
-  // - 标题栏最大化/还原按键：始终自动适配宽度；
-  // - 拖拽窗口边框缩小，且 PDF 被阅读区遮挡（横向溢出）时才自动适配；
-  // - 放大窗口、折叠/展开边栏或信息面板、拖拽分屏分隔线：一律不自动缩放，
-  //   避免大文件反复重渲染（用户可手动缩放或用小手拖拽查看）。
+  // 文档打开时自动适宽一次。之后窗口最大化、还原和拖动尺寸只改变可视区域，
+  // 不再暗中改变 PDF 缩放比例，避免一次窗口操作触发两轮布局和跳页。
   useEffect(() => {
     if (!baseW) return;
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -616,34 +782,31 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
         fn();
       }, 250);
     };
-    // PDF 是否被阅读区遮挡：内容宽度超出可视宽度（出现横向滚动/被裁切）
-    const clipped = () => {
-      const el = scrollRef.current;
-      return el ? el.scrollWidth > el.clientWidth + 4 : false;
-    };
-    let lastWinW = window.innerWidth;
-    const onResize = () => {
-      const nextW = window.innerWidth;
-      const shrinking = nextW < lastWinW - 1;
-      lastWinW = nextW;
-      if (!shrinking) return; // 放大窗口：保持当前缩放
-      schedule(() => {
-        if (clipped()) fit(); // 缩小且 PDF 被遮挡才适配
-      });
-    };
-    const onMaxChanged = () => schedule(fit); // 最大化/还原按键始终适配
-    const off = window.pkm.onMaximizedChange?.(onMaxChanged);
-    window.addEventListener('resize', onResize);
     schedule(fit); // 打开文档适配一次
     return () => {
-      window.removeEventListener('resize', onResize);
-      off?.();
       if (timer) clearTimeout(timer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [doc, baseW]);
 
   // ---------- page tracking ----------
+  const persistReadingAnchor = useCallback(
+    (anchor: ReadingAnchor, immediate = false) => {
+      readingAnchorRef.current = anchor;
+      if (persistPositionTimerRef.current) {
+        clearTimeout(persistPositionTimerRef.current);
+        persistPositionTimerRef.current = null;
+      }
+      const persist = () => {
+        persistPositionTimerRef.current = null;
+        setStoreReadingPosition(tabId, pdf.id, readingAnchorRef.current);
+      };
+      if (immediate) persist();
+      else persistPositionTimerRef.current = setTimeout(persist, 250);
+    },
+    [pdf.id, setStoreReadingPosition, tabId],
+  );
+
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
@@ -652,12 +815,18 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
       cancelAnimationFrame(raf);
       raf = requestAnimationFrame(() => {
         updateVirtual();
-        let cur = 1;
-        for (const [n, pageEl] of pageRefs.current) {
-          const top = pageEl.getBoundingClientRect().top - el.getBoundingClientRect().top;
-          if (top < 140) cur = n;
+        const anchor = readingAnchorAtScrollPosition(
+          layoutRef.current,
+          el.scrollTop,
+          el.clientHeight,
+        );
+        const cur = anchor.page;
+        const pageChanged = cur !== currentPageRef.current;
+        if (cur !== currentPageRef.current) {
+          currentPageRef.current = cur;
+          setCurrentPage(cur);
         }
-        setCurrentPage(cur);
+        persistReadingAnchor(anchor, pageChanged);
       });
     };
     el.addEventListener('scroll', onScroll);
@@ -665,7 +834,7 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
       el.removeEventListener('scroll', onScroll);
       cancelAnimationFrame(raf);
     };
-  }, [doc, mode, pageCount, scale, updateVirtual]);
+  }, [doc, mode, pageCount, scale, updateVirtual, persistReadingAnchor]);
 
   // ---------- 相邻页预渲染（SumatraPDF 式） ----------
   // 当前页变化/缩放后，提前把下一页（双页模式预取下一行两页）的 PDFium 位图渲染进缓存，
@@ -716,17 +885,23 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
     const handler = (e: WheelEvent) => {
       if (!e.ctrlKey) return;
       e.preventDefault();
+      e.stopPropagation();
       const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
       const oldScale = scaleRef.current;
       const newScale = Math.min(4, Math.max(0.3, oldScale * factor));
+      if (Math.abs(newScale - oldScale) < 0.0001) return;
       const rect = el.getBoundingClientRect();
-      const anchorX = e.clientX - rect.left + el.scrollLeft;
-      const anchorY = e.clientY - rect.top + el.scrollTop;
+      const viewportX = Math.max(0, Math.min(el.clientWidth, e.clientX - rect.left));
+      const viewportY = Math.max(0, Math.min(el.clientHeight, e.clientY - rect.top));
+      const oldContentW = Math.max(1, layoutRef.current.contentW);
+      zoomAnchorRef.current = {
+        viewportX,
+        viewportY,
+        scrollTop: el.scrollTop,
+        contentXRatio: (el.scrollLeft + viewportX) / oldContentW,
+      };
       scaleRef.current = newScale;
       setScale(newScale);
-      // 锚定光标：以缩放前后比例保持光标处的文档点不动
-      el.scrollLeft = (anchorX * newScale) / oldScale - (e.clientX - rect.left);
-      el.scrollTop = (anchorY * newScale) / oldScale - (e.clientY - rect.top);
     };
     el.addEventListener('wheel', handler, { passive: false });
     return () => {
@@ -738,94 +913,59 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
   const scrollToPage = useCallback((n: number, top?: number | null) => {
     const el = scrollRef.current;
     if (!el) return;
-    // 取消上一次校正循环：连续跳转（如页码输入两次提交）时不互相抢滚动位置
-    if (scrollAlignRef.current) {
-      cancelAnimationFrame(scrollAlignRef.current);
-      scrollAlignRef.current = 0;
-    }
     const L = layoutRef.current;
+    const targetPage = Math.min(Math.max(1, n), Math.max(1, pageCount));
+    const rowIndex = L.rows.findIndex((row) => row.includes(targetPage));
+    if (rowIndex < 0) return;
+    currentPageRef.current = targetPage;
+    setCurrentPage(targetPage);
 
-    /**
-     * 目标章节在 scroll 内容坐标系中的 Y（每次调用基于当前真实 DOM/布局动态计算）：
-     * - 页面已挂载：用页面与 scroll 容器的实际 rect + 当前 scrollTop 反推页面绝对位置；
-     * - 页面未挂载：用虚拟布局的行顶（含页间距），先滚动触发挂载，随后校正；
-     * - 页内偏移：优先用 pdf.js viewport 把 PDF 用户空间 y-up 坐标权威转换成
-     *   当前渲染尺寸下“距页顶的 DOM 像素”（自动处理缩放/旋转）；viewport 未就绪时
-     *   用页面尺寸 × scale 估算（无旋转）。
-     */
-    const targetY = (): number | null => {
-      let pageAbsTop: number | null = null;
-      const p = pageRefs.current.get(n);
-      if (p && p.offsetHeight > 0) {
-        const cRect = el.getBoundingClientRect();
-        const pRect = p.getBoundingClientRect();
-        pageAbsTop = el.scrollTop + (pRect.top - cRect.top);
+    let pageOffset = 0;
+    if (top != null && top > 0) {
+      const vp = viewportsRef.current.get(targetPage);
+      if (vp) {
+        const [, vy] = vp.convertToViewportPoint(0, top);
+        pageOffset = Math.max(0, vy);
       } else {
-        const rowIdx = L.rows.findIndex((r) => r.includes(n));
-        if (rowIdx >= 0) pageAbsTop = L.tops[rowIdx];
+        const size = pageSizes?.[targetPage - 1];
+        const pageH = size && size.h > 0 ? size.h : baseH;
+        pageOffset = Math.max(0, (pageH - top) * scale);
       }
-      if (pageAbsTop == null) return null;
-
-      let offset = 0;
-      if (top != null && top > 0) {
-        const vp = viewportsRef.current.get(n);
-        if (vp) {
-          // PDF 用户空间 y-up → 视口 y-down（含当前 scale 与页面旋转）
-          const [, vy] = vp.convertToViewportPoint(0, top);
-          offset = Math.max(0, Math.round(vy));
-        } else {
-          const s = pageSizes?.[n - 1];
-          const pageH = s && s.h > 0 ? s.h : baseH;
-          offset = Math.max(0, Math.round((pageH - top) * scale));
-        }
-      }
-      return Math.max(0, pageAbsTop + offset);
+    }
+    const rowHeight = Math.max(1, L.rowHs[rowIndex] ?? 1);
+    const anchor: ReadingAnchor = {
+      page: targetPage,
+      // 阅读锚点以视口探针为基准；加入探针偏移后，目标页/章节仍精确贴住视口顶部。
+      offsetRatio: Math.min(
+        1,
+        Math.max(0, (pageOffset + readingProbeOffset(el.clientHeight)) / rowHeight),
+      ),
     };
-
-    // 立即定位一次（页面已挂载则直接到位；未挂载则按布局估算滚动以触发挂载）
-    const y0 = targetY();
-    if (y0 != null) el.scrollTop = y0;
-
-    // 持续校正：等待大 PDF 渲染 / 缩放 / 布局稳定后，用最新坐标重算并修正，
-    // 直到目标章节精确贴合 viewport 顶部（不做任何固定偏移）
-    let tries = 0;
-    let last = 0;
-    const align = (ts: number) => {
-      const y = targetY();
-      if (y != null && Math.abs(el.scrollTop - y) < 1.5) {
-        scrollAlignRef.current = 0; // 已精确对齐
-        return;
-      }
-      if (ts - last < 80) {
-        scrollAlignRef.current = requestAnimationFrame(align);
-        return;
-      }
-      last = ts;
-      if (y != null) el.scrollTop = y;
-      if (++tries < 80) scrollAlignRef.current = requestAnimationFrame(align);
-      else scrollAlignRef.current = 0; // 最长约 6.5 秒，等待大 PDF 渲染/布局稳定
-    };
-    scrollAlignRef.current = requestAnimationFrame(align);
-  }, [baseH, scale, layout, pageSizes]);
-
-  // 卸载时取消未完成的跳转校正循环
-  useEffect(() => {
-    return () => {
-      if (scrollAlignRef.current) cancelAnimationFrame(scrollAlignRef.current);
-    };
-  }, []);
+    readingAnchorRef.current = anchor;
+    el.scrollTop = scrollPositionForReadingAnchor(L, anchor, el.clientHeight);
+    updateVirtual();
+    persistReadingAnchor(anchor, true);
+  }, [baseH, pageCount, pageSizes, persistReadingAnchor, scale, updateVirtual]);
 
   // 同步当前页到全局（信息面板书签高亮）
   useEffect(() => {
-    if (paneActive) setStoreCurrentPage(currentPage);
-  }, [currentPage, setStoreCurrentPage, paneActive]);
+    if (paneActive) setStoreReadingPosition(tabId, pdf.id, readingAnchorRef.current);
+  }, [setStoreReadingPosition, paneActive, pdf.id, tabId]);
 
-  // 卸载（切换标签/关闭屏）前把当前页码记入 per-pdf 表，切回该标签时恢复
+  // 切换标签、关闭窗口或退出应用前同步保存精确页内位置。
   useEffect(() => {
-    return () => {
-      if (currentPage > 1) useApp.getState().rememberTabPage(pdf.id, currentPage);
+    const persistNow = () => {
+      useApp.getState().rememberTabPosition(tabId, pdf.id, readingAnchorRef.current);
     };
-  }, [currentPage, pdf.id]);
+    window.addEventListener('pagehide', persistNow);
+    window.addEventListener('beforeunload', persistNow);
+    return () => {
+      window.removeEventListener('pagehide', persistNow);
+      window.removeEventListener('beforeunload', persistNow);
+      if (persistPositionTimerRef.current) clearTimeout(persistPositionTimerRef.current);
+      persistNow();
+    };
+  }, [pdf.id, tabId]);
 
   // 信息面板书签点击 -> 阅读器跳转
   useEffect(() => {
@@ -963,148 +1103,20 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
     return null;
   };
 
-  /** 光标在行内的字符索引：落在某字符内（或其后间隙）→ 该字符；行尾之后 → 行长度 */
-  const charIndexAt = (items: TextItemQuad[], rowChars: number[], px: number): number => {
-    if (!rowChars.length) return 0;
-    const last = items[rowChars[rowChars.length - 1]];
-    if (px >= last.x + last.w) return rowChars.length;
-    for (let i = 0; i < rowChars.length; i++) {
-      const it = items[rowChars[i]];
-      if (px < it.x + it.w) return i;
-    }
-    return rowChars.length;
-  };
-
   /** 客户端坐标 -> (页, 行, 行内 line 下标, 行内字符索引)；文本索引未就绪返回 null */
-  const pointToRowChar = (
+  const pointToRowCharAt = (
     page: number,
     x: number,
     y: number,
     ctx?: SelCtx | null,
-  ): { row: number; line: number; idx: number } | null => {
+  ): SelPoint | null => {
     const index = textIndexRef.current.get(page);
     const el = pageRefs.current.get(page);
     const vp = viewportsRef.current.get(page);
-    if (!index || !el || !vp || !index.lines.length) return null;
+    if (!index || !el || !vp) return null;
     const r = el.getBoundingClientRect();
-    let [px, py] = vp.convertToPdfPoint(x - r.left, y - r.top);
-    if (ctx) px = Math.min(Math.max(px, ctx.minX), ctx.maxX);
-    const lines = index.lines;
-    let best = -1;
-    let bestDx = Infinity;
-    let bestDy = Infinity;
-    for (let i = 0; i < lines.length; i++) {
-      const l = lines[i];
-      // 已锁定选区上下文：只允许同一旋转 + 同一视觉列（横向中心亲和）的行；
-      // 同页还要求同一文本块（正文不会滑进页眉/页脚/图注/旋转文字）
-      if (ctx) {
-        if (l.rot !== ctx.rot) continue;
-        const lineCx = (l.minX + l.maxX) / 2;
-        if (Math.abs(lineCx - ctx.cx) > ctx.affinity) continue;
-        if (page === ctx.page && l.block !== ctx.block) continue;
-      }
-      const dy = Math.abs(py - (l.minY + l.maxY) / 2);
-      const dx = px < l.minX ? l.minX - px : px > l.maxX ? px - l.maxX : 0;
-      // 优先横向命中（同一视觉列），其次纵向最近
-      if (dx < bestDx - 0.5 || (Math.abs(dx - bestDx) <= 0.5 && dy < bestDy)) {
-        bestDx = dx;
-        bestDy = dy;
-        best = i;
-      }
-    }
-    if (best < 0) return null;
-    const line = lines[best];
-    const idx = charIndexAt(index.items, line.indices, px);
-    return { row: line.row, line: best, idx };
-  };
-
-  /** 取某 line [from, to) 的字符项 */
-  const lineCharItems = (
-    index: PageTextIndex,
-    lineIdx: number,
-    from: number,
-    to: number,
-  ): TextItemQuad[] => {
-    const line = index.lines[lineIdx];
-    if (!line) return [];
-    const a = Math.max(0, Math.min(from, line.indices.length));
-    const b = Math.max(0, Math.min(to, line.indices.length));
-    const out: TextItemQuad[] = [];
-    for (let i = a; i < b; i++) out.push(index.items[line.indices[i]]);
-    return out;
-  };
-
-  /** 在指定视觉行里，找到属于“锁定选区上下文”的 line（旋转 + 列亲和 + 同页同块） */
-  const lineInContext = (index: PageTextIndex, row: number, ctx: SelCtx, samePage: boolean): number => {
-    const cands = index.rowLines[row];
-    if (!cands || !cands.length) return -1;
-    for (const li of cands) {
-      const l = index.lines[li];
-      if (l.rot !== ctx.rot) continue;
-      const lineCx = (l.minX + l.maxX) / 2;
-      if (Math.abs(lineCx - ctx.cx) > ctx.affinity) continue;
-      if (samePage && l.block !== ctx.block) continue;
-      return li;
-    }
-    return -1;
-  };
-
-  /**
-   * 按“起点行/终点行”精确计算选中字符（半开区间），并强制约束在起点所属视觉列内：
-   * - 同页：起点行只选起点之后，终点行只选到鼠标位置，中间行整行（仅该列）；
-   * - 跨页：起点页/终点页同理，中间页整页（仅该列）。
-   * 支持从上往下与从下往上（对称）；允许跨行，禁止跨栏。
-   */
-  const computeRowSelection = (
-    start: { page: number; row: number; line: number; idx: number; ctx: SelCtx },
-    cur: { page: number; row: number; line: number; idx: number },
-  ): { page: number; items: TextItemQuad[]; lines: PageTextIndex['lines'] }[] => {
-    const out: { page: number; items: TextItemQuad[]; lines: PageTextIndex['lines'] }[] = [];
-    const startIndex = textIndexRef.current.get(start.page);
-    const startLine = startIndex?.lines[start.line];
-    const ctx = start.ctx;
-    if (!startLine || !ctx) return out;
-    // 按文档顺序（上 → 下、页 → 页）决定遍历方向：
-    // - downward：起点在上，遍历 start..cur；
-    // - upward：起点在下，遍历 cur..start（对称反转）。
-    const downward = start.page < cur.page || (start.page === cur.page && start.row <= cur.row);
-    const lo = downward ? start.page : cur.page;
-    const hi = downward ? cur.page : start.page;
-    for (let p = lo; p <= hi; p++) {
-      const index = textIndexRef.current.get(p);
-      if (!index || !index.lines.length) continue;
-      const rowCount = index.rowLines.length;
-      const items: TextItemQuad[] = [];
-      // 本页的行区间：
-      // - downward：起点页从 start.row 起，终点页到 cur.row 止，中间页全页；
-      // - upward：终点页（上方）从 cur.row 起，起点页（下方）到 start.row 止，中间页全页。
-      const rStart = p === (downward ? start.page : cur.page) ? (downward ? start.row : cur.row) : 0;
-      const rEnd = p === (downward ? cur.page : start.page) ? (downward ? cur.row : start.row) : rowCount - 1;
-      for (let r = rStart; r <= rEnd; r++) {
-        let li: number;
-        if (p === start.page && r === start.row) li = start.line;
-        else if (p === cur.page && r === cur.row) li = cur.line;
-        else li = lineInContext(index, r, ctx, p === start.page);
-        if (li < 0) continue;
-        const rowLen = index.lines[li].indices.length;
-        let from = 0;
-        let to = rowLen;
-        // 同一行（含反向拖选）：取两点之间的区间
-        if (p === start.page && p === cur.page && r === start.row && r === cur.row) {
-          from = Math.min(start.idx, cur.idx);
-          to = Math.max(start.idx, cur.idx) + 1;
-        } else if (downward) {
-          if (p === start.page && r === start.row) from = start.idx;
-          if (p === cur.page && r === cur.row) to = cur.idx + 1;
-        } else {
-          if (p === cur.page && r === cur.row) from = cur.idx;
-          if (p === start.page && r === start.row) to = start.idx + 1;
-        }
-        items.push(...lineCharItems(index, li, from, to));
-      }
-      if (items.length) out.push({ page: p, items, lines: index.lines });
-    }
-    return out;
+    const [px, py] = vp.convertToPdfPoint(x - r.left, y - r.top);
+    return pointToRowChar(index, page, px, py, ctx);
   };
 
   const updateHlSelection = () => {
@@ -1113,10 +1125,10 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
     if (!start || !last) return;
     const page = pageAtPoint(last.x, last.y);
     if (page == null) return;
-    const rc = pointToRowChar(page, last.x, last.y, start.ctx);
+    const rc = pointToRowCharAt(page, last.x, last.y, start.ctx);
     if (!rc) return;
     hlCurRef.current = { page, row: rc.row, line: rc.line, idx: rc.idx };
-    const sel = computeRowSelection(start, hlCurRef.current);
+    const sel = computeRowSelection(start, hlCurRef.current, (p) => textIndexRef.current.get(p));
     const next: Record<number, Quad[]> = {};
     for (const { page: pg, items, lines } of sel) next[pg] = mergeSelectionItems(items, lines);
     setLiveSel(next);
@@ -1126,7 +1138,7 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
     const start = hlStartRef.current;
     const cur = hlCurRef.current;
     if (!start || !cur) return [];
-    return computeRowSelection(start, cur);
+    return computeRowSelection(start, cur, (p) => textIndexRef.current.get(p));
   };
 
   const commitHlSelection = async () => {
@@ -1145,7 +1157,7 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
         await window.pkm.createAnnotation({
           pdfId: pdf.id,
           page,
-          content: items.map((i) => i.str).join(''),
+          content: itemsToText(items),
           note: '',
           position: JSON.stringify(quads),
           color: highlightColor,
@@ -1178,7 +1190,7 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
     for (const { page, items, lines } of pages) {
       const qs = mergeSelectionItems(items, lines);
       if (qs.length) quads[page] = qs;
-      parts.push(items.map((i) => i.str).join(''));
+      parts.push(itemsToText(items));
     }
     setSelection({ quads, text: parts.join('\n') });
     suppressNextClickRef.current = true;
@@ -1195,28 +1207,20 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
     }
     const page = pageAtPoint(e.clientX, e.clientY);
     if (page == null) return;
-    const rc = pointToRowChar(page, e.clientX, e.clientY);
+    const rc = pointToRowCharAt(page, e.clientX, e.clientY);
     if (!rc) return;
     const startIndex = textIndexRef.current.get(page);
     const startLine = startIndex?.lines[rc.line];
     if (!startLine) return;
     // 按下瞬间锁定选区上下文：页 + 旋转 + 视觉列 + 文本块；之后只在此区域内选词
-    const colW = startLine.maxX - startLine.minX;
+    const ctx = makeSelectionContext(startIndex, page, rc.line);
+    if (!ctx) return;
     hlStartRef.current = {
       page,
       row: rc.row,
       line: rc.line,
       idx: rc.idx,
-      ctx: {
-        page,
-        rot: startLine.rot,
-        col: startLine.col,
-        block: startLine.block,
-        cx: (startLine.minX + startLine.maxX) / 2,
-        affinity: Math.max(colW * 0.75, 24),
-        minX: startLine.minX,
-        maxX: startLine.maxX,
-      },
+      ctx,
     };
     hlCurRef.current = { page, row: rc.row, line: rc.line, idx: rc.idx };
     hlStartPtRef.current = { x: e.clientX, y: e.clientY };
@@ -1343,6 +1347,176 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
         document.execCommand('copy');
         ta.remove();
       });
+  };
+
+  const closeTranslation = useCallback(() => {
+    const requestId = activeTranslationRef.current;
+    activeTranslationRef.current = null;
+    if (requestId) void window.pkm.cancelTranslation(requestId);
+    setTranslationPopup(null);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      const requestId = activeTranslationRef.current;
+      if (requestId) void window.pkm.cancelTranslation(requestId);
+      activeTranslationRef.current = null;
+    };
+  }, [pdf.id]);
+
+  useEffect(() => {
+    if (!translationPopup) return;
+    const page = selection ? Math.min(...Object.keys(selection.quads).map(Number)) : -1;
+    const currentId = selection ? translationSelectionId(pdf.id, page, selection.text) : '';
+    if (currentId !== translationPopup.selectionId) closeTranslation();
+  }, [selection, pdf.id, translationPopup?.selectionId, closeTranslation]);
+
+  const selectionContext = (page: number, selectedText: string): string | undefined => {
+    if (translationSettings.contextMode === 'none') return undefined;
+    const index = textIndexRef.current.get(page);
+    if (!index) return undefined;
+    const pageText = itemsToText(index.items).trim();
+    if (!pageText) return undefined;
+    const compactSelected = selectedText.replace(/\s+/g, ' ').trim();
+    const compactPage = pageText.replace(/\s+/g, ' ');
+    const at = compactPage.toLocaleLowerCase().indexOf(compactSelected.toLocaleLowerCase());
+    if (at < 0) return compactPage.slice(0, 1_200);
+    const before = compactPage.slice(Math.max(0, at - 600), at);
+    const after = compactPage.slice(at + compactSelected.length, at + compactSelected.length + 600);
+    return `${before}\n[Selected text omitted]\n${after}`.trim();
+  };
+
+  const runTranslation = async (base: NonNullable<typeof translationPopup>): Promise<void> => {
+    if (activeTranslationRef.current) {
+      await window.pkm.cancelTranslation(activeTranslationRef.current).catch(() => false);
+    }
+    const requestId = globalThis.crypto?.randomUUID?.() ?? `tr_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    activeTranslationRef.current = requestId;
+    setTranslationPopup({ ...base, requestId, status: { kind: 'loading' } });
+    try {
+      const response = await window.pkm.translate({
+        requestId,
+        pdfId: pdf.id,
+        page: base.page,
+        text: base.original,
+        context: base.context,
+      });
+      if (!response.ok) {
+        if (activeTranslationRef.current !== requestId) return;
+        activeTranslationRef.current = null;
+        if (response.error.code === 'ABORTED') return;
+        setTranslationPopup((current) =>
+          current?.selectionId === base.selectionId && current.requestId === requestId
+            ? { ...current, status: { kind: 'error', error: response.error } }
+            : current,
+        );
+        return;
+      }
+      const result = response.data;
+      if (!isCurrentTranslationRequest(activeTranslationRef.current, result.requestId) || result.requestId !== requestId) return;
+      activeTranslationRef.current = null;
+      setTranslationPopup((current) =>
+        current?.selectionId === base.selectionId && current.requestId === requestId
+          ? { ...current, status: { kind: 'success', result } }
+          : current,
+      );
+    } catch (error) {
+      if (activeTranslationRef.current !== requestId) return;
+      activeTranslationRef.current = null;
+      const parsed = parseTranslationError(error);
+      if (parsed.code === 'ABORTED') return;
+      setTranslationPopup((current) =>
+        current?.selectionId === base.selectionId && current.requestId === requestId
+          ? { ...current, status: { kind: 'error', error: parsed } }
+          : current,
+      );
+    }
+  };
+
+  const openTranslation = (x: number, y: number, immediate = false): void => {
+    if (!selection || !translationSettings.enabled) return;
+    const page = Math.min(...Object.keys(selection.quads).map(Number));
+    const base: NonNullable<typeof translationPopup> = {
+      x,
+      y,
+      page,
+      original: selection.text,
+      context: selectionContext(page, selection.text),
+      selectionId: translationSelectionId(pdf.id, page, selection.text),
+      requestId: null,
+      status:
+        selection.text.length > translationSettings.maxSelectedCharacters
+          ? {
+              kind: 'error',
+              error: {
+                code: 'TEXT_TOO_LONG',
+                message: `Selected text exceeds ${translationSettings.maxSelectedCharacters.toLocaleString()} characters`,
+                retryable: false,
+              },
+            }
+          : !immediate && selection.text.length > translationSettings.longSelectionCharacters
+            ? { kind: 'confirm', length: selection.text.length }
+            : { kind: 'loading' },
+    };
+    setTranslationPopup(base);
+    if (base.status.kind === 'loading') void runTranslation(base);
+  };
+
+  useEffect(() => {
+    if (!paneActive || !translationSettings.enabled || !translationSettings.shortcutEnabled) return;
+    const shortcutKeys = sanitizeShortcutKeys(translationSettings.shortcutKeys);
+    if (!shortcutKeys.length) return;
+    const onKeyDown = (event: KeyboardEvent): void => {
+      const target = event.target as HTMLElement | null;
+      if (target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA' || target?.isContentEditable || !selection) return;
+      const code = normalizeShortcutCode(event.code);
+      pressedTranslationKeysRef.current.add(code);
+      if (shortcutKeys.includes(code)) event.preventDefault();
+      if (event.repeat || translationShortcutFiredRef.current || !shortcutMatches(pressedTranslationKeysRef.current, shortcutKeys)) return;
+      translationShortcutFiredRef.current = true;
+      const width = Math.min(380, window.innerWidth - 16);
+      openTranslation(Math.max(8, window.innerWidth / 2 - width / 2), Math.max(48, window.innerHeight * 0.18), true);
+    };
+    const onKeyUp = (event: KeyboardEvent): void => {
+      pressedTranslationKeysRef.current.delete(normalizeShortcutCode(event.code));
+      if (!shortcutMatches(pressedTranslationKeysRef.current, shortcutKeys)) translationShortcutFiredRef.current = false;
+    };
+    const resetKeys = (): void => {
+      pressedTranslationKeysRef.current.clear();
+      translationShortcutFiredRef.current = false;
+    };
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+    window.addEventListener('blur', resetKeys);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
+      window.removeEventListener('blur', resetKeys);
+      resetKeys();
+    };
+  }, [paneActive, pdf.id, selection, translationSettings.contextMode, translationSettings.enabled, translationSettings.maxSelectedCharacters, translationSettings.shortcutEnabled, translationSettings.shortcutKeys]);
+
+  const addTranslationToNote = async (): Promise<void> => {
+    const popup = translationPopup;
+    if (!popup || popup.status.kind !== 'success') return;
+    try {
+      const note = await window.pkm.getNote(pdf.id);
+      const sequence = nextTranslationNoteNumber(note?.markdown ?? '');
+      const block = formatTranslationNote({
+        original: popup.original,
+        translation: popup.status.result.translatedText,
+        paperTitle: pdf.title || pdf.filename,
+        page: popup.page,
+        time: new Date(),
+        sequence,
+      });
+      await window.pkm.saveNote(pdf.id, `${note?.markdown.trimEnd() ?? ''}${note?.markdown.trim() ? '\n\n' : ''}${block}`);
+      setInspectorTab('notes');
+      useApp.getState().bumpNoteRevision();
+      toast('success', t('viewer.addedToNote'));
+    } catch (error) {
+      toast('error', terr(error instanceof Error ? error.message : String(error)));
+    }
   };
 
   // ---------- annotation right-click menu ----------
@@ -1672,7 +1846,7 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
           <div
             ref={scrollRef}
             data-pan-scroll
-            className={`h-full select-none overflow-auto bg-[var(--app-canvas)] ${
+            className={`h-full select-none overflow-auto [overflow-anchor:none] bg-[var(--app-canvas)] ${
               panning
                 ? 'cursor-grabbing'
                 : highlightMode
@@ -1708,7 +1882,11 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
             <div
               ref={contentRef}
               className="relative mx-auto"
-              style={{ width: layout.contentW, height: layout.totalH }}
+              style={{
+                width: layout.contentW,
+                // 尾部增加一个视口高度：窗口高度变化时最大 scrollTop 恒定，不会把末尾阅读位置向上夹断。
+                height: layout.totalH + scrollViewportHeight,
+              }}
             >
               {virtualRange &&
                 layout.rows.slice(virtualRange.start, virtualRange.end).map((row, idx) => {
@@ -1746,6 +1924,9 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
         {screenshotMode && (
           <ScreenshotOverlay
             containerRef={scrollRef}
+            pdfId={pdf.id}
+            scale={scale}
+            pageSizes={pageSizes}
             onClose={() => setScreenshotMode(false)}
             onInsert={(d) => void insertScreenshot(d)}
           />
@@ -1855,6 +2036,15 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
                 setSelMenu(null);
               },
             },
+            {
+              label: t('viewer.translate'),
+              icon: <Languages size={12} />,
+              disabled: !translationSettings.enabled,
+              onClick: () => {
+                if (selMenu) openTranslation(selMenu.x, selMenu.y);
+                setSelMenu(null);
+              },
+            },
           ]}
         />
       )}
@@ -1891,20 +2081,42 @@ export function PdfViewer({ pdf, paneId, onMissing, paneActive = true }: PdfView
           onSaved={(target, note) => void saveAnnotationNote(target, note)}
         />
       )}
+      {translationPopup && (
+        <TranslationPopup
+          x={translationPopup.x}
+          y={translationPopup.y}
+          status={translationPopup.status}
+          onClose={closeTranslation}
+          onConfirm={() => void runTranslation(translationPopup)}
+          onRetry={() => void runTranslation(translationPopup)}
+          onCopy={() => {
+            if (translationPopup.status.kind === 'success') {
+              void navigator.clipboard.writeText(translationPopup.status.result.translatedText);
+            }
+          }}
+          onAddToNote={() => void addTranslationToNote()}
+        />
+      )}
     </main>
   );
 }
 
 /** 将阅读区选区截成 PNG：跨页自动拼接（高清画布像素） */
-function captureRegion(
+async function captureRegion(
   container: HTMLElement,
   sel: { x: number; y: number; w: number; h: number },
-): string | null {
+  pdfId: number,
+  scale: number,
+  pageSizes: Array<{ w: number; h: number }> | null,
+): Promise<string | null> {
   try {
-    const dpr = window.devicePixelRatio || 1;
+    const density = Math.max(
+      1,
+      Math.min(Math.max(3, window.devicePixelRatio || 1), 6000 / Math.max(1, sel.w, sel.h)),
+    );
     const out = document.createElement('canvas');
-    out.width = Math.max(1, Math.round(sel.w * dpr));
-    out.height = Math.max(1, Math.round(sel.h * dpr));
+    out.width = Math.max(1, Math.round(sel.w * density));
+    out.height = Math.max(1, Math.round(sel.h * density));
     const octx = out.getContext('2d');
     if (!octx) return null;
     octx.fillStyle = '#ffffff';
@@ -1912,7 +2124,7 @@ function captureRegion(
     const cRect = container.getBoundingClientRect();
     const selLeft = cRect.left + sel.x;
     const selTop = cRect.top + sel.y;
-    const sheets = Array.from(document.querySelectorAll('.pdf-page-sheet'));
+    const sheets = Array.from(container.querySelectorAll<HTMLElement>('.pdf-page-sheet'));
     for (const sheet of sheets) {
       const r = sheet.getBoundingClientRect();
       const ix = Math.max(selLeft, r.left);
@@ -1922,23 +2134,44 @@ function captureRegion(
       if (ix2 <= ix || iy2 <= iy) continue;
       const canvas = sheet.querySelector('canvas') as HTMLCanvasElement | null;
       if (!canvas) continue;
-      const rx = canvas.width / r.width;
-      const ry = canvas.height / r.height;
+      let source: CanvasImageSource = canvas;
+      let sourceW = canvas.width;
+      let sourceH = canvas.height;
+      let rendered: ImageBitmap | null = null;
+      const page = Number(sheet.dataset.pageNumber ?? 0);
+      const physical = page > 0
+        ? pageSizes?.[page - 1] ?? { w: r.width / Math.max(scale, 0.01), h: r.height / Math.max(scale, 0.01) }
+        : null;
+      if (page > 0 && physical && physical.w > 0 && physical.h > 0) {
+        try {
+          const renderScale = effectiveRenderBucket(scale * density, physical.w, physical.h);
+          const result = await window.pkm.pdfiumRender(pdfId, page, renderScale);
+          rendered = await toImageBitmap(result);
+          source = rendered;
+          sourceW = result.w;
+          sourceH = result.h;
+        } catch {
+          /* native render unavailable: retain the displayed backing canvas */
+        }
+      }
+      const rx = sourceW / r.width;
+      const ry = sourceH / r.height;
       const sx = Math.round((ix - r.left) * rx);
       const sy = Math.round((iy - r.top) * ry);
       const sw = Math.round((ix2 - ix) * rx);
       const sh = Math.round((iy2 - iy) * ry);
       octx.drawImage(
-        canvas,
+        source,
         sx,
         sy,
         sw,
         sh,
-        Math.round((ix - selLeft) * dpr),
-        Math.round((iy - selTop) * dpr),
-        Math.round((ix2 - ix) * dpr),
-        Math.round((iy2 - iy) * dpr),
+        Math.round((ix - selLeft) * density),
+        Math.round((iy - selTop) * density),
+        Math.round((ix2 - ix) * density),
+        Math.round((iy2 - iy) * density),
       );
+      rendered?.close();
     }
     return out.toDataURL('image/png');
   } catch {
@@ -1949,10 +2182,16 @@ function captureRegion(
 /** 选区截图界面：拖拽框选，退出 / 复制图片 / 插入笔记 */
 function ScreenshotOverlay({
   containerRef,
+  pdfId,
+  scale,
+  pageSizes,
   onClose,
   onInsert,
 }: {
   containerRef: React.RefObject<HTMLDivElement | null>;
+  pdfId: number;
+  scale: number;
+  pageSizes: Array<{ w: number; h: number }> | null;
   onClose: () => void;
   onInsert: (dataUrl: string) => void;
 }) {
@@ -2014,14 +2253,14 @@ function ScreenshotOverlay({
       rectRef.current = next;
       setRect(next);
     };
-    const onUp = () => {
+    const onUp = async () => {
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
       editRef.current = null;
       editStartRef.current = null;
       const rr = rectRef.current;
       if (rr && rr.w >= 4 && rr.h >= 4 && containerRef.current) {
-        setDataUrl(captureRegion(containerRef.current, rr));
+        setDataUrl(await captureRegion(containerRef.current, rr, pdfId, scale, pageSizes));
       }
     };
     window.addEventListener('mousemove', onMove);
@@ -2055,13 +2294,13 @@ function ScreenshotOverlay({
       rectRef.current = next;
       setRect(next);
     };
-    const onUp = () => {
+    const onUp = async () => {
       if (!draggingRef.current) return;
       draggingRef.current = false;
       startRef.current = null;
       const rr = rectRef.current;
       if (rr && rr.w >= 4 && rr.h >= 4 && containerRef.current) {
-        setDataUrl(captureRegion(containerRef.current, rr));
+        setDataUrl(await captureRegion(containerRef.current, rr, pdfId, scale, pageSizes));
       }
     };
     window.addEventListener('mousemove', onMove);
@@ -2070,7 +2309,7 @@ function ScreenshotOverlay({
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
     };
-  }, [containerRef]);
+  }, [containerRef, pageSizes, pdfId, scale]);
 
   // Esc 随时退出截图模式
   useEffect(() => {

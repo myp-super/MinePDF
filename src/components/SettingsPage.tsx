@@ -2,6 +2,9 @@ import {
   ArrowLeft,
   Activity,
   BookOpen,
+  Check,
+  ChevronDown,
+  ChevronRight,
   Database,
   Download,
   Eye,
@@ -9,6 +12,7 @@ import {
   FileText,
   FolderInput,
   FolderOpen,
+  GripVertical,
   Hand,
   Hash,
   Info,
@@ -18,6 +22,7 @@ import {
   MousePointer2,
   Palette,
   Pencil,
+  Plus,
   RefreshCw,
   RotateCcw,
   Save,
@@ -26,13 +31,27 @@ import {
 } from 'lucide-react';
 import React, { useEffect, useRef, useState } from 'react';
 import { useT, useTError } from '../i18n';
-import type { AppSettings } from '../shared/types';
+import {
+  DEFAULT_LITERATURE_REVIEW_FIELD_CONFIGS,
+  type AppSettings,
+  type LiteratureReviewFieldConfig,
+} from '../shared/types';
 import { DEFAULT_TAG_PRESETS, isPresetTag, normalizeTagName } from '../lib/tags';
 import { renderDiag } from '../lib/renderDiag';
 import { useApp } from '../store';
-import { AboutModal } from './AboutModal';
+import { AboutContent } from './AboutModal';
 import { UpdateModal } from './UpdateModal';
+import { TranslationSettings } from './TranslationSettings';
 import { Button, Modal, Toggle } from './ui';
+
+type SettingsCategory =
+  | 'appearance'
+  | 'reading'
+  | 'translation'
+  | 'library'
+  | 'tags'
+  | 'data'
+  | 'about';
 
 export function SettingsPage() {
   const t = useT();
@@ -46,7 +65,26 @@ export function SettingsPage() {
   const inboxPdfs = useApp((s) => s.inboxPdfs);
   const [busy, setBusy] = useState(false);
   const [updateOpen, setUpdateOpen] = useState(false);
-  const [aboutOpen, setAboutOpen] = useState(false);
+  const [activeCategory, setActiveCategory] = useState<SettingsCategory>('appearance');
+  const [reviewFieldDraft, setReviewFieldDraft] = useState<LiteratureReviewFieldConfig[]>(
+    settings.literatureReviewFieldConfigs,
+  );
+  const [reviewFieldDirty, setReviewFieldDirty] = useState(false);
+  const [newReviewFieldName, setNewReviewFieldName] = useState('');
+  const [editingReviewField, setEditingReviewField] = useState<{ id: string; label: string } | null>(null);
+  const [reviewDeleteTarget, setReviewDeleteTarget] = useState<LiteratureReviewFieldConfig | null>(null);
+  const [deletedReviewFieldIds, setDeletedReviewFieldIds] = useState<string[]>([]);
+  const [reviewDrag, setReviewDrag] = useState<{ id: string; pressing: boolean; active: boolean } | null>(null);
+  const cancelReviewRenameRef = useRef(false);
+  const reviewDragRef = useRef<{
+    id: string;
+    pointerId: number;
+    x: number;
+    y: number;
+    active: boolean;
+    timer: ReturnType<typeof setTimeout> | null;
+    handle: HTMLButtonElement;
+  } | null>(null);
   const [appVersion, setAppVersion] = useState('');
   const [defaultPdf, setDefaultPdf] = useState<boolean | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<{
@@ -58,6 +96,22 @@ export function SettingsPage() {
   const [renaming, setRenaming] = useState<{ id: number; value: string } | null>(null);
   /** 重命名草稿的 ref：输入框失焦（含 Escape 取消后的失焦）时以最新状态判断是否提交 */
   const renamingRef = useRef<{ id: number; value: string } | null>(null);
+
+  const categories: Array<{
+    id: SettingsCategory;
+    label: string;
+    description: string;
+    icon: React.ReactNode;
+  }> = [
+    { id: 'appearance', label: t('settings.category.appearance'), description: t('settings.category.appearanceHint'), icon: <Palette size={15} /> },
+    { id: 'reading', label: t('settings.category.reading'), description: t('settings.category.readingHint'), icon: <BookOpen size={15} /> },
+    { id: 'translation', label: t('settings.category.translation'), description: t('settings.category.translationHint'), icon: <Languages size={15} /> },
+    { id: 'library', label: t('settings.category.library'), description: t('settings.category.libraryHint'), icon: <Library size={15} /> },
+    { id: 'tags', label: t('settings.category.tags'), description: t('settings.category.tagsHint'), icon: <Hash size={15} /> },
+    { id: 'data', label: t('settings.category.data'), description: t('settings.category.dataHint'), icon: <Database size={15} /> },
+    { id: 'about', label: t('settings.category.about'), description: t('settings.category.aboutHint'), icon: <Info size={15} /> },
+  ];
+  const activeCategoryInfo = categories.find((category) => category.id === activeCategory) ?? categories[0];
 
   useEffect(() => {
     void window.pkm
@@ -78,10 +132,137 @@ export function SettingsPage() {
     return () => window.removeEventListener('focus', onFocus);
   }, []);
 
+  useEffect(() => {
+    if (!reviewFieldDirty) {
+      setReviewFieldDraft(settings.literatureReviewFieldConfigs.map((item) => ({ ...item })));
+      setDeletedReviewFieldIds([]);
+    }
+  }, [reviewFieldDirty, settings.literatureReviewFieldConfigs]);
+
   const update = async (patch: Partial<AppSettings>) => {
     try {
       await window.pkm.updateSettings(patch);
       await refresh();
+    } catch (err) {
+      toast('error', terr(err instanceof Error ? err.message : String(err)));
+    }
+  };
+
+  const toggleReviewField = (id: string) => {
+    setReviewFieldDirty(true);
+    setReviewFieldDraft((current) =>
+      current.map((item) => (item.id === id ? { ...item, enabled: !item.enabled } : item)),
+    );
+  };
+
+  const reorderReviewField = (sourceId: string, targetId: string) => {
+    if (sourceId === targetId) return;
+    setReviewFieldDirty(true);
+    setReviewFieldDraft((current) => {
+      const index = current.findIndex((item) => item.id === sourceId);
+      const target = current.findIndex((item) => item.id === targetId);
+      if (index < 0 || target < 0) return current;
+      const next = [...current];
+      const [moved] = next.splice(index, 1);
+      next.splice(target, 0, moved);
+      return next;
+    });
+  };
+
+  const clearReviewDrag = () => {
+    const drag = reviewDragRef.current;
+    if (drag?.timer) clearTimeout(drag.timer);
+    if (drag?.handle.hasPointerCapture(drag.pointerId)) drag.handle.releasePointerCapture(drag.pointerId);
+    reviewDragRef.current = null;
+    setReviewDrag(null);
+  };
+
+  const startReviewDrag = (event: React.PointerEvent<HTMLButtonElement>, id: string) => {
+    if (event.button !== 0) return;
+    const handle = event.currentTarget;
+    const drag = {
+      id,
+      pointerId: event.pointerId,
+      x: event.clientX,
+      y: event.clientY,
+      active: false,
+      timer: null as ReturnType<typeof setTimeout> | null,
+      handle,
+    };
+    handle.setPointerCapture(event.pointerId);
+    drag.timer = setTimeout(() => {
+      if (reviewDragRef.current !== drag) return;
+      drag.active = true;
+      setReviewDrag({ id, pressing: false, active: true });
+    }, 320);
+    reviewDragRef.current = drag;
+    setReviewDrag({ id, pressing: true, active: false });
+  };
+
+  const moveReviewDrag = (event: React.PointerEvent<HTMLButtonElement>) => {
+    const drag = reviewDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    if (!drag.active && Math.hypot(event.clientX - drag.x, event.clientY - drag.y) > 7) {
+      clearReviewDrag();
+      return;
+    }
+    if (!drag.active) return;
+    event.preventDefault();
+    const row = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>('[data-review-field-id]');
+    const targetId = row?.dataset.reviewFieldId;
+    if (targetId) reorderReviewField(drag.id, targetId);
+  };
+
+  const addReviewField = () => {
+    const label = newReviewFieldName.trim().slice(0, 80);
+    if (!label) return;
+    const suffix = typeof crypto !== 'undefined' && 'randomUUID' in crypto
+      ? crypto.randomUUID().replace(/-/g, '')
+      : `${Date.now()}${Math.random().toString(36).slice(2)}`;
+    setReviewFieldDraft((current) => [
+      ...current,
+      { id: `custom-${suffix}`, kind: 'custom', label, enabled: true },
+    ]);
+    setNewReviewFieldName('');
+    setReviewFieldDirty(true);
+  };
+
+  const commitReviewFieldRename = () => {
+    if (!editingReviewField) return;
+    if (cancelReviewRenameRef.current) {
+      cancelReviewRenameRef.current = false;
+      setEditingReviewField(null);
+      return;
+    }
+    const label = editingReviewField.label.trim().slice(0, 80);
+    const target = reviewFieldDraft.find((item) => item.id === editingReviewField.id);
+    if (!label && target?.kind === 'custom') {
+      setEditingReviewField(null);
+      return;
+    }
+    setReviewFieldDraft((current) =>
+      current.map((item) => (item.id === editingReviewField.id ? { ...item, label } : item)),
+    );
+    setEditingReviewField(null);
+    setReviewFieldDirty(true);
+  };
+
+  const deleteReviewField = () => {
+    if (!reviewDeleteTarget || reviewDeleteTarget.kind !== 'custom') return;
+    setReviewFieldDraft((current) => current.filter((item) => item.id !== reviewDeleteTarget.id));
+    setDeletedReviewFieldIds((current) => [...new Set([...current, reviewDeleteTarget.id])]);
+    setReviewDeleteTarget(null);
+    setReviewFieldDirty(true);
+  };
+
+  const saveReviewFields = async () => {
+    try {
+      await window.pkm.updateSettings({ literatureReviewFieldConfigs: reviewFieldDraft });
+      await Promise.all(deletedReviewFieldIds.map((id) => window.pkm.deleteLiteratureReviewCustomField(id)));
+      await refresh();
+      setReviewFieldDirty(false);
+      setDeletedReviewFieldIds([]);
+      toast('success', t('settings.reviewFieldsSaved'));
     } catch (err) {
       toast('error', terr(err instanceof Error ? err.message : String(err)));
     }
@@ -234,17 +415,60 @@ export function SettingsPage() {
   };
 
   return (
-    <main className="min-w-0 flex-1 overflow-y-auto bg-app-base">
-      <div className="mx-auto max-w-2xl px-8 py-6">
-        <button
-          className="mb-4 flex items-center gap-1.5 text-xs text-app-muted transition-colors hover:text-app-text"
-          onClick={() => setView('library')}
-        >
-          <ArrowLeft size={13} /> {t('settings.back')}
-        </button>
-        <h1 className="mb-1 text-lg font-semibold">{t('settings.title')}</h1>
-        <p className="mb-6 text-[11.5px] text-app-muted">{t('settings.desc')}</p>
+    <main className="flex min-w-0 flex-1 overflow-hidden bg-app-base">
+      <aside className="flex w-[218px] shrink-0 flex-col border-r border-app-border bg-app-panel/70">
+        <div className="border-b border-app-border px-4 py-4">
+          <button
+            className="mb-3 flex items-center gap-1.5 text-[11px] text-app-muted transition-colors hover:text-app-text"
+            onClick={() => setView('library')}
+          >
+            <ArrowLeft size={13} /> {t('settings.back')}
+          </button>
+          <h1 className="text-[17px] font-semibold tracking-tight">{t('settings.title')}</h1>
+          <p className="mt-1 text-[10.5px] leading-relaxed text-app-muted">{t('settings.desc')}</p>
+        </div>
+        <nav className="min-h-0 flex-1 space-y-1 overflow-y-auto p-2.5" aria-label={t('settings.title')}>
+          {categories.map((category) => {
+            const selected = activeCategory === category.id;
+            return (
+              <button
+                key={category.id}
+                type="button"
+                className={`group flex w-full items-center gap-2.5 rounded-lg border px-2.5 py-2.5 text-left transition-colors ${
+                  selected
+                    ? 'border-app-accent/30 bg-app-accent/10 text-app-text'
+                    : 'border-transparent text-app-muted hover:bg-app-panel2 hover:text-app-text'
+                }`}
+                onClick={() => setActiveCategory(category.id)}
+              >
+                <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-md ${selected ? 'bg-app-accent/15 text-app-accent' : 'bg-app-panel2 text-app-muted group-hover:text-app-text'}`}>
+                  {category.icon}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[11.5px] font-medium">{category.label}</span>
+                  <span className="mt-0.5 block truncate text-[9.5px] text-app-muted/75">{category.description}</span>
+                </span>
+                <ChevronRight size={12} className={selected ? 'text-app-accent' : 'text-app-muted/40'} />
+              </button>
+            );
+          })}
+        </nav>
+        <div className="border-t border-app-border px-4 py-2.5 text-[10px] text-app-muted/70">
+          MinePDF {appVersion ? `v${appVersion}` : ''}
+        </div>
+      </aside>
 
+      <div className="min-w-0 flex-1 overflow-y-auto">
+        <div className="mx-auto max-w-3xl px-7 py-6">
+          <div className="mb-5 border-b border-app-border pb-4">
+            <div className="flex items-center gap-2 text-[10px] font-medium uppercase tracking-[0.16em] text-app-accent">
+              {activeCategoryInfo.icon} {t('settings.title')}
+            </div>
+            <h2 className="mt-2 text-xl font-semibold tracking-tight">{activeCategoryInfo.label}</h2>
+            <p className="mt-1 text-[11.5px] text-app-muted">{activeCategoryInfo.description}</p>
+          </div>
+
+        {activeCategory === 'appearance' && (
         <section className="mb-4 rounded-xl border border-app-border bg-app-panel p-4">
           <div className="mb-3 flex items-center gap-2 text-xs font-semibold">
             <Palette size={14} className="text-app-accent" /> {t('settings.appearance')}
@@ -313,7 +537,13 @@ export function SettingsPage() {
             </div>
           </div>
         </section>
+        )}
 
+        {activeCategory === 'translation' && (
+        <TranslationSettings settings={settings} update={update} />
+        )}
+
+        {activeCategory === 'reading' && (
         <section className="mb-4 rounded-xl border border-app-border bg-app-panel p-4">
           <div className="mb-3 flex items-center gap-2 text-xs font-semibold">
             <BookOpen size={14} className="text-app-accent" /> {t('settings.readSection')}
@@ -352,7 +582,9 @@ export function SettingsPage() {
             />
           </div>
         </section>
+        )}
 
+        {activeCategory === 'library' && (<>
         <section className="mb-4 rounded-xl border border-app-border bg-app-panel p-4">
           <div className="mb-3 flex items-center gap-2 text-xs font-semibold">
             <Library size={14} className="text-app-accent" /> {t('settings.librarySection')}
@@ -394,6 +626,165 @@ export function SettingsPage() {
           </div>
         </section>
 
+        <section className="mb-4 rounded-xl border border-app-border bg-app-panel p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <div className="flex items-center gap-2 text-xs font-semibold">
+                <BookOpen size={14} className="text-app-accent" /> {t('settings.reviewFields')}
+              </div>
+              <p className="mt-1 text-[10.5px] leading-relaxed text-app-muted">
+                {t('settings.reviewFieldsHint')}
+              </p>
+            </div>
+            <span className="shrink-0 rounded-full border border-app-border bg-app-panel2 px-2 py-1 text-[10px] tabular-nums text-app-muted">
+              {t('settings.reviewFieldsCount', { n: reviewFieldDraft.filter((item) => item.enabled).length })}
+            </span>
+          </div>
+          <div className="mt-3 flex gap-2 rounded-lg border border-dashed border-app-border bg-app-panel2/35 p-2">
+            <input
+              className="h-7 min-w-0 flex-1 rounded-md border border-app-border bg-app-panel px-2 text-[11px] outline-none focus:border-app-accent/70"
+              value={newReviewFieldName}
+              placeholder={t('settings.reviewFieldAddPlaceholder')}
+              maxLength={80}
+              onChange={(event) => setNewReviewFieldName(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') addReviewField();
+              }}
+            />
+            <Button size="sm" variant="outline" disabled={!newReviewFieldName.trim()} onClick={addReviewField}>
+              <Plus size={12} /> {t('settings.reviewFieldAdd')}
+            </Button>
+          </div>
+          <div className="mt-2 flex items-center gap-1.5 text-[10px] text-app-muted">
+            <GripVertical size={11} /> {t('settings.reviewFieldDragHint')}
+          </div>
+          <div className="mt-2 space-y-1.5">
+            {reviewFieldDraft.map((item) => {
+              const enabled = item.enabled;
+              const defaultLabel = item.kind === 'preset' && item.field ? t(`review.${item.field}`) : item.label;
+              const displayLabel = item.label || defaultLabel;
+              const dragging = reviewDrag?.id === item.id && reviewDrag.active;
+              const pressing = reviewDrag?.id === item.id && reviewDrag.pressing;
+              return (
+                <div
+                  key={item.id}
+                  data-review-field-id={item.id}
+                  className={`relative flex min-w-0 items-center gap-2 rounded-lg border px-2.5 py-2 transition-all ${
+                    dragging
+                      ? 'z-10 scale-[1.01] border-app-accent bg-app-panel shadow-lg shadow-black/20'
+                      : pressing
+                        ? 'border-app-accent/50 bg-app-accent/[0.09]'
+                        :
+                    enabled
+                      ? 'border-app-accent/25 bg-app-accent/[0.06]'
+                      : 'border-app-border bg-app-panel2/50'
+                  }`}
+                >
+                  <button
+                    type="button"
+                    className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-colors ${
+                      enabled
+                        ? 'border-app-accent bg-app-accent text-white'
+                        : 'border-app-border text-transparent hover:border-app-accent/60'
+                    }`}
+                    onClick={() => toggleReviewField(item.id)}
+                    aria-label={t(enabled ? 'settings.reviewFieldDisable' : 'settings.reviewFieldEnable', { name: displayLabel })}
+                  >
+                    <Check size={11} />
+                  </button>
+                  {editingReviewField?.id === item.id ? (
+                    <input
+                      autoFocus
+                      className="h-6 min-w-0 flex-1 rounded border border-app-accent/60 bg-app-panel px-1.5 text-[11px] outline-none"
+                      value={editingReviewField.label}
+                      maxLength={80}
+                      onChange={(event) => setEditingReviewField({ id: item.id, label: event.target.value })}
+                      onBlur={commitReviewFieldRename}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') (event.target as HTMLInputElement).blur();
+                        if (event.key === 'Escape') {
+                          cancelReviewRenameRef.current = true;
+                          (event.target as HTMLInputElement).blur();
+                        }
+                      }}
+                    />
+                  ) : (
+                    <button
+                      type="button"
+                      className={`min-w-0 flex-1 truncate text-left text-[11px] ${enabled ? 'text-app-text/90' : 'text-app-muted'}`}
+                      onClick={() => toggleReviewField(item.id)}
+                    >
+                      {displayLabel}
+                      {item.kind === 'custom' && (
+                        <span className="ml-1.5 rounded bg-app-panel px-1 py-0.5 text-[9px] text-app-muted">
+                          {t('settings.reviewFieldCustom')}
+                        </span>
+                      )}
+                    </button>
+                  )}
+                  {editingReviewField?.id !== item.id && (
+                    <>
+                      <button
+                        type="button"
+                        className="rounded p-1 text-app-muted transition-colors hover:bg-app-panel2 hover:text-app-text"
+                        title={t('settings.reviewFieldRename')}
+                        onClick={() => setEditingReviewField({ id: item.id, label: displayLabel })}
+                      >
+                        <Pencil size={11} />
+                      </button>
+                      {item.kind === 'custom' && (
+                        <button
+                          type="button"
+                          className="rounded p-1 text-app-muted transition-colors hover:bg-app-danger/10 hover:text-app-danger"
+                          title={t('common.delete')}
+                          onClick={() => setReviewDeleteTarget(item)}
+                        >
+                          <Trash2 size={11} />
+                        </button>
+                      )}
+                    </>
+                  )}
+                  <button
+                    type="button"
+                    className={`cursor-grab touch-none rounded p-1 transition-colors active:cursor-grabbing ${
+                      dragging ? 'bg-app-accent text-white' : 'text-app-muted hover:bg-app-panel2 hover:text-app-text'
+                    }`}
+                    title={t('settings.reviewFieldDragHint')}
+                    aria-label={t('settings.reviewFieldDragHint')}
+                    onPointerDown={(event) => startReviewDrag(event, item.id)}
+                    onPointerMove={moveReviewDrag}
+                    onPointerUp={clearReviewDrag}
+                    onPointerCancel={clearReviewDrag}
+                    onContextMenu={(event) => event.preventDefault()}
+                  >
+                    <GripVertical size={13} />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+          <div className="mt-3 flex items-center justify-between gap-2 border-t border-app-border pt-3">
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                setReviewFieldDraft(DEFAULT_LITERATURE_REVIEW_FIELD_CONFIGS.map((item) => ({ ...item })));
+                setDeletedReviewFieldIds(
+                  reviewFieldDraft.filter((item) => item.kind === 'custom').map((item) => item.id),
+                );
+                setReviewFieldDirty(true);
+              }}
+            >
+              <RotateCcw size={12} /> {t('settings.reviewFieldsReset')}
+            </Button>
+            <Button size="sm" variant="primary" disabled={!reviewFieldDirty} onClick={() => void saveReviewFields()}>
+              <Save size={12} /> {t('settings.reviewFieldsSave')}
+            </Button>
+          </div>
+        </section>
+        </>)}
+
+        {activeCategory === 'data' && (<>
         <section className="mb-4 rounded-xl border border-app-border bg-app-panel p-4">
           <div className="mb-3 flex items-center gap-2 text-xs font-semibold">
             <RefreshCw size={14} className="text-app-accent" /> {t('settings.updateSection')}
@@ -464,7 +855,9 @@ export function SettingsPage() {
           </div>
           <p className="mt-2 text-[10.5px] leading-relaxed text-app-muted/80">{t('settings.backupHint')}</p>
         </section>
+        </>)}
 
+        {activeCategory === 'tags' && (
         <section className="mb-4 rounded-xl border border-app-border bg-app-panel p-4">
           <div className="mb-3 flex items-center gap-2 text-xs font-semibold">
             <Hash size={14} className="text-app-accent" /> {t('settings.tagsSection')}
@@ -549,47 +942,39 @@ export function SettingsPage() {
             )}
           </div>
         </section>
+        )}
 
-        <section className="rounded-xl border border-app-border bg-app-panel p-4">
-          <div className="mb-3 flex items-center gap-2 text-xs font-semibold">
-            <Info size={14} className="text-app-accent" /> {t('settings.about')}
-          </div>
-          <div className="flex items-center justify-between gap-3">
-            <div className="min-w-0">
-              <div className="text-[11.5px] text-app-text/90">{t('settings.aboutHint')}</div>
-              <div className="mt-0.5 text-[10.5px] text-app-muted">
-                {t('about.version')}：v{appVersion}
-              </div>
-            </div>
-            <Button size="sm" variant="primary" onClick={() => setAboutOpen(true)}>
-              <Info size={12} /> {t('settings.aboutOpen')}
-            </Button>
-          </div>
-          <div className="mt-3 flex items-center justify-between gap-3 border-t border-app-border pt-3">
+        {activeCategory === 'about' && (
+        <div className="space-y-4">
+          <AboutContent appVersion={appVersion} />
+          <section className="rounded-xl border border-app-border bg-app-panel p-4">
             <div className="min-w-0">
               <div className="text-[11.5px] text-app-text/90">{t('settings.renderDiag')}</div>
               <div className="mt-0.5 text-[10.5px] text-app-muted">{t('settings.renderDiagHint')}</div>
             </div>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => {
-                renderDiag.toggle();
-                toast(
-                  'info',
-                  renderDiag.getState().enabled
-                    ? t('settings.renderDiagOn')
-                    : t('settings.renderDiagOff'),
-                );
-              }}
-            >
-              <Activity size={12} />
-              {t('settings.renderDiagToggle')}
-            </Button>
-          </div>
-        </section>
+            <div className="mt-3">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  renderDiag.toggle();
+                  toast(
+                    'info',
+                    renderDiag.getState().enabled
+                      ? t('settings.renderDiagOn')
+                      : t('settings.renderDiagOff'),
+                  );
+                }}
+              >
+                <Activity size={12} />
+                {t('settings.renderDiagToggle')}
+              </Button>
+            </div>
+          </section>
+        </div>
+        )}
+        </div>
       </div>
-      <AboutModal open={aboutOpen} onClose={() => setAboutOpen(false)} />
       <UpdateModal open={updateOpen} onClose={() => setUpdateOpen(false)} />
       <Modal
         open={deleteTarget != null}
@@ -613,6 +998,28 @@ export function SettingsPage() {
               </Button>
               <Button variant="danger" onClick={() => void doDeleteTag()}>
                 {t('settings.tagDeleteConfirmBtn')}
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
+      <Modal
+        open={reviewDeleteTarget != null}
+        onClose={() => setReviewDeleteTarget(null)}
+        title={t('settings.reviewFieldDeleteTitle')}
+        width={400}
+      >
+        {reviewDeleteTarget && (
+          <div>
+            <p className="text-[12.5px] leading-relaxed text-app-text/90">
+              {t('settings.reviewFieldDeleteConfirm', { name: reviewDeleteTarget.label })}
+            </p>
+            <div className="mt-4 flex justify-end gap-2">
+              <Button variant="ghost" onClick={() => setReviewDeleteTarget(null)}>
+                {t('common.cancel')}
+              </Button>
+              <Button variant="danger" onClick={deleteReviewField}>
+                {t('common.delete')}
               </Button>
             </div>
           </div>

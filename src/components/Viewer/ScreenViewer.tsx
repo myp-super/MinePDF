@@ -56,7 +56,14 @@ export function ScreenViewer({
         <TabBar screen={screen} active={active} />
       </div>
       {pdf ? (
-        <PdfViewer pdf={pdf} paneId={screen.id} onMissing={onMissing} paneActive={active} />
+        <PdfViewer
+          key={activeTab.id}
+          pdf={pdf}
+          tabId={activeTab.id}
+          paneId={screen.id}
+          onMissing={onMissing}
+          paneActive={active}
+        />
       ) : (
         <div className="flex min-h-0 flex-1">
           <EmptyState />

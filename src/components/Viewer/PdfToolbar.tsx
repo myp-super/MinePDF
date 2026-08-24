@@ -14,7 +14,7 @@ import {
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useT } from '../../i18n';
 import type { PdfRecord } from '../../shared/types';
 import { IconButton } from '../ui';
@@ -78,27 +78,19 @@ export function PdfToolbar({
   // 页码输入：本地草稿 + 回车/失焦提交，避免逐键跳转与受控回填互相打架
   const [pageDraft, setPageDraft] = useState<string>(String(currentPage));
   const [pageFocus, setPageFocus] = useState(false);
-  /** 已提交但滚动还没落地的目标页：等待 currentPage 追上，避免被旧页码回填 */
-  const pendingPageRef = useRef<number | null>(null);
   useEffect(() => {
-    if (pendingPageRef.current != null) {
-      if (currentPage === pendingPageRef.current) pendingPageRef.current = null;
-      else return; // 跳转还没落地，先不覆盖草稿
-    }
     // 外部页码变化（滚动/翻页/书签跳转）时同步草稿；正在输入时不要覆盖
     if (!pageFocus) setPageDraft(String(currentPage));
   }, [currentPage, pageFocus]);
   const commitPage = () => {
     const n = parseInt(pageDraft, 10);
     if (Number.isNaN(n)) {
-      pendingPageRef.current = null;
       setPageDraft(String(currentPage));
       return;
     }
     const clamped = Math.min(Math.max(1, n), Math.max(1, pageCount));
     setPageDraft(String(clamped));
     if (clamped === currentPage) return; // 已在目标页，无需跳转
-    pendingPageRef.current = clamped;
     onPageChange(clamped);
   };
 
@@ -134,7 +126,8 @@ export function PdfToolbar({
           onChange={(e) => setPageDraft(e.target.value.replace(/[^\d]/g, '').slice(0, 6))}
           onKeyDown={(e) => {
             if (e.key === 'Enter') {
-              commitPage();
+              // 统一在 blur 中提交：提交后退出编辑态，随后滚动页码才能继续实时更新。
+              (e.target as HTMLInputElement).blur();
             } else if (e.key === 'Escape') {
               setPageDraft(String(currentPage));
               (e.target as HTMLInputElement).blur();

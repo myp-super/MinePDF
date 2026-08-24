@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
-import type { PkmApi } from '../src/shared/types';
+import type { PkmApi, TranslateRequest, TranslationInvokeResult } from '../src/shared/types';
 
 interface InvokeResult<T> {
   ok: boolean;
@@ -18,6 +18,30 @@ async function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
   }
   if (!res?.ok) throw new Error(res?.error ?? `IPC 调用失败: ${channel}`);
   return res.data as T;
+}
+
+async function invokeTranslation(input: TranslateRequest): Promise<TranslationInvokeResult> {
+  try {
+    const res = await ipcRenderer.invoke('translation:translate', input) as TranslationInvokeResult;
+    if (res?.ok === true || res?.ok === false) return res;
+  } catch (error) {
+    return {
+      ok: false,
+      error: {
+        code: 'NETWORK',
+        message: error instanceof Error ? error.message : 'Translation IPC request failed',
+        retryable: true,
+      },
+    };
+  }
+  return {
+    ok: false,
+    error: {
+      code: 'PROVIDER_ERROR',
+      message: 'Translation provider returned an invalid response',
+      retryable: true,
+    },
+  };
 }
 
 function subscribe(channel: string, cb: (value: unknown) => void): () => void {
@@ -107,6 +131,11 @@ const api: PkmApi = {
   getLiteratureReview: (pdfId) => invoke('litreview:get', pdfId),
   saveLiteratureReviewField: (pdfId, field, value) =>
     invoke('litreview:save-field', pdfId, field, value),
+  getLiteratureReviewCustomValues: (pdfId) => invoke('litreview:get-custom-values', pdfId),
+  saveLiteratureReviewCustomValue: (pdfId, fieldId, value) =>
+    invoke('litreview:save-custom-value', pdfId, fieldId, value),
+  deleteLiteratureReviewCustomField: (fieldId) =>
+    invoke('litreview:delete-custom-field', fieldId),
   exportLiterature: (pdfIds, format) => invoke('literature:export', pdfIds, format),
 
   listAnnotations: (pdfId) => invoke('annotation:list', pdfId),
@@ -118,6 +147,13 @@ const api: PkmApi = {
 
   getSettings: () => invoke('settings:get'),
   updateSettings: (patch) => invoke('settings:update', patch),
+  translate: (input) => invokeTranslation(input),
+  cancelTranslation: (requestId) => invoke('translation:cancel', requestId),
+  getTranslationProviders: () => invoke('translation:providers'),
+  saveProviderCredential: (input) => invoke('translation:credential-save', input),
+  deleteProviderCredential: (provider) => invoke('translation:credential-delete', provider),
+  getTranslationCacheStats: () => invoke('translation:cache-stats'),
+  clearTranslationCache: () => invoke('translation:cache-clear'),
   checkForUpdates: () => invoke('update:check'),
   downloadUpdate: (url) => invoke('update:download', url),
   onDownloadProgress: (cb) =>
@@ -140,6 +176,7 @@ const api: PkmApi = {
   isMaximized: () => invoke('window:is-maximized'),
   onFullScreenChange: (cb) => subscribe('window:fullscreen-changed', (v) => cb(Boolean(v))),
   onMaximizedChange: (cb) => subscribe('window:maximized-changed', (v) => cb(Boolean(v))),
+  onViewportWillChange: (cb) => subscribe('window:viewport-will-change', () => cb()),
   onWindowRelayout: (cb) => subscribe('window:relayout', () => cb()),
   onLibraryChanged: (cb) => subscribe('library:changed', () => cb()),
   getRenderDiag: () => invoke('app:render-diag'),

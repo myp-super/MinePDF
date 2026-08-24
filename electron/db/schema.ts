@@ -132,6 +132,42 @@ CREATE TABLE IF NOT EXISTS literature_review (
   updated_time TEXT NOT NULL
 );
 
+-- 用户自定义阅读记录字段：字段定义存在设置中，这里仅按文献保存字段值
+CREATE TABLE IF NOT EXISTS literature_review_custom_values (
+  pdf_id INTEGER NOT NULL REFERENCES pdfs(id) ON DELETE CASCADE,
+  field_id TEXT NOT NULL,
+  value TEXT NOT NULL DEFAULT '',
+  updated_time TEXT NOT NULL,
+  PRIMARY KEY (pdf_id, field_id)
+);
+
+CREATE TABLE IF NOT EXISTS translation_glossary (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  term TEXT NOT NULL COLLATE NOCASE,
+  translation TEXT NOT NULL,
+  domain TEXT NOT NULL DEFAULT '',
+  note TEXT NOT NULL DEFAULT '',
+  enabled INTEGER NOT NULL DEFAULT 1,
+  created_time TEXT NOT NULL,
+  updated_time TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS translation_cache (
+  cache_key TEXT PRIMARY KEY,
+  translated_text TEXT NOT NULL,
+  provider TEXT NOT NULL,
+  provider_name TEXT NOT NULL,
+  provider_model TEXT NOT NULL DEFAULT '',
+  source_language TEXT NOT NULL,
+  target_language TEXT NOT NULL,
+  detected_language TEXT,
+  input_tokens INTEGER,
+  output_tokens INTEGER,
+  byte_size INTEGER NOT NULL,
+  created_time TEXT NOT NULL,
+  accessed_time TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_pdfs_folder ON pdfs(folder_id);
 CREATE INDEX IF NOT EXISTS idx_pdfs_title ON pdfs(title);
 CREATE INDEX IF NOT EXISTS idx_pdf_tags_pdf ON pdf_tags(pdf_id);
@@ -140,5 +176,11 @@ CREATE INDEX IF NOT EXISTS idx_notes_pdf ON notes(pdf_id);
 CREATE INDEX IF NOT EXISTS idx_annotations_pdf ON annotations(pdf_id);
 CREATE INDEX IF NOT EXISTS idx_litnotes_pdf ON literature_notes(pdf_id);
 CREATE INDEX IF NOT EXISTS idx_note_refs_note ON note_references(note_id);
-PRAGMA user_version = 9;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_translation_glossary_term_domain
+  ON translation_glossary(term, domain);
+CREATE INDEX IF NOT EXISTS idx_translation_glossary_enabled
+  ON translation_glossary(enabled, term);
+CREATE INDEX IF NOT EXISTS idx_translation_cache_accessed
+  ON translation_cache(accessed_time);
+PRAGMA user_version = 10;
 `;

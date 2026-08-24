@@ -29,7 +29,7 @@ import {
   X,
 } from 'lucide-react';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import ReactMarkdown from 'react-markdown';
+import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import { renderToStaticMarkup } from 'react-dom/server';
 import rehypeKatex from 'rehype-katex';
 import remarkGfm from 'remark-gfm';
@@ -39,13 +39,15 @@ import type {
   AnnotationRecord,
   LiteratureMetadata,
   LiteratureReview,
-  LiteratureReviewField,
+  LiteratureReviewCustomValue,
   NoteReference,
   PdfRecord,
   Tag,
 } from '../shared/types';
 import type { OutlineNode } from '../lib/pdf';
 import { DEFAULT_TAG_PRESETS, isPresetTag, normalizeTagName } from '../lib/tags';
+import { splitNoteMarkdown } from '../lib/translation';
+import { parseNoteReferenceUrl, preserveNoteReferenceUrl } from '../lib/noteReference';
 import {
   flushAllLiteratureFields,
   forceLiteratureClean,
@@ -82,7 +84,143 @@ const MD_EXPORT_CSS = `
   th { background: #f0f2f5; }
   img { max-width: 100%; }
   del { color: #888; }
+  .translation-note-card { position: relative; margin: 18px 0; padding: 18px 20px 16px;
+    border: 1px solid #cad5e8; border-left: 4px solid #3976d3; border-radius: 12px;
+    background: linear-gradient(145deg, #f7faff 0%, #fff 54%); break-inside: avoid; }
+  .translation-note-card__badge { display: inline-block; margin-bottom: 8px; color: #2c65ba;
+    font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+  .translation-note-card > .md-body > :first-child { margin-top: 0; }
+  .translation-note-card > .md-body > :last-child { margin-bottom: 0; }
 `;
+
+function NoteMarkdownContent({
+  markdown,
+  resolveAsset,
+  onRefClick,
+}: {
+  markdown: string;
+  resolveAsset: (src?: string) => string | undefined;
+  onRefClick?: (refId: number) => void;
+}) {
+  const t = useT();
+  const noteUrlTransform = (url: string): string =>
+    preserveNoteReferenceUrl(url) ?? defaultUrlTransform(url);
+  const components = {
+    img: ({ src, alt }: { src?: string; alt?: string }) => <img src={resolveAsset(src)} alt={alt ?? ''} />,
+    a: ({ href, children }: React.AnchorHTMLAttributes<HTMLAnchorElement>) => {
+      const refId = parseNoteReferenceUrl(href);
+      if (refId != null && onRefClick) {
+        return (
+          <a
+            href="#"
+            title={t('literature.jumpRef')}
+            className="cursor-pointer rounded border border-app-accent/30 bg-app-accent/10 px-1 py-px text-[10px] font-medium text-app-accent no-underline transition-colors hover:bg-app-accent/20"
+            onClick={(event) => {
+              event.preventDefault();
+              onRefClick(refId);
+            }}
+          >
+            {children}
+          </a>
+        );
+      }
+      return <a href={href} target="_blank" rel="noreferrer">{children}</a>;
+    },
+  };
+
+  return (
+    <>
+      {splitNoteMarkdown(markdown).map((segment, index) => {
+        const content = (
+          <ReactMarkdown
+            remarkPlugins={[remarkGfm, remarkMath]}
+            rehypePlugins={[rehypeKatex]}
+            className="md-body"
+            components={components}
+            urlTransform={noteUrlTransform}
+          >
+            {segment.markdown}
+          </ReactMarkdown>
+        );
+        if (segment.kind === 'translation') {
+          return (
+            <section className="translation-note-card" key={`translation-${segment.sequence}-${index}`}>
+              <div className="translation-note-card__badge">
+                {t('note.translationCard', { n: segment.sequence })}
+              </div>
+              {content}
+            </section>
+          );
+        }
+        return <React.Fragment key={`markdown-${index}`}>{content}</React.Fragment>;
+      })}
+    </>
+  );
+}
+
+const MARKDOWN_GUIDE_ITEMS = [
+  { key: 'headings', sample: '# 一级标题\n## 二级标题\n### 三级标题' },
+  { key: 'emphasis', sample: '**加粗文字**\n*斜体文字*\n~~删除文字~~' },
+  { key: 'lists', sample: '- 无序项目\n- 另一个项目\n\n1. 第一步\n2. 第二步' },
+  { key: 'quoteLink', sample: '> 一段引用\n\n[链接文字](https://example.com)' },
+  { key: 'table', sample: '| 方法 | 准确率 |\n| --- | ---: |\n| Baseline | 91.2% |' },
+  { key: 'inlineCode', sample: '使用 `npm run build` 构建项目。' },
+  { key: 'formula', sample: '行内公式：$E = mc^2$\n\n块公式：\n$$\n\\sum_{i=1}^{n} x_i\n$$' },
+  { key: 'c', sample: '```c\n#include <stdio.h>\n\nint main(void) {\n  printf("Hello, MinePDF!\\n");\n  return 0;\n}\n```' },
+  { key: 'python', sample: '```python\ndef mean(values):\n    return sum(values) / len(values)\n\nprint(mean([1, 2, 3]))\n```' },
+] as const;
+
+function MarkdownGuide() {
+  const t = useT();
+  const [open, setOpen] = useState(false);
+  const [copied, setCopied] = useState<string | null>(null);
+
+  const copy = async (key: string, sample: string) => {
+    await navigator.clipboard.writeText(sample);
+    setCopied(key);
+    window.setTimeout(() => setCopied((current) => current === key ? null : current), 1400);
+  };
+
+  return (
+    <div className="border-b border-app-border bg-app-panel/40">
+      <button
+        type="button"
+        className="flex w-full items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-app-panel2/70"
+        onClick={() => setOpen((value) => !value)}
+        aria-expanded={open}
+      >
+        <BookOpen size={13} className="shrink-0 text-app-accent" />
+        <span className="min-w-0 flex-1">
+          <span className="block text-[11px] font-medium text-app-text">{t('note.markdownGuide')}</span>
+          <span className="block truncate text-[9.5px] text-app-muted">{t('note.markdownGuideHint')}</span>
+        </span>
+        <ChevronDown size={13} className={`shrink-0 text-app-muted transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+      {open && (
+        <div className="max-h-[300px] overflow-y-auto border-t border-app-border px-3 py-2.5">
+          <div className="grid grid-cols-1 gap-2 xl:grid-cols-2">
+            {MARKDOWN_GUIDE_ITEMS.map((item) => (
+              <div key={item.key} className="overflow-hidden rounded-lg border border-app-border bg-app-panel2/70">
+                <div className="flex items-center justify-between gap-2 border-b border-app-border px-2.5 py-1.5">
+                  <span className="text-[10.5px] font-medium text-app-text/90">{t(`note.markdown.${item.key}`)}</span>
+                  <button
+                    type="button"
+                    className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[9.5px] text-app-muted transition-colors hover:bg-app-panel hover:text-app-text"
+                    onClick={() => void copy(item.key, item.sample)}
+                  >
+                    {copied === item.key ? <Check size={10} className="text-emerald-400" /> : <Copy size={10} />}
+                    {t(copied === item.key ? 'note.markdownCopied' : 'note.markdownCopy')}
+                  </button>
+                </div>
+                <pre className="m-0 overflow-x-auto whitespace-pre-wrap px-2.5 py-2 font-mono text-[9.5px] leading-relaxed text-app-muted">{item.sample}</pre>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 /** 书签空列表常量：避免 selector 每次返回新引用触发无限重渲染 */
 const EMPTY_OUTLINE: OutlineNode[] = [];
@@ -419,11 +557,13 @@ function LiteraturePanel({ pdf }: { pdf: PdfRecord }) {
   const terr = useTError();
   const toast = useApp((s) => s.toast);
   const patchPdfLiterature = useApp((s) => s.patchPdfLiterature);
+  const reviewFieldConfigs = useApp((s) => s.settings.literatureReviewFieldConfigs);
   const meta = pdf.literature ?? null;
   const [draft, setDraft] = useState<LiteratureMetadata | null>(meta);
   const [showAbstract, setShowAbstract] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [review, setReview] = useState<LiteratureReview | null>(null);
+  const [customReviewValues, setCustomReviewValues] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
   /** 阅读状态行：空间不足时只留图标（稳定探针测量，避免振荡） */
@@ -440,9 +580,16 @@ function LiteraturePanel({ pdf }: { pdf: PdfRecord }) {
     );
   }, [meta?.readingStatus]);
   useEffect(() => {
-    window.pkm
-      .getLiteratureReview(pdf.id)
-      .then(setReview)
+    void Promise.all([
+      window.pkm.getLiteratureReview(pdf.id),
+      window.pkm.getLiteratureReviewCustomValues(pdf.id),
+    ])
+      .then(([preset, custom]) => {
+        setReview(preset);
+        setCustomReviewValues(
+          Object.fromEntries(custom.map((item: LiteratureReviewCustomValue) => [item.fieldId, item.value])),
+        );
+      })
       .catch(() => undefined);
   }, [pdf.id]);
 
@@ -523,20 +670,7 @@ function LiteraturePanel({ pdf }: { pdf: PdfRecord }) {
     return () => ro.disconnect();
   }, []);
 
-  const reviewFields: Array<[LiteratureReviewField, string]> = [
-    ['background', t('review.background')],
-    ['researchQuestion', t('review.researchQuestion')],
-    ['existingMethods', t('review.existingMethods')],
-    ['existingMethodProblems', t('review.existingMethodProblems')],
-    ['coreMethod', t('review.coreMethod')],
-    ['innovations', t('review.innovations')],
-    ['experiments', t('review.experiments')],
-    ['limitations', t('review.limitations')],
-    ['myUnderstanding', t('review.myUnderstanding')],
-    ['myQuestions', t('review.myQuestions')],
-    ['researchImplications', t('review.researchImplications')],
-    ['oneSentenceSummary', t('review.oneSentenceSummary')],
-  ];
+  const reviewFields = reviewFieldConfigs.filter((item) => item.enabled);
 
   return (
     <div>
@@ -727,9 +861,32 @@ function LiteraturePanel({ pdf }: { pdf: PdfRecord }) {
           {t('literature.review')}
         </div>
         <div className="space-y-3">
-          {reviewFields.map(([field, label]) => (
-            <ReviewField key={field} pdfId={pdf.id} field={field} label={label} value={review?.[field] ?? ''} />
-          ))}
+          {reviewFields.map((item) => {
+            const label = item.label || (item.kind === 'preset' && item.field ? t(`review.${item.field}`) : '');
+            if (item.kind === 'preset' && item.field) {
+              const field = item.field;
+              return (
+                <ReviewField
+                  key={item.id}
+                  pdfId={pdf.id}
+                  fieldId={item.id}
+                  label={label}
+                  value={review?.[field] ?? ''}
+                  save={(value) => window.pkm.saveLiteratureReviewField(pdf.id, field, value)}
+                />
+              );
+            }
+            return (
+              <ReviewField
+                key={item.id}
+                pdfId={pdf.id}
+                fieldId={item.id}
+                label={label}
+                value={customReviewValues[item.id] ?? ''}
+                save={(value) => window.pkm.saveLiteratureReviewCustomValue(pdf.id, item.id, value)}
+              />
+            );
+          })}
         </div>
       </section>
 
@@ -742,14 +899,16 @@ function LiteraturePanel({ pdf }: { pdf: PdfRecord }) {
 /** 结构化阅读记录字段：多行文本框，输入停止后自动保存，失焦强制保存 */
 function ReviewField({
   pdfId,
-  field,
+  fieldId,
   label,
   value,
+  save,
 }: {
   pdfId: number;
-  field: LiteratureReviewField;
+  fieldId: string;
   label: string;
   value: string;
+  save: (value: string) => Promise<void>;
 }) {
   const [v, setV] = useState(value);
   const dirtyRef = useRef(false);
@@ -763,8 +922,7 @@ function ReviewField({
   const flush = () => {
     if (!dirtyRef.current) return;
     dirtyRef.current = false;
-    void window.pkm
-      .saveLiteratureReviewField(pdfId, field, v)
+    void save(v)
       .catch(() => {
         dirtyRef.current = true;
       });
@@ -782,19 +940,18 @@ function ReviewField({
       unregDirty();
       unregClean();
     };
-  }, [pdfId, field]);
+  }, [pdfId, fieldId]);
   // 卸载时兜底保存：切换 Tab / 关闭面板时，防抖窗口内的内容不丢失。
   // 「不保存并关闭」路径会先 forceLiteratureClean 清掉脏标记，因此不会误保存。
   useEffect(() => {
     return () => {
       if (dirtyRef.current) {
         dirtyRef.current = false;
-        void window.pkm
-          .saveLiteratureReviewField(pdfId, field, vRef.current)
+        void save(vRef.current)
           .catch(() => undefined);
       }
     };
-  }, [pdfId, field]);
+  }, [pdfId, fieldId]);
   useEffect(() => {
     if (!dirtyRef.current) return;
     const timer = setTimeout(() => flushRef.current(), 400);
@@ -1147,8 +1304,11 @@ function NotesPanel({ pdf }: { pdf: PdfRecord }) {
     let top: number | null = null;
     if (ref.rect) {
       try {
-        const quads = JSON.parse(ref.rect) as Array<{ y: number }>;
-        if (Array.isArray(quads) && quads.length) top = Math.min(...quads.map((q) => q.y));
+        const quads = JSON.parse(ref.rect) as Array<{ y: number; h?: number }>;
+        // PDF coordinates grow upward; the visual top edge is y + h.
+        if (Array.isArray(quads) && quads.length) {
+          top = Math.max(...quads.map((q) => q.y + (q.h ?? 0)));
+        }
       } catch {
         /* ignore */
       }
@@ -1222,15 +1382,7 @@ function NotesPanel({ pdf }: { pdf: PdfRecord }) {
     try {
       const body = renderToStaticMarkup(
         <div className="md-body">
-          <ReactMarkdown
-            remarkPlugins={[remarkGfm, remarkMath]}
-            rehypePlugins={[rehypeKatex]}
-            components={{
-              img: ({ src, alt }) => <img src={resolveAsset(src)} alt={alt ?? ''} />,
-            }}
-          >
-            {md}
-          </ReactMarkdown>
+          <NoteMarkdownContent markdown={md} resolveAsset={resolveAsset} />
         </div>,
       );
       const html = `<!doctype html><html><head><meta charset="utf-8"/>
@@ -1321,6 +1473,8 @@ function NotesPanel({ pdf }: { pdf: PdfRecord }) {
         </div>
       </div>
 
+      <MarkdownGuide />
+
       {mode === 'edit' ? (
         <NoteEditor
           value={md}
@@ -1333,39 +1487,7 @@ function NotesPanel({ pdf }: { pdf: PdfRecord }) {
       ) : (
         <div className="min-h-0 flex-1 overflow-y-auto px-3.5 py-3">
           {md.trim() ? (
-            <ReactMarkdown
-              remarkPlugins={[remarkGfm, remarkMath]}
-              rehypePlugins={[rehypeKatex]}
-              className="md-body"
-              components={{
-                img: ({ src, alt }) => <img src={resolveAsset(src)} alt={alt ?? ''} />,
-                a: ({ href, children }) => {
-                  const m = /^minepdf:\/\/ref\/(\d+)$/.exec(href ?? '');
-                  if (m) {
-                    return (
-                      <a
-                        href="#"
-                        title={t('literature.jumpRef')}
-                        className="cursor-pointer rounded border border-app-accent/30 bg-app-accent/10 px-1 py-px text-[10px] font-medium text-app-accent no-underline transition-colors hover:bg-app-accent/20"
-                        onClick={(e) => {
-                          e.preventDefault();
-                          onRefClick(Number(m[1]));
-                        }}
-                      >
-                        {children}
-                      </a>
-                    );
-                  }
-                  return (
-                    <a href={href} target="_blank" rel="noreferrer">
-                      {children}
-                    </a>
-                  );
-                },
-              }}
-            >
-              {md}
-            </ReactMarkdown>
+            <NoteMarkdownContent markdown={md} resolveAsset={resolveAsset} onRefClick={onRefClick} />
           ) : (
             <div className="text-center text-[11.5px] text-app-muted">{t('inspector.noteEmpty')}</div>
           )}
