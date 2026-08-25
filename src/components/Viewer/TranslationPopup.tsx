@@ -1,4 +1,4 @@
-import { BookOpen, Copy, GripHorizontal, RefreshCw, X } from 'lucide-react';
+import { ArrowLeftRight, BookOpen, Copy, GripHorizontal, RefreshCw, X } from 'lucide-react';
 import React, { useEffect, useRef, useState } from 'react';
 import type { TranslationErrorPayload, TranslationResult } from '../../shared/types';
 
@@ -12,18 +12,24 @@ export function TranslationPopup({
   x,
   y,
   status,
+  sourceLanguage,
+  targetLanguage,
   onClose,
   onConfirm,
   onRetry,
+  onToggleLanguage,
   onCopy,
   onAddToNote,
 }: {
   x: number;
   y: number;
   status: TranslationPopupStatus;
+  sourceLanguage: string;
+  targetLanguage: string;
   onClose: () => void;
   onConfirm: () => void;
   onRetry: () => void;
+  onToggleLanguage: () => void;
   onCopy: () => void;
   onAddToNote: () => void;
 }) {
@@ -92,6 +98,12 @@ export function TranslationPopup({
     left: position.left,
     top: position.top,
   };
+  const languageLabel = (language: string): string => {
+    if (language === 'zh-CN' || language === 'zh') return '中文';
+    if (language === 'en-US' || language === 'en' || language === 'auto') return 'EN';
+    return language;
+  };
+  const directionLabel = languageLabel(sourceLanguage) + ' → ' + languageLabel(targetLanguage);
   return (
     <div ref={ref} className="fixed z-[82] overflow-hidden rounded-lg border border-app-border bg-app-panel shadow-2xl" style={style}>
       <div className="flex h-9 cursor-move touch-none select-none items-center justify-between border-b border-app-border px-3" onPointerDown={startDrag} onPointerMove={moveDrag} onPointerUp={endDrag} onPointerCancel={endDrag}>
@@ -122,7 +134,16 @@ export function TranslationPopup({
           </div>
         )}
       </div>
-      <div className="flex min-h-9 items-center justify-end gap-2 border-t border-app-border px-2.5 py-1.5">
+      <div className="flex min-h-9 items-center justify-between gap-2 border-t border-app-border px-2.5 py-1.5">
+        <button
+          className="flex h-7 items-center gap-1 rounded-md px-2 text-[10.5px] text-app-muted transition-colors hover:bg-app-panel2 hover:text-app-text"
+          title="切换中英翻译方向"
+          aria-label={'切换翻译方向，当前为 ' + directionLabel}
+          onClick={onToggleLanguage}
+        >
+          <ArrowLeftRight size={12} />
+          <span>{directionLabel}</span>
+        </button>
         <div className="flex shrink-0 items-center gap-1">
           {status.kind === 'confirm' && (
             <button className="h-7 rounded-md bg-app-accent px-2.5 text-[10.5px] font-medium text-white" onClick={onConfirm}>Translate</button>

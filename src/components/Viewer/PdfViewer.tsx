@@ -217,6 +217,8 @@ export function PdfViewer({
     page: number;
     original: string;
     context?: string;
+    sourceLanguage: string;
+    targetLanguage: string;
     selectionId: string;
     requestId: string | null;
     status: TranslationPopupStatus;
@@ -1399,6 +1401,8 @@ export function PdfViewer({
         pdfId: pdf.id,
         page: base.page,
         text: base.original,
+        sourceLanguage: base.sourceLanguage,
+        targetLanguage: base.targetLanguage,
         context: base.context,
       });
       if (!response.ok) {
@@ -1433,15 +1437,42 @@ export function PdfViewer({
     }
   };
 
+  const initialTranslationDirection = (): { sourceLanguage: string; targetLanguage: string } => {
+    const configuredSource = translationSettings.sourceLanguage;
+    const configuredTarget = translationSettings.targetLanguage;
+    const isChinese = (language: string): boolean => language === 'zh-CN' || language === 'zh';
+    const isEnglish = (language: string): boolean => language === 'en-US' || language === 'en';
+    if (isChinese(configuredTarget)) return { sourceLanguage: configuredSource === 'auto' ? 'auto' : 'en', targetLanguage: 'zh-CN' };
+    if (isEnglish(configuredTarget)) return { sourceLanguage: configuredSource === 'auto' ? 'auto' : 'zh-CN', targetLanguage: 'en' };
+    return { sourceLanguage: configuredSource, targetLanguage: configuredTarget };
+  };
+
+  const toggleTranslationDirection = (): void => {
+    const current = translationPopup;
+    if (!current) return;
+    const isChinese = current.sourceLanguage === 'zh-CN' || current.sourceLanguage === 'zh';
+    const nextDirection = isChinese
+      ? { sourceLanguage: 'auto', targetLanguage: 'zh-CN' }
+      : { sourceLanguage: 'zh-CN', targetLanguage: 'en' };
+    const next = { ...current, ...nextDirection, requestId: null };
+    if (current.status.kind === 'confirm' || (current.status.kind === 'error' && current.status.error.code === 'TEXT_TOO_LONG')) {
+      setTranslationPopup(next);
+      return;
+    }
+    void runTranslation({ ...next, status: { kind: 'loading' } });
+  };
+
   const openTranslation = (x: number, y: number, immediate = false): void => {
     if (!selection || !translationSettings.enabled) return;
     const page = Math.min(...Object.keys(selection.quads).map(Number));
+    const direction = initialTranslationDirection();
     const base: NonNullable<typeof translationPopup> = {
       x,
       y,
       page,
       original: selection.text,
       context: selectionContext(page, selection.text),
+      ...direction,
       selectionId: translationSelectionId(pdf.id, page, selection.text),
       requestId: null,
       status:
@@ -2086,9 +2117,12 @@ export function PdfViewer({
           x={translationPopup.x}
           y={translationPopup.y}
           status={translationPopup.status}
+          sourceLanguage={translationPopup.sourceLanguage}
+          targetLanguage={translationPopup.targetLanguage}
           onClose={closeTranslation}
           onConfirm={() => void runTranslation(translationPopup)}
           onRetry={() => void runTranslation(translationPopup)}
+          onToggleLanguage={toggleTranslationDirection}
           onCopy={() => {
             if (translationPopup.status.kind === 'success') {
               void navigator.clipboard.writeText(translationPopup.status.result.translatedText);
