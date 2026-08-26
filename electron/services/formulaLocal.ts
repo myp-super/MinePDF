@@ -4,6 +4,7 @@ import path from 'path';
 import { createHash } from 'crypto';
 import * as ort from 'onnxruntime-node';
 import type { FormulaModelStatus } from '../../src/shared/types';
+import { normalizeLocalFormulaLatex } from '../../src/lib/formulaRecognition';
 import { getSettings } from './settings';
 
 const MODEL_NAME = 'RapidLaTeXOCR (ONNX)';
@@ -220,25 +221,55 @@ function fromDataUrl(dataUrl: string): GrayImage {
   if (image.isEmpty()) throw new Error('无法读取公式截图');
   const size = image.getSize(); const bitmap = image.toBitmap(); const gray = new Uint8Array(size.width * size.height);
   for (let i = 0; i < gray.length; i++) { const b = bitmap[i * 4]; const g = bitmap[i * 4 + 1]; const r = bitmap[i * 4 + 2]; gray[i] = Math.round(r * 0.299 + g * 0.587 + b * 0.114); }
-  let minX = size.width, minY = size.height, maxX = -1, maxY = -1;
-  for (let y = 0; y < size.height; y++) for (let x = 0; x < size.width; x++) if (gray[y * size.width + x] < 245) { minX = Math.min(minX, x); minY = Math.min(minY, y); maxX = Math.max(maxX, x); maxY = Math.max(maxY, y); }
-  if (maxX < 0) return { data: gray, width: size.width, height: size.height };
-  const pad = 8; minX = Math.max(0, minX - pad); minY = Math.max(0, minY - pad); maxX = Math.min(size.width - 1, maxX + pad); maxY = Math.min(size.height - 1, maxY + pad);
-  const width = maxX - minX + 1, height = maxY - minY + 1, data = new Uint8Array(width * height);
-  for (let y = 0; y < height; y++) data.set(gray.subarray((minY + y) * size.width + minX, (minY + y) * size.width + minX + width), y * width);
-  return { data, width, height };
+  return { data: gray, width: size.width, height: size.height };
 }
 function resizeGray(image: GrayImage, width: number, height: number): GrayImage {
-  const data = new Uint8Array(width * height); const sx = image.width / width; const sy = image.height / height;
-  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
-    const srcX = Math.min(image.width - 1, Math.floor((x + 0.5) * sx)); const srcY = Math.min(image.height - 1, Math.floor((y + 0.5) * sy)); data[y * width + x] = image.data[srcY * image.width + srcX];
+  const bitmap = Buffer.alloc(image.width * image.height * 4);
+  for (let i = 0; i < image.data.length; i++) {
+    const value = image.data[i];
+    bitmap[i * 4] = value; bitmap[i * 4 + 1] = value; bitmap[i * 4 + 2] = value; bitmap[i * 4 + 3] = 255;
+  }
+  const resized = nativeImage.createFromBitmap(bitmap, { width: image.width, height: image.height })
+    .resize({ width: Math.max(1, width), height: Math.max(1, height), quality: 'best' });
+  const output = resized.toBitmap();
+  const data = new Uint8Array(width * height);
+  for (let i = 0; i < data.length; i++) data[i] = output[i * 4];
+  return { data, width, height };
+}
+function padFormula(image: GrayImage): GrayImage {
+  let min = 255, max = 0, sum = 0;
+  for (const value of image.data) { min = Math.min(min, value); max = Math.max(max, value); }
+  const normalized = new Uint8Array(image.data.length);
+  const range = Math.max(1, max - min);
+  for (let i = 0; i < image.data.length; i++) { normalized[i] = Math.round((image.data[i] - min) / range * 255); sum += normalized[i]; }
+  const lightBackground = sum / normalized.length > 128;
+  let minX = image.width, minY = image.height, maxX = -1, maxY = -1;
+  for (let y = 0; y < image.height; y++) for (let x = 0; x < image.width; x++) {
+    const value = normalized[y * image.width + x];
+    const foreground = lightBackground ? value < 128 : value > 128;
+    if (foreground) { minX = Math.min(minX, x); minY = Math.min(minY, y); maxX = Math.max(maxX, x); maxY = Math.max(maxY, y); }
+  }
+  if (maxX < 0) throw new Error('公式截图中没有可识别的内容');
+  const cropWidth = maxX - minX + 1, cropHeight = maxY - minY + 1;
+  const width = Math.ceil(cropWidth / 32) * 32, height = Math.ceil(cropHeight / 32) * 32;
+  const data = new Uint8Array(width * height); data.fill(255);
+  for (let y = 0; y < cropHeight; y++) for (let x = 0; x < cropWidth; x++) {
+    const value = normalized[(minY + y) * image.width + minX + x];
+    data[y * width + x] = lightBackground ? value : 255 - value;
   }
   return { data, width, height };
 }
-function padGray(image: GrayImage): GrayImage {
-  const width = Math.ceil(image.width / 32) * 32, height = Math.ceil(image.height / 32) * 32, data = new Uint8Array(width * height); data.fill(255);
-  for (let y = 0; y < image.height; y++) data.set(image.data.subarray(y * image.width, (y + 1) * image.width), y * width);
-  return { data, width, height };
+function minmaxSize(image: GrayImage): GrayImage {
+  let result = image;
+  const ratio = Math.max(result.width / 672, result.height / 192);
+  if (ratio > 1) result = resizeGray(result, Math.max(1, Math.floor(result.width / ratio)), Math.max(1, Math.floor(result.height / ratio)));
+  if (result.width < 32 || result.height < 32) {
+    const width = Math.max(result.width, 32), height = Math.max(result.height, 32);
+    const data = new Uint8Array(width * height); data.fill(255);
+    for (let y = 0; y < result.height; y++) data.set(result.data.subarray(y * result.width, (y + 1) * result.width), y * width);
+    result = { data, width, height };
+  }
+  return result;
 }
 function tensorFor(image: GrayImage): ort.Tensor {
   const data = new Float32Array(image.width * image.height);
@@ -258,34 +289,40 @@ function decodeTokens(ids: number[]): string {
 
 export async function recognizeFormulaLocal(dataUrl: string): Promise<string> {
   await loadEngine(); if (!sessions) throw new Error('本地公式识别引擎初始化失败');
-  let image = padGray(fromDataUrl(dataUrl));
-  const maxRatio = Math.max(image.width / 672, image.height / 192, 1);
-  if (maxRatio > 1) image = padGray(resizeGray(image, Math.max(32, Math.round(image.width / maxRatio)), Math.max(32, Math.round(image.height / maxRatio))));
-  const resized = await sessions.resizer.run({ [sessions.resizer.inputNames[0]]: tensorFor(image) });
-  const result = resized[sessions.resizer.outputNames[0]] as ort.Tensor;
-  let best = 0; for (let i = 1; i < result.data.length; i++) if ((result.data as Float32Array)[i] > (result.data as Float32Array)[best]) best = i;
-  const targetWidth = Math.min(672, Math.max(32, (best + 1) * 32));
-  if (targetWidth !== image.width) {
-    const scale = Math.min(targetWidth / image.width, 192 / image.height);
-    image = padGray(resizeGray(image, Math.max(32, Math.round(image.width * scale)), Math.max(32, Math.round(image.height * scale))));
+  const input = minmaxSize(padFormula(fromDataUrl(dataUrl)));
+  let ratio = 1, width = input.width, height = input.height;
+  let image = input;
+  for (let attempt = 0; attempt < 10; attempt++) {
+    height = Math.max(1, Math.floor(height * ratio));
+    image = padFormula(minmaxSize(resizeGray(input, width, height)));
+    const resized = await sessions.resizer.run({ [sessions.resizer.inputNames[0]]: tensorFor(image) });
+    const result = resized[sessions.resizer.outputNames[0]] as ort.Tensor;
+    let best = 0;
+    for (let i = 1; i < result.data.length; i++) if ((result.data as Float32Array)[i] > (result.data as Float32Array)[best]) best = i;
+    width = Math.min(672, Math.max(32, (best + 1) * 32));
+    if (width === image.width) break;
+    ratio = width / image.width;
   }
   const context = (await sessions.encoder.run({ [sessions.encoder.inputNames[0]]: tensorFor(image) }))[sessions.encoder.outputNames[0]] as ort.Tensor;
   let ids = [1];
-  // Keep below the exported decoder's 505-position context boundary.
-  for (let step = 0; step < 128; step++) {
+  let ended = false;
+  for (let step = 0; step < 512; step++) {
     const x = new ort.Tensor('int64', BigInt64Array.from(ids, BigInt), [1, ids.length]);
     const mask = new ort.Tensor('bool', new Uint8Array(ids.length).fill(1), [1, ids.length]);
     const out = (await sessions.decoder.run({ x, mask, context }))[sessions.decoder.outputNames[0]] as ort.Tensor;
     const dims = out.dims; const vocab = dims[dims.length - 1] as number; const offset = (ids.length - 1) * vocab; const logits = out.data as Float32Array;
     let next = 0; for (let i = 1; i < vocab; i++) if (logits[offset + i] > logits[offset + next]) next = i;
-    if (next === 2) break; ids.push(next);
+    if (next === 2) { ended = true; break; }
+    ids.push(next);
   }
+  if (!ended) throw new Error('本地模型未能生成完整公式，请缩小选区或重新框选');
   const rawLatex = decodeTokens(ids.slice(1));
   const textReg = /(\\(operatorname|mathrm|text|mathbf)\s?\*? {.*?})/g;
   const protectedText: string[] = [];
   let latex = rawLatex.replace(textReg, (match) => { protectedText.push(match.replace(/ /g, '')); return `__MINEPDF_TEXT_${protectedText.length - 1}__`; });
   latex = latex.replace(/([^\\\w])\s+?([^\\\w])/g, '$1$2').replace(/([^\\\w])\s+?([a-zA-Z])/g, '$1$2').replace(/([a-zA-Z])\s+?([^\\\w])/g, '$1$2');
   latex = latex.replace(/__MINEPDF_TEXT_(\d+)__/g, (_, index) => protectedText[Number(index)] ?? '');
+  latex = normalizeLocalFormulaLatex(latex);
   if (!latex) throw new Error('本地模型没有识别出公式');
   return latex;
 }

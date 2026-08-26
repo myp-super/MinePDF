@@ -27,7 +27,7 @@ import {
   translationSelectionId,
 } from '../src/lib/translation';
 import { parseNoteReferenceUrl, preserveNoteReferenceUrl } from '../src/lib/noteReference';
-import { formulaMarkdown, parseFormulaRecognition } from '../src/lib/formulaRecognition';
+import { formulaMarkdown, normalizeLocalFormulaLatex, parseFormulaRecognition } from '../src/lib/formulaRecognition';
 import { normalizeShortcutCode, sanitizeShortcutKeys, shortcutLabel, shortcutMatches } from '../src/lib/shortcut';
 import type { TranslationResult, TranslationSettings } from '../src/shared/types';
 
@@ -497,4 +497,11 @@ test('formula recognition normalizes JSON, fenced LaTeX and Markdown delimiters'
     { latex: 'x^2 + y^2', markdown: '$$\nx^2 + y^2\n$$' },
   );
   assert.equal(formulaMarkdown('  E = mc^2  '), '$$\nE = mc^2\n$$');
+});
+
+test('local formula recognition normalizes spaced functions and legacy bold commands', () => {
+  assert.equal(
+    normalizeLocalFormulaLatex('\\tilde{ \\bf X}=s i g m o i d(\\frac{1}{\\bf E})\\odot\\bf X,'),
+    '\\tilde{\\mathbf{X}}=\\operatorname{sigmoid}(\\frac{1}{\\mathbf{E}})\\odot\\mathbf{X},',
+  );
 });
