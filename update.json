@@ -1,8 +1,8 @@
 {
-  "version": "3.13.1",
+  "version": "3.13.2",
   "publishDate": "2026-08-26",
-  "url": "https://github.com/myp-super/MinePDF/releases/download/v3.13.1/MinePDF.Setup.3.13.1.exe",
+  "url": "https://github.com/myp-super/MinePDF/releases/download/v3.13.2/MinePDF.Setup.3.13.2.exe",
   "notes": [
-    "3.13.1 - 新增 RapidLaTeXOCR 本地公式识别：首次使用下载约 180 MB 模型，下载后完全离线且不会上传截图；支持本地/在线识别切换、模型进度、校验和删除；保留 LaTeX/Markdown 编辑、KaTeX 预览与插入笔记功能"
+    "3.13.2 - 优化国内公式模型下载：内置多个可用镜像并自动测速排序，镜像不可用或下载卡住时自动切换；四个模型文件并行下载，支持断点续传和自定义镜像，可在设置界面提前下载模型"
   ]
 }

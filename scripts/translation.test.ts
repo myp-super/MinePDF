@@ -46,6 +46,7 @@ const defaultSettings: TranslationSettings = {
   longSelectionCharacters: 3_000,
   openAICompatible: { name: 'Local Model', endpoint: 'https://example.test/v1', model: 'academic-mt' },
   formulaEngine: 'local',
+  formulaModelSources: [],
 };
 
 test('translation shortcut supports arbitrary one-key and two-key chords', () => {

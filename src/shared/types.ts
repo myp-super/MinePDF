@@ -315,6 +315,8 @@ export interface TranslationSettings {
     model: string;
   };
   formulaEngine: FormulaRecognitionEngine;
+  /** 可选的公式模型下载镜像地址；为空时使用内置镜像候选。 */
+  formulaModelSources: string[];
 }
 
 export type TranslationProviderState =

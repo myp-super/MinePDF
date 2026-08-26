@@ -4,9 +4,15 @@ import path from 'path';
 import { createHash } from 'crypto';
 import * as ort from 'onnxruntime-node';
 import type { FormulaModelStatus } from '../../src/shared/types';
+import { getSettings } from './settings';
 
 const MODEL_NAME = 'RapidLaTeXOCR (ONNX)';
-const MODEL_BASE_URL = 'https://github.com/RapidAI/RapidLaTeXOCR/releases/download/v0.0.0';
+const MODEL_PATH = '/RapidAI/RapidLaTeXOCR/releases/download/v0.0.0';
+const MODEL_SOURCES = [
+  'https://ghfast.top/https://github.com',
+  'https://ghfile.geekertao.top/https://github.com',
+  'https://github.com',
+];
 const FILES = [
   { name: 'image_resizer.onnx', bytes: 38_967_751, sha256: 'E0B075C39700F64D50400F39C8FC186BBB3B5D84D31864008313F376603ACA9D' },
   { name: 'encoder.onnx', bytes: 89_008_136, sha256: '01BF5DC25539CA0CD5B1BD29296EA495977A6BA5F629DC4178277809D26E5E7D' },
@@ -53,33 +59,100 @@ export function getFormulaModelStatus(): FormulaModelStatus {
   return cloneStatus();
 }
 
-async function downloadFile(name: string, onBytes: (count: number) => void): Promise<void> {
-  const item = FILES.find((entry) => entry.name === name)!;
-  const part = `${filePath(name)}.part`;
-  const response = await fetch(`${MODEL_BASE_URL}/${name}`, { redirect: 'follow' });
-  if (!response.ok || !response.body) throw new Error(`Model download failed (${response.status})`);
-  await fs.promises.mkdir(modelDir(), { recursive: true });
-  const output = fs.createWriteStream(part);
-  const hash = createHash('sha256');
-  let size = 0;
+function sourceUrls(): string[] {
+  const custom = getSettings().translation.formulaModelSources ?? [];
+  return [...custom, ...MODEL_SOURCES].map((value) => value.trim().replace(/\/+$/, '')).filter((value, index, list) => /^https:\/\//i.test(value) && list.indexOf(value) === index);
+}
+
+async function verifyFile(file: typeof FILES[number]): Promise<boolean> {
   try {
-    for await (const chunk of response.body as any) {
-      const buffer = Buffer.from(chunk);
-      output.write(buffer);
-      hash.update(buffer);
-      size += buffer.length;
-      onBytes(buffer.length);
+    const stat = await fs.promises.stat(filePath(file.name));
+    if (stat.size !== file.bytes) return false;
+    const hash = createHash('sha256');
+    for await (const chunk of fs.createReadStream(filePath(file.name))) hash.update(chunk);
+    return hash.digest('hex').toUpperCase() === file.sha256;
+  } catch { return false; }
+}
+
+async function probeSource(source: string): Promise<{ source: string; latency: number }> {
+  const controller = new AbortController();
+  const started = Date.now();
+  const timeout = setTimeout(() => controller.abort(), 5_000);
+  try {
+    const response = await fetch(source + MODEL_PATH + '/tokenizer.json', {
+      redirect: 'follow',
+      headers: { Range: 'bytes=0-1023' },
+      signal: controller.signal,
+    });
+    if (!response.ok || !response.body) throw new Error('unavailable');
+    const reader = response.body.getReader();
+    const first = await reader.read();
+    await reader.cancel();
+    if (first.done || !first.value?.length) throw new Error('empty');
+    return { source, latency: Date.now() - started };
+  } finally { clearTimeout(timeout); }
+}
+
+async function rankedSources(): Promise<string[]> {
+  const sources = sourceUrls();
+  const probed = await Promise.all(sources.map((source) => probeSource(source).catch(() => null)));
+  const available = probed.filter((item): item is { source: string; latency: number } => Boolean(item)).sort((a, b) => a.latency - b.latency).map((item) => item.source);
+  return [...available, ...sources.filter((source) => !available.includes(source))];
+}
+
+async function downloadFile(name: string, sources: string[], onBytes: (absoluteBytes: number) => void): Promise<void> {
+  const item = FILES.find((entry) => entry.name === name)!;
+  const part = path.join(modelDir(), name + '.part');
+  await fs.promises.mkdir(modelDir(), { recursive: true });
+  let lastError = 'Model download failed';
+  for (const source of sources) {
+    let partial = 0;
+    try { partial = (await fs.promises.stat(part)).size; } catch { /* no partial */ }
+    if (partial > item.bytes) { await fs.promises.rm(part, { force: true }); partial = 0; }
+    let output: fs.WriteStream | null = null;
+    try {
+      const headers: Record<string, string> = {};
+      if (partial > 0) headers.Range = 'bytes=' + partial + '-';
+      const controller = new AbortController();
+      let timeout: ReturnType<typeof setTimeout>;
+      const refreshTimeout = () => {
+        clearTimeout(timeout);
+        timeout = setTimeout(() => controller.abort(), 15_000);
+      };
+      refreshTimeout();
+      try {
+        const response = await fetch(source + MODEL_PATH + '/' + name, { redirect: 'follow', headers, signal: controller.signal });
+        if (!response.ok || !response.body) throw new Error('HTTP ' + response.status);
+        const append = partial > 0 && response.status === 206;
+        if (!append) { partial = 0; await fs.promises.rm(part, { force: true }); }
+        let current = partial;
+        onBytes(current);
+        const stream = fs.createWriteStream(part, { flags: append ? 'a' : 'w' });
+        output = stream;
+        for await (const chunk of response.body as any) {
+          refreshTimeout();
+          const buffer = Buffer.from(chunk);
+          if (!stream.write(buffer)) await new Promise<void>((resolve) => stream.once('drain', resolve));
+          current += buffer.length;
+          onBytes(current);
+        }
+        await new Promise<void>((resolve, reject) => { stream.end(() => resolve()); stream.on('error', reject); });
+      } finally {
+        clearTimeout(timeout!);
+      }
+      const stat = await fs.promises.stat(part);
+      if (stat.size !== item.bytes) throw new Error('incomplete (' + stat.size + '/' + item.bytes + ')');
+      const hash = createHash('sha256');
+      for await (const chunk of fs.createReadStream(part)) hash.update(chunk);
+      if (hash.digest('hex').toUpperCase() !== item.sha256) throw new Error('checksum mismatch');
+      await fs.promises.rename(part, filePath(name));
+      return;
+    } catch (error) {
+      output?.destroy();
+      lastError = source + ': ' + (error instanceof Error ? error.message : String(error));
     }
-    await new Promise<void>((resolve, reject) => { output.end(() => resolve()); output.on('error', reject); });
-    if (size !== item.bytes || hash.digest('hex').toUpperCase() !== item.sha256) {
-      throw new Error(`Model verification failed for ${name}`);
-    }
-    await fs.promises.rename(part, filePath(name));
-  } catch (error) {
-    output.destroy();
-    await fs.promises.rm(part, { force: true }).catch(() => undefined);
-    throw error;
   }
+  throw new Error(lastError);
 }
 
 export function downloadFormulaModel(): Promise<FormulaModelStatus> {
@@ -90,17 +163,20 @@ export function downloadFormulaModel(): Promise<FormulaModelStatus> {
     emit({ state: 'downloading', progress: 0, bytesDownloaded: 0, totalBytes: TOTAL_BYTES, installedBytes: installedBytes(), error: undefined });
     let downloaded = 0;
     try {
-      for (const item of FILES) {
-        if (fs.existsSync(filePath(item.name)) && fs.statSync(filePath(item.name)).size === item.bytes) {
-          downloaded += item.bytes;
-          emit({ bytesDownloaded: downloaded, progress: downloaded / TOTAL_BYTES, installedBytes: downloaded });
-          continue;
-        }
-        await downloadFile(item.name, (count) => {
-          downloaded += count;
-          emit({ bytesDownloaded: downloaded, progress: downloaded / TOTAL_BYTES, installedBytes: installedBytes() });
-        });
-      }
+      const valid = await Promise.all(FILES.map(verifyFile));
+      const completedBytes = valid.reduce((sum, ok, index) => sum + (ok ? FILES[index].bytes : 0), 0);
+      const activeBytes = new Map<string, number>();
+      const updateProgress = () => {
+        downloaded = completedBytes + [...activeBytes.values()].reduce((sum, value) => sum + value, 0);
+        emit({ bytesDownloaded: Math.min(downloaded, TOTAL_BYTES), progress: Math.min(downloaded / TOTAL_BYTES, 1), installedBytes: installedBytes() });
+      };
+      downloaded = completedBytes;
+      emit({ bytesDownloaded: downloaded, progress: downloaded / TOTAL_BYTES, installedBytes: installedBytes() });
+      const sources = await rankedSources();
+      await Promise.all(FILES.map(async (item, index) => {
+        if (valid[index]) return;
+        await downloadFile(item.name, sources, (absoluteBytes) => { activeBytes.set(item.name, absoluteBytes); updateProgress(); });
+      }));
       sessions = null; tokenizer = null;
       emit({ state: 'ready', progress: 1, bytesDownloaded: TOTAL_BYTES, installedBytes: TOTAL_BYTES });
       return cloneStatus();

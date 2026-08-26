@@ -20,6 +20,7 @@ export function TranslationSettings({
   const [providers, setProviders] = useState<TranslationProviderStatus[]>([]);
   const [cache, setCache] = useState<TranslationCacheStats>({ entries: 0, bytes: 0 });
   const [formulaModel, setFormulaModel] = useState<FormulaModelStatus | null>(null);
+  const [formulaSourcesText, setFormulaSourcesText] = useState((settings.translation.formulaModelSources ?? []).join('\\n'));
   const [providersOpen, setProvidersOpen] = useState(false);
   const [configuring, setConfiguring] = useState<'niutrans' | 'openai-compatible' | null>(null);
   const [niuKey, setNiuKey] = useState('');
@@ -45,6 +46,10 @@ export function TranslationSettings({
   }, [reload]);
 
   useEffect(() => window.pkm.onFormulaModelProgress(setFormulaModel), []);
+
+  useEffect(() => {
+    setFormulaSourcesText((settings.translation.formulaModelSources ?? []).join('\\n'));
+  }, [settings.translation.formulaModelSources]);
 
   useEffect(() => {
     setOpenAIConfig(settings.translation.openAICompatible);
@@ -272,6 +277,7 @@ export function TranslationSettings({
               <option value="local">{t('formula.localModelTitle')}</option>
               <option value="online">{t('formula.localModelUseOnline')}</option>
             </select>
+            <textarea className="h-8 min-w-[240px] resize-x rounded-md border border-app-border bg-app-base px-2.5 py-1.5 text-[10px] outline-none focus:border-app-accent/70" value={formulaSourcesText} placeholder={t('formula.localModelSourcesHint')} onChange={(event) => setFormulaSourcesText(event.target.value)} onBlur={() => void updateTranslation({ formulaModelSources: formulaSourcesText.split(/\\r?\\n|,/).map((value) => value.trim()).filter(Boolean) })} />
             {formulaModel?.state !== 'ready' && <Button size="sm" variant="outline" disabled={formulaModel?.state === 'downloading'} onClick={() => void window.pkm.downloadFormulaModel().then(setFormulaModel).catch((error) => toast('error', error instanceof Error ? error.message : String(error)))}>{t('formula.localModelDownload')}</Button>}
             {formulaModel?.state === 'ready' && <Button size="sm" variant="ghost" onClick={() => void window.pkm.deleteFormulaModel().then(() => reload())}><Trash2 size={12} />{t('formula.localModelDelete')}</Button>}
           </div>

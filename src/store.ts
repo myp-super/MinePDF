@@ -109,6 +109,7 @@ const DEFAULT_SETTINGS: AppSettings = {
     longSelectionCharacters: 3_000,
     openAICompatible: { name: 'OpenAI Compatible', endpoint: '', model: '' },
     formulaEngine: 'local',
+    formulaModelSources: [],
   },
   libraryPath: '',
   libraryPdfDir: '',

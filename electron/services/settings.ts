@@ -51,6 +51,7 @@ const DEFAULTS: AppSettings = {
       model: '',
     },
     formulaEngine: 'local',
+    formulaModelSources: [],
   },
   libraryPath: '',
   libraryPdfDir: '',
