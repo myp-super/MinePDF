@@ -332,7 +332,68 @@ if (!s0 || !ctx0) throw new Error('起点解析失败');
   );
 }
 
-// 17) 复制文本：词间空格补全（PDF 里空格常是“字形间距”而非字符）
+// 17) 真实双栏回归：紧邻正文的全宽标题会让左右栏共享同一列 id；
+//     从右栏拖选时，中间行仍必须锁定右栏，不能取 rowLines 中排在前面的左栏。
+{
+  const items: TextItemQuad[] = [];
+  items.push(...makeLine({ text: 'FULL WIDTH INTRODUCTION SPANS BOTH COLUMNS COMPLETELY', x0: 50, y0: 514 }));
+  const left = [
+    { text: 'Left bridge row zero', y0: 500 },
+    { text: 'Left bridge row one', y0: 486 },
+    { text: 'Left bridge row two', y0: 472 },
+  ];
+  const right = [
+    { text: 'Right bridge row zero', y0: 500 },
+    { text: 'Right bridge row one', y0: 486 },
+    { text: 'Right bridge row two', y0: 472 },
+  ];
+  for (const line of left) items.push(...makeLine({ ...line, x0: 50 }));
+  for (const line of right) items.push(...makeLine({ ...line, x0: 300 }));
+  items.sort((a, b) => b.baseline - a.baseline || a.x - b.x);
+  const pg = buildPageIndex(items);
+  const r0 = findLine(pg, right[0].text);
+  const r2 = findLine(pg, right[2].text);
+  const leftMiddle = findLine(pg, left[1].text);
+  check('全宽行桥接：左右栏复现为同列 id', pg.lines[r0].col === pg.lines[leftMiddle].col);
+  const startPt = ptAt(pg, r0, 2);
+  const start = pointToRowChar(pg, 1, startPt.px, startPt.py)!;
+  const ctx = makeSelectionContext(pg, 1, start.line)!;
+  const endPt = ptAt(pg, r2, 6);
+  const end = pointToRowChar(pg, 1, endPt.px, endPt.py, ctx)!;
+  const sel = computeRowSelection({ ...start, ctx }, end, () => pg);
+  check(
+    '全宽行桥接：右栏拖选不混入左栏',
+    sel.every((page) => page.items.every((item) => item.x >= 300)),
+    selText(sel),
+  );
+  check(
+    '全宽行桥接：右栏中间行被完整保留',
+    selText(sel).includes(right[1].text),
+    selText(sel),
+  );
+  const leftEndPt = ptAt(pg, leftMiddle, 4);
+  const crossColumnEnd = pointToRowChar(pg, 1, leftEndPt.px, leftEndPt.py, ctx)!;
+  check(
+    '全宽行桥接：指针移入左栏仍锁定右栏',
+    pg.lines[crossColumnEnd.line].minX >= 300,
+    lineText(pg, crossColumnEnd.line),
+  );
+  const l0 = findLine(pg, left[0].text);
+  const l2 = findLine(pg, left[2].text);
+  const leftStartPt = ptAt(pg, l0, 2);
+  const leftStart = pointToRowChar(pg, 1, leftStartPt.px, leftStartPt.py)!;
+  const leftCtx = makeSelectionContext(pg, 1, leftStart.line)!;
+  const leftSelectionEndPt = ptAt(pg, l2, 6);
+  const leftEnd = pointToRowChar(pg, 1, leftSelectionEndPt.px, leftSelectionEndPt.py, leftCtx)!;
+  const leftSel = computeRowSelection({ ...leftStart, ctx: leftCtx }, leftEnd, () => pg);
+  check(
+    '全宽行桥接：左栏拖选不混入右栏',
+    leftSel.every((page) => page.items.every((item) => item.x < 300)),
+    selText(leftSel),
+  );
+}
+
+// 18) 复制文本：词间空格补全（PDF 里空格常是“字形间距”而非字符）
 {
   const ch = (str: string, x: number, w = 6, baseline = 500, rot = 0, h = 7): TextItemQuad => ({
     x,
@@ -373,7 +434,7 @@ if (!s0 || !ctx0) throw new Error('起点解析失败');
   check('PDF 控制连字符正规化', itemsToText(control) === 'G-and');
 }
 
-// 18) 虚拟滚动页码与缩放锚点：不依赖页面 DOM，缩放后仍停留在同一页内位置
+// 19) 虚拟滚动页码与缩放锚点：不依赖页面 DOM，缩放后仍停留在同一页内位置
 {
   const oldLayout = {
     rows: [[1], [2], [3], [4]],

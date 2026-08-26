@@ -17,6 +17,10 @@ export interface SelCtx {
   /** 起始列的横向范围（跨页候选要求与它实际重叠） */
   colMinX: number;
   colMaxX: number;
+  /** 鼠标按下时实际文本行的几何；用于列 id 被全宽标题错误桥接时继续锁定原栏。 */
+  anchorMinX: number;
+  anchorMaxX: number;
+  anchorCx: number;
 }
 
 /** 选中点：页 + 视觉行 + 行内 line 下标 + 行内字符索引 */
@@ -39,14 +43,27 @@ export interface RowSelection {
  * - 同一页：旋转一致 + 精确列 id 一致 + 文本块一致（正文不会滑进页眉/页脚/图注/旋转文字/相邻栏）；
  * - 跨页：旋转一致 + 列中心在容差内 + 横向范围与起始列有实际重叠（防止窄栏/双栏跳到相邻栏）。
  */
+function lineMatchesAnchorLane(l: LineBand, ctx: SelCtx): boolean {
+  const lineW = Math.max(1, l.maxX - l.minX);
+  const anchorW = Math.max(1, ctx.anchorMaxX - ctx.anchorMinX);
+  const overlap = Math.min(l.maxX, ctx.anchorMaxX) - Math.max(l.minX, ctx.anchorMinX);
+  if (overlap >= Math.max(2, Math.min(lineW, anchorW) * 0.15)) return true;
+  const lineCx = (l.minX + l.maxX) / 2;
+  // 同栏短行、缩进、居中公式可以有明显横向位移；但容差封顶，绝不跨过双栏页的栏间距。
+  const affinity = Math.max(24, Math.min(80, Math.max(lineW, anchorW) * 0.35));
+  return Math.abs(lineCx - ctx.anchorCx) <= affinity;
+}
+
 export function lineInSelectionContext(l: LineBand, ctx: SelCtx, page: number): boolean {
   if (l.rot !== ctx.rot) return false;
-  if (page === ctx.page) return l.col === ctx.col && l.block === ctx.block;
+  if (page === ctx.page) {
+    return l.col === ctx.col && l.block === ctx.block && lineMatchesAnchorLane(l, ctx);
+  }
   const lineCx = (l.minX + l.maxX) / 2;
   if (Math.abs(lineCx - ctx.cx) > ctx.affinity) return false;
   const overlap = Math.min(l.maxX, ctx.colMaxX) - Math.max(l.minX, ctx.colMinX);
   if (overlap < Math.max(2, (l.maxX - l.minX) * 0.4)) return false;
-  return true;
+  return lineMatchesAnchorLane(l, ctx);
 }
 
 /**
@@ -74,6 +91,9 @@ export function makeSelectionContext(
     affinity: Math.max(colW * 0.5, 24),
     colMinX,
     colMaxX,
+    anchorMinX: startLine.minX,
+    anchorMaxX: startLine.maxX,
+    anchorCx: (startLine.minX + startLine.maxX) / 2,
   };
 }
 
