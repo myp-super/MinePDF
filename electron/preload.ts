@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
-import type { PkmApi, TranslateRequest, TranslationInvokeResult } from '../src/shared/types';
+import type { FormulaRecognitionInvokeResult, FormulaRecognitionRequest, PkmApi, TranslateRequest, TranslationInvokeResult } from '../src/shared/types';
 
 interface InvokeResult<T> {
   ok: boolean;
@@ -42,6 +42,23 @@ async function invokeTranslation(input: TranslateRequest): Promise<TranslationIn
       retryable: true,
     },
   };
+}
+
+async function invokeFormulaRecognition(input: FormulaRecognitionRequest): Promise<FormulaRecognitionInvokeResult> {
+  try {
+    const res = await ipcRenderer.invoke('formula:recognize', input) as FormulaRecognitionInvokeResult;
+    if (res?.ok === true || res?.ok === false) return res;
+  } catch (error) {
+    return {
+      ok: false,
+      error: {
+        code: 'NETWORK',
+        message: error instanceof Error ? error.message : 'Formula recognition IPC request failed',
+        retryable: true,
+      },
+    };
+  }
+  return { ok: false, error: { code: 'PROVIDER_ERROR', message: 'Formula recognition returned an invalid response', retryable: true } };
 }
 
 function subscribe(channel: string, cb: (value: unknown) => void): () => void {
@@ -148,6 +165,7 @@ const api: PkmApi = {
   getSettings: () => invoke('settings:get'),
   updateSettings: (patch) => invoke('settings:update', patch),
   translate: (input) => invokeTranslation(input),
+  recognizeFormula: (input) => invokeFormulaRecognition(input),
   cancelTranslation: (requestId) => invoke('translation:cancel', requestId),
   getTranslationProviders: () => invoke('translation:providers'),
   saveProviderCredential: (input) => invoke('translation:credential-save', input),

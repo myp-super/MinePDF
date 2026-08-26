@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { BookOpen, ChevronDown, Languages } from 'lucide-react';
+import { BookOpen, Check, ChevronDown, Copy, Languages, Loader2, ScanLine } from 'lucide-react';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
-import type { AnnotationRecord, PdfiumOpenResult, PdfRecord, Quad } from '../../shared/types';
+import katex from 'katex';
+import type { AnnotationRecord, FormulaRecognitionResult, PdfiumOpenResult, PdfRecord, Quad } from '../../shared/types';
 import { useT, useTError } from '../../i18n';
 import {
   getOutlineTree,
@@ -1757,6 +1758,19 @@ export function PdfViewer({
     }
   };
 
+  const insertRecognizedFormula = async (markdown: string) => {
+    try {
+      const note = await window.pkm.getNote(pdf.id);
+      const next = `${note?.markdown.trimEnd() ?? ''}${note?.markdown.trim() ? '\n\n' : ''}${markdown.trim()}\n`;
+      await window.pkm.saveNote(pdf.id, next);
+      setScreenshotMode(false);
+      setInspectorTab('notes');
+      useApp.getState().bumpNoteRevision();
+    } catch (err) {
+      toast('error', terr(err instanceof Error ? err.message : String(err)));
+    }
+  };
+
   return (
     <main className="flex min-h-0 min-w-0 flex-1 flex-col bg-app-base">
       {!immersive &&
@@ -1956,10 +1970,12 @@ export function PdfViewer({
           <ScreenshotOverlay
             containerRef={scrollRef}
             pdfId={pdf.id}
+            page={currentPage}
             scale={scale}
             pageSizes={pageSizes}
             onClose={() => setScreenshotMode(false)}
             onInsert={(d) => void insertScreenshot(d)}
+            onInsertFormula={(markdown) => void insertRecognizedFormula(markdown)}
           />
         )}
       </div>
@@ -2217,21 +2233,32 @@ async function captureRegion(
 function ScreenshotOverlay({
   containerRef,
   pdfId,
+  page,
   scale,
   pageSizes,
   onClose,
   onInsert,
+  onInsertFormula,
 }: {
   containerRef: React.RefObject<HTMLDivElement | null>;
   pdfId: number;
+  page: number;
   scale: number;
   pageSizes: Array<{ w: number; h: number }> | null;
   onClose: () => void;
   onInsert: (dataUrl: string) => void;
+  onInsertFormula: (markdown: string) => void;
 }) {
   const t = useT();
   const [rect, setRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
   const [dataUrl, setDataUrl] = useState<string | null>(null);
+  const [recognizing, setRecognizing] = useState(false);
+  const [recognitionError, setRecognitionError] = useState<string | null>(null);
+  const [formula, setFormula] = useState<FormulaRecognitionResult | null>(null);
+  const [latex, setLatex] = useState('');
+  const [formulaTab, setFormulaTab] = useState<'latex' | 'markdown'>('latex');
+  const [copiedFormula, setCopiedFormula] = useState(false);
+  const recognitionRunRef = useRef(0);
   const startRef = useRef<{ x: number; y: number } | null>(null);
   const draggingRef = useRef(false);
   const rectRef = useRef(rect);
@@ -2245,6 +2272,56 @@ function ScreenshotOverlay({
   } | null>(null);
 
   const clampNum = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
+  const markdownValue = `$$\n${latex.trim()}\n$$`;
+  const resetRecognition = () => {
+    recognitionRunRef.current += 1;
+    setRecognizing(false);
+    setFormula(null);
+    setLatex('');
+    setRecognitionError(null);
+    setCopiedFormula(false);
+  };
+
+  const formulaErrorMessage = (code: string, fallback: string) => {
+    if (code === 'NOT_CONFIGURED') return t('formula.errorNotConfigured');
+    if (code === 'TEXT_TOO_LONG') return t('formula.errorTooLarge');
+    if (code === 'TIMEOUT') return t('formula.errorTimeout');
+    if (code === 'EMPTY_RESULT') return t('formula.errorEmpty');
+    if (code === 'UNAUTHORIZED') return t('formula.errorUnauthorized');
+    return fallback;
+  };
+
+  const recognizeSelectedFormula = async () => {
+    if (!dataUrl || recognizing) return;
+    const runId = recognitionRunRef.current + 1;
+    recognitionRunRef.current = runId;
+    setRecognizing(true);
+    setRecognitionError(null);
+    setFormula(null);
+    try {
+      const requestId = globalThis.crypto?.randomUUID?.() ?? `formula_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+      const response = await window.pkm.recognizeFormula({ requestId, pdfId, page, imageDataUrl: dataUrl });
+      if (runId !== recognitionRunRef.current) return;
+      if (!response.ok) {
+        setRecognitionError(formulaErrorMessage(response.error.code, response.error.message));
+        return;
+      }
+      setFormula(response.data);
+      setLatex(response.data.latex);
+    } catch (error) {
+      if (runId !== recognitionRunRef.current) return;
+      setRecognitionError(error instanceof Error ? error.message : String(error));
+    } finally {
+      if (runId === recognitionRunRef.current) setRecognizing(false);
+    }
+  };
+
+  const copyFormula = async () => {
+    const value = formulaTab === 'latex' ? latex : markdownValue;
+    await navigator.clipboard.writeText(value);
+    setCopiedFormula(true);
+    window.setTimeout(() => setCopiedFormula(false), 1400);
+  };
 
   /**
    * 框定后：拖动选区内部移动位置，拖动四角/四边调整大小；
@@ -2294,6 +2371,7 @@ function ScreenshotOverlay({
       editStartRef.current = null;
       const rr = rectRef.current;
       if (rr && rr.w >= 4 && rr.h >= 4 && containerRef.current) {
+        resetRecognition();
         setDataUrl(await captureRegion(containerRef.current, rr, pdfId, scale, pageSizes));
       }
     };
@@ -2334,6 +2412,7 @@ function ScreenshotOverlay({
       startRef.current = null;
       const rr = rectRef.current;
       if (rr && rr.w >= 4 && rr.h >= 4 && containerRef.current) {
+        resetRecognition();
         setDataUrl(await captureRegion(containerRef.current, rr, pdfId, scale, pageSizes));
       }
     };
@@ -2355,11 +2434,19 @@ function ScreenshotOverlay({
   }, [onClose]);
 
   const barLeft = rect
-    ? Math.max(8, Math.min(rect.x + rect.w / 2 - 110, (containerRef.current?.clientWidth ?? 300) - 240))
+    ? Math.max(8, Math.min(rect.x + rect.w / 2 - 145, (containerRef.current?.clientWidth ?? 340) - 310))
     : 8;
   const barTop = rect
     ? Math.min(rect.y + rect.h + 10, (containerRef.current?.clientHeight ?? 300) - 44)
     : 8;
+  let formulaPreview = '';
+  if (latex.trim()) {
+    try {
+      formulaPreview = katex.renderToString(latex, { displayMode: true, throwOnError: false, strict: 'ignore' });
+    } catch {
+      formulaPreview = '';
+    }
+  }
 
   return (
     <div
@@ -2372,6 +2459,7 @@ function ScreenshotOverlay({
         e.preventDefault();
         draggingRef.current = true;
         setDataUrl(null);
+        resetRecognition();
         startRef.current = { x: e.clientX - r.left, y: e.clientY - r.top };
         const init = { x: startRef.current.x, y: startRef.current.y, w: 0, h: 0 };
         rectRef.current = init;
@@ -2433,11 +2521,71 @@ function ScreenshotOverlay({
             {t('note.screenshotExit')}
           </button>
           <button
+            className="flex items-center gap-1 rounded-md px-2.5 py-1 text-[11px] text-app-muted transition-colors hover:bg-app-panel2 hover:text-app-text disabled:opacity-45"
+            disabled={recognizing}
+            onClick={() => void recognizeSelectedFormula()}
+          >
+            {recognizing ? <Loader2 size={12} className="animate-spin" /> : <ScanLine size={12} />}
+            {t('formula.recognize')}
+          </button>
+          <button
             className="rounded-md bg-app-accent px-2.5 py-1 text-[11px] text-white transition-colors hover:brightness-110"
             onClick={() => onInsert(dataUrl)}
           >
             {t('note.screenshotInsert')}
           </button>
+        </div>
+      )}
+      {(recognizing || recognitionError || formula) && (
+        <div
+          className="absolute left-1/2 top-1/2 z-[55] flex max-h-[72%] w-[min(560px,calc(100%-32px))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl border border-app-border bg-app-panel shadow-2xl"
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <div className="flex h-10 shrink-0 items-center gap-2 border-b border-app-border px-3">
+            <ScanLine size={14} className="text-app-accent" />
+            <span className="text-[12px] font-semibold text-app-text">{t('formula.title')}</span>
+            <button
+              className="ml-auto rounded-md px-2 py-1 text-[10.5px] text-app-muted hover:bg-app-panel2 hover:text-app-text"
+              onClick={() => { setFormula(null); setRecognitionError(null); }}
+            >
+              {t('common.close')}
+            </button>
+          </div>
+          {recognizing && (
+            <div className="flex min-h-40 items-center justify-center gap-2 text-[11.5px] text-app-muted">
+              <Loader2 size={14} className="animate-spin" /> {t('formula.recognizing')}
+            </div>
+          )}
+          {!recognizing && recognitionError && (
+            <div className="p-4">
+              <div className="rounded-lg border border-app-danger/30 bg-app-danger/5 p-3 text-[11px] leading-5 text-app-danger">{recognitionError}</div>
+              <button className="mt-3 rounded-md bg-app-accent px-3 py-1.5 text-[11px] text-white" onClick={() => void recognizeSelectedFormula()}>{t('formula.retry')}</button>
+            </div>
+          )}
+          {!recognizing && formula && (
+            <>
+              <div className="min-h-0 flex-1 overflow-y-auto p-3">
+                <div className="mb-3 min-h-20 overflow-x-auto rounded-lg border border-app-border bg-white px-4 py-3 text-black" dangerouslySetInnerHTML={{ __html: formulaPreview }} />
+                <div className="mb-2 flex items-center gap-1 rounded-lg bg-app-base p-1">
+                  <button className={`flex-1 rounded-md py-1 text-[10.5px] ${formulaTab === 'latex' ? 'bg-app-panel2 text-app-text' : 'text-app-muted'}`} onClick={() => setFormulaTab('latex')}>LaTeX</button>
+                  <button className={`flex-1 rounded-md py-1 text-[10.5px] ${formulaTab === 'markdown' ? 'bg-app-panel2 text-app-text' : 'text-app-muted'}`} onClick={() => setFormulaTab('markdown')}>Markdown</button>
+                </div>
+                <textarea
+                  className="min-h-28 w-full resize-y rounded-lg border border-app-border bg-app-base p-3 font-mono text-[11px] leading-5 text-app-text outline-none focus:border-app-accent/70"
+                  value={formulaTab === 'latex' ? latex : markdownValue}
+                  readOnly={formulaTab === 'markdown'}
+                  onChange={(event) => setLatex(event.target.value)}
+                  spellCheck={false}
+                />
+              </div>
+              <div className="flex shrink-0 items-center justify-end gap-2 border-t border-app-border px-3 py-2">
+                <button className="flex items-center gap-1 rounded-md px-2.5 py-1.5 text-[10.5px] text-app-muted hover:bg-app-panel2 hover:text-app-text" onClick={() => void copyFormula()}>
+                  {copiedFormula ? <Check size={12} /> : <Copy size={12} />}{copiedFormula ? t('common.copied') : t('common.copy')}
+                </button>
+                <button className="rounded-md bg-app-accent px-3 py-1.5 text-[10.5px] text-white disabled:opacity-40" disabled={!latex.trim()} onClick={() => onInsertFormula(markdownValue)}>{t('formula.insert')}</button>
+              </div>
+            </>
+          )}
         </div>
       )}
     </div>

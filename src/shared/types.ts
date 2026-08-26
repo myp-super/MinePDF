@@ -382,6 +382,25 @@ export type TranslationInvokeResult =
   | { ok: true; data: TranslationResult }
   | { ok: false; error: TranslationErrorPayload };
 
+export interface FormulaRecognitionRequest {
+  requestId: string;
+  pdfId: number;
+  page: number;
+  imageDataUrl: string;
+}
+
+export interface FormulaRecognitionResult {
+  requestId: string;
+  latex: string;
+  markdown: string;
+  providerName: string;
+  providerModel: string;
+}
+
+export type FormulaRecognitionInvokeResult =
+  | { ok: true; data: FormulaRecognitionResult }
+  | { ok: false; error: TranslationErrorPayload };
+
 export interface GlossaryEntry {
   id: number;
   term: string;
@@ -589,6 +608,7 @@ export interface PkmApi {
   getSettings(): Promise<AppSettings>;
   updateSettings(patch: Partial<AppSettings>): Promise<AppSettings>;
   translate(input: TranslateRequest): Promise<TranslationInvokeResult>;
+  recognizeFormula(input: FormulaRecognitionRequest): Promise<FormulaRecognitionInvokeResult>;
   cancelTranslation(requestId: string): Promise<boolean>;
   getTranslationProviders(): Promise<TranslationProviderStatus[]>;
   saveProviderCredential(input: ProviderCredentialInput): Promise<void>;

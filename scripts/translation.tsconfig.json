@@ -30,6 +30,7 @@
     "../electron/services/translation/providers/textChunks.ts",
     "../electron/services/translation/types.ts",
     "../src/lib/translation.ts",
+    "../src/lib/formulaRecognition.ts",
     "../src/lib/noteReference.ts",
     "../src/lib/shortcut.ts",
     "../src/shared/types.ts"

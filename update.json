@@ -1,8 +1,8 @@
 {
-  "version": "3.12.4",
-  "publishDate": "2026-08-24",
-  "url": "https://github.com/myp-super/MinePDF/releases/download/v3.12.4/MinePDF.Setup.3.12.4.exe",
+  "version": "3.13.0",
+  "publishDate": "2026-08-26",
+  "url": "https://github.com/myp-super/MinePDF/releases/download/v3.13.0/MinePDF.Setup.3.13.0.exe",
   "notes": [
-    "3.12.4 - 修复最大化、还原小窗口及全屏切换时 PDF 阅读位置跳动；窗口变化不再自动改变 PDF 缩放，精确保持页码、页内位置和滚动位置；完善按标签保存阅读位置、页码跳转与重启恢复；并包含翻译、设置、笔记卡片、文献管理和高清截图等近期功能改进"
+    "3.13.0 - 新增截图框选公式识别，可输出、编辑和复制 LaTeX/Markdown，提供 KaTeX 预览并一键插入笔记；复用高清 PDFium 截图与已配置的 OpenAI 兼容视觉模型；翻译弹窗新增中英方向切换并支持自由调整大小；修复双栏 PDF 选择一栏时误选另一栏文字的问题"
   ]
 }

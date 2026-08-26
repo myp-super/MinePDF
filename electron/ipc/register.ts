@@ -8,6 +8,8 @@ import type {
   AppInfo,
   AppSettings,
   ExportFormat,
+  FormulaRecognitionRequest,
+  FormulaRecognitionResult,
   ImportResult,
   LibraryRecord,
   LiteratureMetadata,
@@ -37,6 +39,7 @@ import { checkForUpdates, downloadUpdate } from '../services/updater';
 import { credentialStore } from '../services/translation/credentialStore';
 import { normalizeTranslationError } from '../services/translation/errors';
 import { translationManager } from '../services/translation/manager';
+import { recognizeFormula } from '../services/formulaRecognition';
 import {
   isPdfiumAvailable,
   pdfiumClose,
@@ -637,6 +640,16 @@ export function registerIpc(): void {
   > => {
     try {
       return { ok: true, data: await translationManager.translate(input) };
+    } catch (error) {
+      return { ok: false, error: normalizeTranslationError(error).toPayload() };
+    }
+  });
+  ipcMain.handle('formula:recognize', async (_event, input: FormulaRecognitionRequest): Promise<
+    | { ok: true; data: FormulaRecognitionResult }
+    | { ok: false; error: TranslationErrorPayload }
+  > => {
+    try {
+      return { ok: true, data: await recognizeFormula(input) };
     } catch (error) {
       return { ok: false, error: normalizeTranslationError(error).toPayload() };
     }

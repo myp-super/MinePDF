@@ -228,6 +228,9 @@ export function TranslationSettings({
                 </div>}
 
                 {provider.id === 'openai-compatible' && isConfiguring && <div className="space-y-2 border-t border-app-border/60 bg-app-panel/45 p-3">
+                  <div className="text-[9.5px] leading-4 text-app-muted/75">
+                    {t('formula.visionHint')}
+                  </div>
                   <div className="grid grid-cols-2 gap-2">
                     <input className={inputClass} value={openAIConfig.name} placeholder="Provider name" onChange={(event) => setOpenAIConfig((value) => ({ ...value, name: event.target.value }))} />
                     <input className={inputClass} value={openAIConfig.model} placeholder="Model" onChange={(event) => setOpenAIConfig((value) => ({ ...value, model: event.target.value }))} />

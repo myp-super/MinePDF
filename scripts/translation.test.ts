@@ -27,6 +27,7 @@ import {
   translationSelectionId,
 } from '../src/lib/translation';
 import { parseNoteReferenceUrl, preserveNoteReferenceUrl } from '../src/lib/noteReference';
+import { formulaMarkdown, parseFormulaRecognition } from '../src/lib/formulaRecognition';
 import { normalizeShortcutCode, sanitizeShortcutKeys, shortcutLabel, shortcutMatches } from '../src/lib/shortcut';
 import type { TranslationResult, TranslationSettings } from '../src/shared/types';
 
@@ -482,4 +483,16 @@ test('MinePDF note-reference URLs survive Markdown safety filtering and reject u
   assert.equal(parseNoteReferenceUrl('minepdf://ref/0'), null);
   assert.equal(parseNoteReferenceUrl('minepdf://other/42'), null);
   assert.equal(parseNoteReferenceUrl('javascript:alert(1)'), null);
+});
+
+test('formula recognition normalizes JSON, fenced LaTeX and Markdown delimiters', () => {
+  assert.deepEqual(
+    parseFormulaRecognition('{"latex":"\\\\frac{a}{b}","markdown":"ignored"}'),
+    { latex: '\\frac{a}{b}', markdown: '$$\n\\frac{a}{b}\n$$' },
+  );
+  assert.deepEqual(
+    parseFormulaRecognition('```latex\n\\[ x^2 + y^2 \\]\n```'),
+    { latex: 'x^2 + y^2', markdown: '$$\nx^2 + y^2\n$$' },
+  );
+  assert.equal(formulaMarkdown('  E = mc^2  '), '$$\nE = mc^2\n$$');
 });
