@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSta
 import { BookOpen, Check, ChevronDown, Copy, Languages, Loader2, ScanLine } from 'lucide-react';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import katex from 'katex';
-import type { AnnotationRecord, FormulaRecognitionResult, PdfiumOpenResult, PdfRecord, Quad } from '../../shared/types';
+import type { AnnotationRecord, FormulaModelStatus, FormulaRecognitionResult, PdfiumOpenResult, PdfRecord, Quad } from '../../shared/types';
 import { useT, useTError } from '../../i18n';
 import {
   getOutlineTree,
@@ -2250,9 +2250,12 @@ function ScreenshotOverlay({
   onInsertFormula: (markdown: string) => void;
 }) {
   const t = useT();
+  const formulaEngine = useApp((s) => s.settings.translation.formulaEngine);
   const [rect, setRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
   const [dataUrl, setDataUrl] = useState<string | null>(null);
   const [recognizing, setRecognizing] = useState(false);
+  const [modelDownloading, setModelDownloading] = useState(false);
+  const [modelStatus, setModelStatus] = useState<FormulaModelStatus | null>(null);
   const [recognitionError, setRecognitionError] = useState<string | null>(null);
   const [formula, setFormula] = useState<FormulaRecognitionResult | null>(null);
   const [latex, setLatex] = useState('');
@@ -2270,6 +2273,13 @@ function ScreenshotOverlay({
     y: number;
     rect: { x: number; y: number; w: number; h: number };
   } | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    void window.pkm.getFormulaModelStatus().then((value) => { if (active) setModelStatus(value); }).catch(() => undefined);
+    const unsubscribe = window.pkm.onFormulaModelProgress((value) => { if (active) setModelStatus(value); });
+    return () => { active = false; unsubscribe(); };
+  }, []);
 
   const clampNum = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
   const markdownValue = `$$\n${latex.trim()}\n$$`;
@@ -2299,8 +2309,22 @@ function ScreenshotOverlay({
     setRecognitionError(null);
     setFormula(null);
     try {
+      const currentModel = modelStatus ?? await window.pkm.getFormulaModelStatus();
+      setModelStatus(currentModel);
+      if (formulaEngine === 'local' && currentModel.state !== 'ready') {
+        const shouldDownload = window.confirm(t('formula.localModelPrompt'));
+        if (!shouldDownload) { setRecognizing(false); return; }
+        setModelDownloading(true);
+        try {
+          const downloaded = await window.pkm.downloadFormulaModel();
+          setModelStatus(downloaded);
+        } catch (error) {
+          setRecognitionError(error instanceof Error ? error.message : String(error));
+          return;
+        } finally { setModelDownloading(false); }
+      }
       const requestId = globalThis.crypto?.randomUUID?.() ?? `formula_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-      const response = await window.pkm.recognizeFormula({ requestId, pdfId, page, imageDataUrl: dataUrl });
+      const response = await window.pkm.recognizeFormula({ requestId, pdfId, page, imageDataUrl: dataUrl, engine: formulaEngine });
       if (runId !== recognitionRunRef.current) return;
       if (!response.ok) {
         setRecognitionError(formulaErrorMessage(response.error.code, response.error.message));
@@ -2553,7 +2577,7 @@ function ScreenshotOverlay({
           </div>
           {recognizing && (
             <div className="flex min-h-40 items-center justify-center gap-2 text-[11.5px] text-app-muted">
-              <Loader2 size={14} className="animate-spin" /> {t('formula.recognizing')}
+              <Loader2 size={14} className="animate-spin" /> {modelDownloading ? `${t('formula.localModelDownloading')} ${Math.round((modelStatus?.progress ?? 0) * 100)}%` : t('formula.recognizing')}
             </div>
           )}
           {!recognizing && recognitionError && (

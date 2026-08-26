@@ -2,7 +2,7 @@ import { Check, ChevronDown, ChevronRight, Database, KeyRound, Keyboard, Languag
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useT } from '../i18n';
 import { normalizeShortcutCode, shortcutLabel } from '../lib/shortcut';
-import type { AppSettings, TranslationCacheStats, TranslationProviderStatus } from '../shared/types';
+import type { AppSettings, FormulaModelStatus, TranslationCacheStats, TranslationProviderStatus } from '../shared/types';
 import { useApp } from '../store';
 import { Button, Toggle } from './ui';
 
@@ -19,6 +19,7 @@ export function TranslationSettings({
   const toast = useApp((s) => s.toast);
   const [providers, setProviders] = useState<TranslationProviderStatus[]>([]);
   const [cache, setCache] = useState<TranslationCacheStats>({ entries: 0, bytes: 0 });
+  const [formulaModel, setFormulaModel] = useState<FormulaModelStatus | null>(null);
   const [providersOpen, setProvidersOpen] = useState(false);
   const [configuring, setConfiguring] = useState<'niutrans' | 'openai-compatible' | null>(null);
   const [niuKey, setNiuKey] = useState('');
@@ -29,17 +30,21 @@ export function TranslationSettings({
   const capturedShortcutRef = useRef<string[]>([]);
 
   const reload = useCallback(async () => {
-    const [providerRows, cacheStats] = await Promise.all([
+    const [providerRows, cacheStats, formulaStatus] = await Promise.all([
       window.pkm.getTranslationProviders(),
       window.pkm.getTranslationCacheStats(),
+      window.pkm.getFormulaModelStatus(),
     ]);
     setProviders(providerRows);
     setCache(cacheStats);
+    setFormulaModel(formulaStatus);
   }, []);
 
   useEffect(() => {
     void reload().catch(() => undefined);
   }, [reload]);
+
+  useEffect(() => window.pkm.onFormulaModelProgress(setFormulaModel), []);
 
   useEffect(() => {
     setOpenAIConfig(settings.translation.openAICompatible);
@@ -255,6 +260,22 @@ export function TranslationSettings({
           </div>
           <Toggle checked={settings.translation.cacheEnabled} onChange={(cacheEnabled) => void updateTranslation({ cacheEnabled })} />
           <Button size="sm" variant="ghost" disabled={!cache.entries} onClick={() => void clearCache()}>{t('translation.clearCache')}</Button>
+        </div>
+
+        <div className="flex items-start gap-3 border-t border-app-border/60 py-3">
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-app-panel2 text-app-muted"><Settings2 size={14} /></div>
+        <div className="min-w-0 flex-1">
+          <div className="text-[11.5px] text-app-text/90">{t('formula.localModelTitle')}</div>
+          <div className="mt-0.5 text-[10px] leading-4 text-app-muted/75">{formulaModel?.state === 'ready' ? t('formula.localModelReady') : `${formulaModel?.state === 'downloading' ? t('formula.localModelDownloading') : t('formula.localModelDownload')} · ${Math.round((formulaModel?.progress ?? 0) * 100)}%`}</div>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <select className={inputClass} value={settings.translation.formulaEngine} onChange={(event) => void updateTranslation({ formulaEngine: event.target.value as AppSettings['translation']['formulaEngine'] })}>
+              <option value="local">{t('formula.localModelTitle')}</option>
+              <option value="online">{t('formula.localModelUseOnline')}</option>
+            </select>
+            {formulaModel?.state !== 'ready' && <Button size="sm" variant="outline" disabled={formulaModel?.state === 'downloading'} onClick={() => void window.pkm.downloadFormulaModel().then(setFormulaModel).catch((error) => toast('error', error instanceof Error ? error.message : String(error)))}>{t('formula.localModelDownload')}</Button>}
+            {formulaModel?.state === 'ready' && <Button size="sm" variant="ghost" onClick={() => void window.pkm.deleteFormulaModel().then(() => reload())}><Trash2 size={12} />{t('formula.localModelDelete')}</Button>}
+          </div>
+        </div>
         </div>
       </div>
     </section>

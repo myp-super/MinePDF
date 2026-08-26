@@ -314,6 +314,7 @@ export interface TranslationSettings {
     endpoint: string;
     model: string;
   };
+  formulaEngine: FormulaRecognitionEngine;
 }
 
 export type TranslationProviderState =
@@ -387,6 +388,21 @@ export interface FormulaRecognitionRequest {
   pdfId: number;
   page: number;
   imageDataUrl: string;
+  engine?: FormulaRecognitionEngine;
+}
+
+export type FormulaRecognitionEngine = 'local' | 'online';
+
+export type FormulaModelState = 'not-downloaded' | 'downloading' | 'ready' | 'error';
+
+export interface FormulaModelStatus {
+  state: FormulaModelState;
+  progress: number;
+  bytesDownloaded: number;
+  totalBytes: number;
+  modelName: string;
+  installedBytes: number;
+  error?: string;
 }
 
 export interface FormulaRecognitionResult {
@@ -609,6 +625,10 @@ export interface PkmApi {
   updateSettings(patch: Partial<AppSettings>): Promise<AppSettings>;
   translate(input: TranslateRequest): Promise<TranslationInvokeResult>;
   recognizeFormula(input: FormulaRecognitionRequest): Promise<FormulaRecognitionInvokeResult>;
+  getFormulaModelStatus(): Promise<FormulaModelStatus>;
+  downloadFormulaModel(): Promise<FormulaModelStatus>;
+  deleteFormulaModel(): Promise<void>;
+  onFormulaModelProgress(cb: (status: FormulaModelStatus) => void): () => void;
   cancelTranslation(requestId: string): Promise<boolean>;
   getTranslationProviders(): Promise<TranslationProviderStatus[]>;
   saveProviderCredential(input: ProviderCredentialInput): Promise<void>;

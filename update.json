@@ -1,8 +1,8 @@
 {
-  "version": "3.13.0",
+  "version": "3.13.1",
   "publishDate": "2026-08-26",
-  "url": "https://github.com/myp-super/MinePDF/releases/download/v3.13.0/MinePDF.Setup.3.13.0.exe",
+  "url": "https://github.com/myp-super/MinePDF/releases/download/v3.13.1/MinePDF.Setup.3.13.1.exe",
   "notes": [
-    "3.13.0 - 新增截图框选公式识别，可输出、编辑和复制 LaTeX/Markdown，提供 KaTeX 预览并一键插入笔记；复用高清 PDFium 截图与已配置的 OpenAI 兼容视觉模型；翻译弹窗新增中英方向切换并支持自由调整大小；修复双栏 PDF 选择一栏时误选另一栏文字的问题"
+    "3.13.1 - 新增 RapidLaTeXOCR 本地公式识别：首次使用下载约 180 MB 模型，下载后完全离线且不会上传截图；支持本地/在线识别切换、模型进度、校验和删除；保留 LaTeX/Markdown 编辑、KaTeX 预览与插入笔记功能"
   ]
 }

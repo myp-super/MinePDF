@@ -40,6 +40,7 @@ import { credentialStore } from '../services/translation/credentialStore';
 import { normalizeTranslationError } from '../services/translation/errors';
 import { translationManager } from '../services/translation/manager';
 import { recognizeFormula } from '../services/formulaRecognition';
+import { deleteFormulaModel, downloadFormulaModel, getFormulaModelStatus, onFormulaModelProgress } from '../services/formulaLocal';
 import {
   isPdfiumAvailable,
   pdfiumClose,
@@ -653,6 +654,12 @@ export function registerIpc(): void {
     } catch (error) {
       return { ok: false, error: normalizeTranslationError(error).toPayload() };
     }
+  });
+  handle('formula:model-status', () => getFormulaModelStatus());
+  handle('formula:model-download', () => downloadFormulaModel());
+  handle('formula:model-delete', () => deleteFormulaModel());
+  onFormulaModelProgress((value) => {
+    if (mainWin && !mainWin.isDestroyed()) mainWin.webContents.send('formula:model-progress', value);
   });
   handle('translation:cancel', (requestId: string) => translationManager.cancel(requestId));
   handle('translation:providers', () => translationManager.listProviders());

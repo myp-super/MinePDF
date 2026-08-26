@@ -4,6 +4,7 @@ import { getSettings } from './settings';
 import { credentialStore } from './translation/credentialStore';
 import { TranslationError } from './translation/errors';
 import { fetchWithPolicy, readJsonResponse } from './translation/http';
+import { recognizeFormulaLocal } from './formulaLocal';
 
 interface VisionChatResponse {
   choices?: Array<{ message?: { content?: string | Array<{ type?: string; text?: string }> } }>;
@@ -21,16 +22,6 @@ function messageText(content: string | Array<{ type?: string; text?: string }> |
 }
 
 export async function recognizeFormula(input: FormulaRecognitionRequest): Promise<FormulaRecognitionResult> {
-  const settings = getSettings().translation;
-  const config = settings.openAICompatible;
-  const apiKey = credentialStore.get('openai-compatible');
-  if (!apiKey || !config.endpoint.trim() || !config.model.trim()) {
-    throw new TranslationError(
-      'NOT_CONFIGURED',
-      'Formula recognition requires an OpenAI-compatible vision model, endpoint and API key. Configure it in Translation settings.',
-      false,
-    );
-  }
   if (
     !input.requestId
     || !Number.isInteger(input.pdfId)
@@ -41,6 +32,31 @@ export async function recognizeFormula(input: FormulaRecognitionRequest): Promis
   }
   if (input.imageDataUrl.length > 18_000_000) {
     throw new TranslationError('TEXT_TOO_LONG', 'The selected image is too large for formula recognition', false);
+  }
+  const settings = getSettings().translation;
+  const engine = input.engine ?? settings.formulaEngine ?? 'local';
+  if (engine === 'local') {
+    try {
+      const latex = await recognizeFormulaLocal(input.imageDataUrl);
+      return {
+        requestId: input.requestId,
+        latex,
+        markdown: `$$\n${latex.trim()}\n$$`,
+        providerName: 'RapidLaTeXOCR (本地)',
+        providerModel: 'ONNX CPU',
+      };
+    } catch (error) {
+      throw new TranslationError('PROVIDER_ERROR', error instanceof Error ? error.message : String(error), true);
+    }
+  }
+  const config = settings.openAICompatible;
+  const apiKey = credentialStore.get('openai-compatible');
+  if (!apiKey || !config.endpoint.trim() || !config.model.trim()) {
+    throw new TranslationError(
+      'NOT_CONFIGURED',
+      'Formula recognition requires an OpenAI-compatible vision model, endpoint and API key. Configure it in Translation settings.',
+      false,
+    );
   }
   if (
     !/^https:\/\//i.test(config.endpoint.trim())

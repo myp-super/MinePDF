@@ -15,6 +15,7 @@ files:
 asarUnpack:
   - "**/node_modules/better-sqlite3/**"
   - "**/node_modules/koffi/**"
+  - "**/node_modules/onnxruntime-node/**"
 
 extraResources:
   - from: build/file-assoc.ico

@@ -50,6 +50,7 @@ const DEFAULTS: AppSettings = {
       endpoint: '',
       model: '',
     },
+    formulaEngine: 'local',
   },
   libraryPath: '',
   libraryPdfDir: '',

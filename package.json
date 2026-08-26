@@ -1,7 +1,7 @@
 {
   "name": "mine-pdf",
   "productName": "MinePDF",
-  "version": "3.13.0",
+  "version": "3.13.1",
   "description": "MinePDF",
   "author": "MinePDF Team",
   "license": "MIT",
@@ -30,6 +30,7 @@
     "katex": "^0.16.11",
     "koffi": "^3.1.4",
     "lucide-react": "^0.469.0",
+    "onnxruntime-node": "^1.21.0",
     "pdfjs-dist": "^4.10.38",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
