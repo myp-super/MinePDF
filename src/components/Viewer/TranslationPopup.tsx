@@ -34,13 +34,25 @@ export function TranslationPopup({
   onAddToNote: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
-  const width = Math.min(380, window.innerWidth - 16);
-  const clampPosition = (left: number, top: number) => ({
-    left: Math.max(8, Math.min(left, window.innerWidth - width - 8)),
-    top: Math.max(8, Math.min(top, window.innerHeight - (ref.current?.offsetHeight ?? 330) - 8)),
+  const minWidth = Math.min(300, window.innerWidth - 16);
+  const minHeight = Math.min(176, window.innerHeight - 16);
+  const [size, setSize] = useState(() => ({
+    width: Math.min(380, window.innerWidth - 16),
+    height: Math.min(300, window.innerHeight - 16),
+  }));
+  const clampPosition = (left: number, top: number, popupSize = size) => ({
+    left: Math.max(8, Math.min(left, window.innerWidth - popupSize.width - 8)),
+    top: Math.max(8, Math.min(top, window.innerHeight - popupSize.height - 8)),
   });
   const [position, setPosition] = useState(() => clampPosition(x, y));
   const dragRef = useRef<{ pointerId: number; dx: number; dy: number } | null>(null);
+  const resizeRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    width: number;
+    height: number;
+  } | null>(null);
 
   useEffect(() => {
     setPosition(clampPosition(x, y));
@@ -63,11 +75,23 @@ export function TranslationPopup({
   }, [onClose]);
 
   useEffect(() => {
-    const onResize = () => setPosition((current) => clampPosition(current.left, current.top));
+    const onResize = () => {
+      setSize((current) => ({
+        width: Math.min(current.width, window.innerWidth - 16),
+        height: Math.min(current.height, window.innerHeight - 16),
+      }));
+      setPosition((current) => clampPosition(current.left, current.top));
+    };
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [width]);
+  }, []);
+
+  useEffect(() => {
+    setPosition((current) => clampPosition(current.left, current.top));
+    // Keep the whole popup visible as its dimensions change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [size.width, size.height]);
 
   const startDrag = (event: React.PointerEvent<HTMLDivElement>): void => {
     if (event.button !== 0 || (event.target as HTMLElement).closest('button')) return;
@@ -82,7 +106,7 @@ export function TranslationPopup({
     if (!drag || drag.pointerId !== event.pointerId) return;
     const height = ref.current?.offsetHeight ?? 80;
     setPosition({
-      left: Math.max(8, Math.min(event.clientX - drag.dx, window.innerWidth - width - 8)),
+      left: Math.max(8, Math.min(event.clientX - drag.dx, window.innerWidth - size.width - 8)),
       top: Math.max(8, Math.min(event.clientY - drag.dy, window.innerHeight - height - 8)),
     });
   };
@@ -93,8 +117,53 @@ export function TranslationPopup({
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
   };
 
+  const startResize = (event: React.PointerEvent<HTMLButtonElement>): void => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    resizeRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      width: size.width,
+      height: size.height,
+    };
+  };
+
+  const moveResize = (event: React.PointerEvent<HTMLButtonElement>): void => {
+    const resize = resizeRef.current;
+    if (!resize || resize.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    const maxWidth = Math.max(minWidth, window.innerWidth - position.left - 8);
+    const maxHeight = Math.max(minHeight, window.innerHeight - position.top - 8);
+    setSize({
+      width: Math.max(minWidth, Math.min(resize.width + event.clientX - resize.startX, maxWidth)),
+      height: Math.max(minHeight, Math.min(resize.height + event.clientY - resize.startY, maxHeight)),
+    });
+  };
+
+  const endResize = (event: React.PointerEvent<HTMLButtonElement>): void => {
+    if (resizeRef.current?.pointerId !== event.pointerId) return;
+    resizeRef.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+  };
+
+  const resizeWithKeyboard = (event: React.KeyboardEvent<HTMLButtonElement>): void => {
+    const step = event.shiftKey ? 48 : 16;
+    const dx = event.key === 'ArrowRight' ? step : event.key === 'ArrowLeft' ? -step : 0;
+    const dy = event.key === 'ArrowDown' ? step : event.key === 'ArrowUp' ? -step : 0;
+    if (!dx && !dy) return;
+    event.preventDefault();
+    setSize((current) => ({
+      width: Math.max(minWidth, Math.min(current.width + dx, window.innerWidth - position.left - 8)),
+      height: Math.max(minHeight, Math.min(current.height + dy, window.innerHeight - position.top - 8)),
+    }));
+  };
+
   const style: React.CSSProperties = {
-    width,
+    width: size.width,
+    height: size.height,
     left: position.left,
     top: position.top,
   };
@@ -105,14 +174,14 @@ export function TranslationPopup({
   };
   const directionLabel = languageLabel(sourceLanguage) + ' → ' + languageLabel(targetLanguage);
   return (
-    <div ref={ref} className="fixed z-[82] overflow-hidden rounded-lg border border-app-border bg-app-panel shadow-2xl" style={style}>
-      <div className="flex h-9 cursor-move touch-none select-none items-center justify-between border-b border-app-border px-3" onPointerDown={startDrag} onPointerMove={moveDrag} onPointerUp={endDrag} onPointerCancel={endDrag}>
+    <div ref={ref} className="fixed z-[82] flex flex-col overflow-hidden rounded-lg border border-app-border bg-app-panel shadow-2xl" style={style}>
+      <div className="flex h-9 shrink-0 cursor-move touch-none select-none items-center justify-between border-b border-app-border px-3" onPointerDown={startDrag} onPointerMove={moveDrag} onPointerUp={endDrag} onPointerCancel={endDrag}>
         <span className="flex items-center gap-1.5 text-[11.5px] font-semibold text-app-text"><GripHorizontal size={13} className="text-app-muted" /> Academic Translation</span>
         <button className="flex h-6 w-6 items-center justify-center rounded-md text-app-muted hover:bg-app-panel2 hover:text-app-text" title="Close" onClick={onClose}>
           <X size={14} />
         </button>
       </div>
-      <div className="max-h-56 min-h-24 overflow-y-auto px-3 py-3">
+      <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
         {status.kind === 'loading' && (
           <div className="flex items-center gap-2 text-[12px] text-app-muted">
             <RefreshCw size={13} className="animate-spin" /> Translating...
@@ -134,7 +203,7 @@ export function TranslationPopup({
           </div>
         )}
       </div>
-      <div className="flex min-h-9 items-center justify-between gap-2 border-t border-app-border px-2.5 py-1.5">
+      <div className="flex min-h-9 shrink-0 items-center justify-between gap-2 border-t border-app-border py-1.5 pl-2.5 pr-5">
         <button
           className="flex h-7 items-center gap-1 rounded-md px-2 text-[10.5px] text-app-muted transition-colors hover:bg-app-panel2 hover:text-app-text"
           title="切换中英翻译方向"
@@ -160,6 +229,19 @@ export function TranslationPopup({
           )}
         </div>
       </div>
+      <button
+        className="group absolute bottom-0 right-0 h-5 w-5 cursor-nwse-resize touch-none"
+        title="拖动调整翻译窗口大小"
+        aria-label="调整翻译窗口大小；也可使用方向键，按住 Shift 可加速"
+        onPointerDown={startResize}
+        onPointerMove={moveResize}
+        onPointerUp={endResize}
+        onPointerCancel={endResize}
+        onKeyDown={resizeWithKeyboard}
+      >
+        <span className="absolute bottom-[4px] right-[4px] h-[7px] w-[7px] border-b border-r border-app-muted opacity-45 transition-opacity group-hover:opacity-90 group-focus-visible:opacity-90" />
+        <span className="absolute bottom-[4px] right-[4px] h-[11px] w-[11px] border-b border-r border-app-muted opacity-20 transition-opacity group-hover:opacity-55 group-focus-visible:opacity-55" />
+      </button>
     </div>
   );
 }
