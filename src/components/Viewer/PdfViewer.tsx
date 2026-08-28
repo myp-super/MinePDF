@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { BookOpen, Check, ChevronDown, Copy, Languages, Loader2, ScanLine } from 'lucide-react';
+import { BookOpen, Check, ChevronDown, Copy, GripHorizontal, Languages, Loader2, ScanLine } from 'lucide-react';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import katex from 'katex';
 import type { AnnotationRecord, FormulaModelStatus, FormulaRecognitionResult, PdfiumOpenResult, PdfRecord, Quad } from '../../shared/types';
@@ -2261,7 +2261,10 @@ function ScreenshotOverlay({
   const [latex, setLatex] = useState('');
   const [formulaTab, setFormulaTab] = useState<'latex' | 'markdown'>('latex');
   const [copiedFormula, setCopiedFormula] = useState(false);
+  const [formulaPanelPosition, setFormulaPanelPosition] = useState<{ x: number; y: number } | null>(null);
   const recognitionRunRef = useRef(0);
+  const formulaPanelRef = useRef<HTMLDivElement | null>(null);
+  const formulaPanelDragCleanupRef = useRef<(() => void) | null>(null);
   const startRef = useRef<{ x: number; y: number } | null>(null);
   const draggingRef = useRef(false);
   const rectRef = useRef(rect);
@@ -2346,6 +2349,74 @@ function ScreenshotOverlay({
     setCopiedFormula(true);
     window.setTimeout(() => setCopiedFormula(false), 1400);
   };
+
+  const startFormulaPanelDrag = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    const panel = formulaPanelRef.current;
+    const container = containerRef.current;
+    if (!panel || !container) return;
+    event.preventDefault();
+    event.stopPropagation();
+
+    formulaPanelDragCleanupRef.current?.();
+    const panelRect = panel.getBoundingClientRect();
+    const containerRect = container.getBoundingClientRect();
+    const start = {
+      mouseX: event.clientX,
+      mouseY: event.clientY,
+      x: panelRect.left - containerRect.left,
+      y: panelRect.top - containerRect.top,
+    };
+    setFormulaPanelPosition({ x: start.x, y: start.y });
+
+    const onMove = (moveEvent: MouseEvent) => {
+      const currentPanel = formulaPanelRef.current;
+      const currentContainer = containerRef.current;
+      if (!currentPanel || !currentContainer) return;
+      const maxX = Math.max(0, currentContainer.clientWidth - currentPanel.offsetWidth);
+      const maxY = Math.max(0, currentContainer.clientHeight - currentPanel.offsetHeight);
+      setFormulaPanelPosition({
+        x: clampNum(start.x + moveEvent.clientX - start.mouseX, 0, maxX),
+        y: clampNum(start.y + moveEvent.clientY - start.mouseY, 0, maxY),
+      });
+    };
+    const cleanup = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', cleanup);
+      formulaPanelDragCleanupRef.current = null;
+    };
+    formulaPanelDragCleanupRef.current = cleanup;
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', cleanup);
+  };
+
+  useEffect(() => () => formulaPanelDragCleanupRef.current?.(), []);
+
+  useEffect(() => {
+    const keepFormulaPanelInBounds = () => {
+      const panel = formulaPanelRef.current;
+      const container = containerRef.current;
+      if (!panel || !container) return;
+      setFormulaPanelPosition((current) => {
+        if (!current) return current;
+        const next = {
+          x: clampNum(current.x, 0, Math.max(0, container.clientWidth - panel.offsetWidth)),
+          y: clampNum(current.y, 0, Math.max(0, container.clientHeight - panel.offsetHeight)),
+        };
+        return next.x === current.x && next.y === current.y ? current : next;
+      });
+    };
+    const resizeObserver = new ResizeObserver(keepFormulaPanelInBounds);
+    const panel = formulaPanelRef.current;
+    const container = containerRef.current;
+    if (panel) resizeObserver.observe(panel);
+    if (container) resizeObserver.observe(container);
+    window.addEventListener('resize', keepFormulaPanelInBounds);
+    return () => {
+      resizeObserver.disconnect();
+      window.removeEventListener('resize', keepFormulaPanelInBounds);
+    };
+  }, [containerRef, recognizing, recognitionError, formula]);
 
   /**
    * 框定后：拖动选区内部移动位置，拖动四角/四边调整大小；
@@ -2562,14 +2633,23 @@ function ScreenshotOverlay({
       )}
       {(recognizing || recognitionError || formula) && (
         <div
-          className="absolute left-1/2 top-1/2 z-[55] flex max-h-[72%] w-[min(560px,calc(100%-32px))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl border border-app-border bg-app-panel shadow-2xl"
+          ref={formulaPanelRef}
+          className="absolute z-[55] flex max-h-[72%] w-[min(560px,calc(100%-32px))] flex-col overflow-hidden rounded-xl border border-app-border bg-app-panel shadow-2xl"
+          style={formulaPanelPosition
+            ? { left: formulaPanelPosition.x, top: formulaPanelPosition.y }
+            : { left: '50%', top: '50%', transform: 'translate(-50%, -50%)' }}
           onMouseDown={(e) => e.stopPropagation()}
         >
-          <div className="flex h-10 shrink-0 items-center gap-2 border-b border-app-border px-3">
+          <div
+            className="flex h-10 shrink-0 cursor-move select-none items-center gap-2 border-b border-app-border px-3"
+            onMouseDown={startFormulaPanelDrag}
+          >
             <ScanLine size={14} className="text-app-accent" />
             <span className="text-[12px] font-semibold text-app-text">{t('formula.title')}</span>
+            <GripHorizontal size={14} className="ml-1 text-app-muted/55" />
             <button
               className="ml-auto rounded-md px-2 py-1 text-[10.5px] text-app-muted hover:bg-app-panel2 hover:text-app-text"
+              onMouseDown={(event) => event.stopPropagation()}
               onClick={() => { setFormula(null); setRecognitionError(null); }}
             >
               {t('common.close')}

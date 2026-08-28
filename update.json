@@ -1,8 +1,8 @@
 {
-  "version": "3.13.3",
-  "publishDate": "2026-08-26",
-  "url": "https://github.com/myp-super/MinePDF/releases/download/v3.13.3/MinePDF.Setup.3.13.3.exe",
+  "version": "3.13.4",
+  "publishDate": "2026-08-28",
+  "url": "https://github.com/myp-super/MinePDF/releases/download/v3.13.4/MinePDF.Setup.3.13.4.exe",
   "notes": [
-    "3.13.3 - 修复本地公式识别预处理和解码问题，提升公式截图识别准确性；规范 sigmoid、粗体变量等 LaTeX 输出，并避免异常结果被截断展示"
+    "3.13.4 - 公式识别结果窗口支持拖动调整位置，并在窗口、分屏或内容尺寸变化时自动保持在阅读区可见范围内"
   ]
 }
