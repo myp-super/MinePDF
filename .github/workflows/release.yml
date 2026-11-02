@@ -53,7 +53,10 @@ jobs:
         shell: pwsh
         run: |
           git fetch origin main
-          git checkout main
+          # npm install / 打包可能改写 package-lock 或生成受跟踪资源；runner 是临时环境，
+          # 切分支前恢复标签提交，并显式从远端 main 创建本地分支。
+          git reset --hard HEAD
+          git checkout -B main origin/main
           $ver = $env:GITHUB_REF_NAME -replace '^v',''
           # GitHub 会把 Release 附件名中的空格规范为点号，链接必须用点号格式
           $url = "https://github.com/$env:GITHUB_REPOSITORY/releases/download/$env:GITHUB_REF_NAME/MinePDF.Setup.$ver.exe"
