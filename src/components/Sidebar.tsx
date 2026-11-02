@@ -319,6 +319,9 @@ export function Sidebar() {
     try {
       const res = await window.pkm.importPdfs(paths, folderId);
       await refresh();
+      if (folderId != null) {
+        setExpanded((current) => new Set(current).add(folderId));
+      }
       toast(
         'success',
         t('common.imported', {
@@ -786,6 +789,8 @@ export function Sidebar() {
           if (!(e.target as HTMLElement).closest('[role="treeitem"]')) clearSelectedPdfs();
         }}
         onDragOver={(e) => {
+          // 外部文件或文件夹需要 preventDefault 才能在树的空白区域触发 drop。
+          e.preventDefault();
           // 拖拽时靠近上下边缘自动滚动，便于把项目拖到可视区外的位置
           const el = e.currentTarget;
           const r = el.getBoundingClientRect();
@@ -797,7 +802,7 @@ export function Sidebar() {
           // 知识库空白区松手：统一落到默认知识库根目录（桌面文件导入 / 库内 PDF 或文件夹移动）
           noDrag(e);
           if (dragHasFiles(e)) {
-            const paths = pathsFromDrag(e).filter((p) => p.toLowerCase().endsWith('.pdf'));
+            const paths = pathsFromDrag(e);
             if (paths.length) void doImport(paths, defaultLibrary?.rootFolderId ?? null);
             return;
           }

@@ -182,6 +182,7 @@ export function PdfViewer({
   const [searchMatches, setSearchMatches] = useState<SearchMatch[]>([]);
   const [searchCurrent, setSearchCurrent] = useState(0);
   const [annotations, setAnnotations] = useState<AnnotationRecord[]>([]);
+  const [annotationAssetBase, setAnnotationAssetBase] = useState<string | null>(null);
   const [selectedAnnotationId, setSelectedAnnotationId] = useState<number | null>(null);
   const [baseW, setBaseW] = useState(0);
   const [baseH, setBaseH] = useState(0);
@@ -221,6 +222,7 @@ export function PdfViewer({
     sourceLanguage: string;
     targetLanguage: string;
     selectionId: string;
+    pages: { page: number; quads: Quad[] }[];
     requestId: string | null;
     status: TranslationPopupStatus;
   } | null>(null);
@@ -445,10 +447,16 @@ export function PdfViewer({
     setPageSizes(null);
     setLoadError(null);
     setAnnotations([]);
+    setAnnotationAssetBase(null);
     setSelectedAnnotationId(null);
     setStoreOutline([]);
     setSearchMatches([]);
     setSearchCurrent(0);
+    void window.pkm.getNote(pdf.id).then((record) => {
+      if (currentPdfIdRef.current !== pdf.id) return;
+      const dir = record?.noteDir?.replace(/\\/g, '/');
+      setAnnotationAssetBase(dir ? `file://${dir}` : null);
+    }).catch(() => undefined);
     readingAnchorRef.current = savedAnchor;
     setCurrentPage(savedAnchor.page);
     currentPageRef.current = savedAnchor.page;
@@ -768,15 +776,16 @@ export function PdfViewer({
     }
   }, [pdfiumInfo, virtualRange, pdf.id, layout]);
 
-  // 文档打开时自动适宽一次。之后窗口最大化、还原和拖动尺寸只改变可视区域，
+  // 文档打开时自动执行一次“适应页面”（与工具栏百分比按钮一致）。
+  // 之后窗口最大化、还原和拖动尺寸只改变可视区域，
   // 不再暗中改变 PDF 缩放比例，避免一次窗口操作触发两轮布局和跳页。
   useEffect(() => {
-    if (!baseW) return;
+    if (!baseH) return;
     let timer: ReturnType<typeof setTimeout> | null = null;
     const fit = () => {
       if (immersiveRef.current) return;
-      const w = scrollRef.current?.clientWidth ?? 800;
-      setScale(Math.max(0.3, (w - 48) / baseW));
+      const h = scrollRef.current?.clientHeight ?? 600;
+      setScale(Math.max(0.3, (h - 48) / baseH));
     };
     const schedule = (fn: () => void) => {
       if (timer) clearTimeout(timer);
@@ -790,7 +799,7 @@ export function PdfViewer({
       if (timer) clearTimeout(timer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [doc, baseW]);
+  }, [doc, baseH]);
 
   // ---------- page tracking ----------
   const persistReadingAnchor = useCallback(
@@ -1201,6 +1210,7 @@ export function PdfViewer({
 
   const startSelectDrag = (e: React.MouseEvent, mode: 'highlight' | 'select') => {
     if (e.button !== 0) return;
+    suppressNextClickRef.current = false;
     // 同步阻止浏览器原生选区，避免与预览色块叠加
     e.preventDefault();
     try {
@@ -1218,6 +1228,7 @@ export function PdfViewer({
     // 按下瞬间锁定选区上下文：页 + 旋转 + 视觉列 + 文本块；之后只在此区域内选词
     const ctx = makeSelectionContext(startIndex, page, rc.line);
     if (!ctx) return;
+    setSelectedAnnotationId(null);
     hlStartRef.current = {
       page,
       row: rc.row,
@@ -1246,11 +1257,10 @@ export function PdfViewer({
         hlRafRef.current = 0;
       }
       hlDragRef.current = false;
-      // 没有 mousemove（单击）时用 mouseup 位置提交，交给移动阈值拦截
-      if (!hlLastMoveRef.current) {
-        hlLastMoveRef.current = { x: ev.clientX, y: ev.clientY };
-        updateHlSelection();
-      }
+      // 最后一帧 mousemove 可能尚未执行就被取消；始终用松手位置计算终点，
+      // 防止快速拖选时提交上一帧的字符位置。
+      hlLastMoveRef.current = { x: ev.clientX, y: ev.clientY };
+      updateHlSelection();
       if (selModeRef.current === 'highlight') void commitHlSelection();
       else commitSelection();
       selModeRef.current = null;
@@ -1260,6 +1270,8 @@ export function PdfViewer({
   };
 
   const handleMouseDown = (e: React.MouseEvent) => {
+    // 圆点负责编辑标注；正文高亮仍允许拖选，不让圆点点击启动 PDF 选区。
+    if ((e.target as HTMLElement).closest('.annotation-dot')) return;
     // 右键平移优先：高亮模式下也要能用右键小手抓取
     if (rightDragPan && e.button === 2) {
       onPanMouseDown(e);
@@ -1278,13 +1290,14 @@ export function PdfViewer({
   };
 
   const handleAnnotationClick = (a: AnnotationRecord) => {
+    if (suppressNextClickRef.current) return;
     setSelectedAnnotationId(a.id);
   };
 
-  const saveAnnotationNote = async (target: NoteTarget, note: string) => {
+  const saveAnnotationNote = async (target: NoteTarget, note: string, layout: string) => {
     try {
       if (target.kind === 'existing') {
-        await window.pkm.updateAnnotation(target.id, { note });
+        await window.pkm.updateAnnotation(target.id, { note, noteLayout: layout });
       } else {
         for (const { page, quads } of target.pages) {
           await window.pkm.createAnnotation({
@@ -1294,10 +1307,14 @@ export function PdfViewer({
             note,
             position: JSON.stringify(quads),
             color: target.color,
+            noteLayout: layout,
           });
         }
       }
       setAnnotations(await window.pkm.listAnnotations(pdf.id));
+      const noteRecord = await window.pkm.getNote(pdf.id).catch(() => null);
+      const noteDir = noteRecord?.noteDir?.replace(/\\/g, '/');
+      setAnnotationAssetBase(noteDir ? `file://${noteDir}` : null);
       setNotePopup(null);
     } catch (err) {
       toast('error', terr(err instanceof Error ? err.message : String(err)));
@@ -1370,7 +1387,9 @@ export function PdfViewer({
   useEffect(() => {
     if (!translationPopup) return;
     const page = selection ? Math.min(...Object.keys(selection.quads).map(Number)) : -1;
-    const currentId = selection ? translationSelectionId(pdf.id, page, selection.text) : '';
+    const currentId = selection
+      ? `${translationSelectionId(pdf.id, page, selection.text)}:${JSON.stringify(selection.quads)}`
+      : '';
     if (currentId !== translationPopup.selectionId) closeTranslation();
   }, [selection, pdf.id, translationPopup?.selectionId, closeTranslation]);
 
@@ -1463,21 +1482,25 @@ export function PdfViewer({
     void runTranslation({ ...next, status: { kind: 'loading' } });
   };
 
-  const openTranslation = (x: number, y: number, immediate = false): void => {
-    if (!selection || !translationSettings.enabled) return;
-    const page = Math.min(...Object.keys(selection.quads).map(Number));
+  const openTranslation = (x: number, y: number, immediate = false, source = selection): void => {
+    if (!source || !translationSettings.enabled) return;
+    const page = Math.min(...Object.keys(source.quads).map(Number));
     const direction = initialTranslationDirection();
     const base: NonNullable<typeof translationPopup> = {
       x,
       y,
       page,
-      original: selection.text,
-      context: selectionContext(page, selection.text),
+      original: source.text,
+      context: selectionContext(page, source.text),
       ...direction,
-      selectionId: translationSelectionId(pdf.id, page, selection.text),
+      selectionId: `${translationSelectionId(pdf.id, page, source.text)}:${JSON.stringify(source.quads)}`,
+      pages: Object.entries(source.quads).map(([selectedPage, quads]) => ({
+        page: Number(selectedPage),
+        quads: quads.map((quad) => ({ ...quad })),
+      })),
       requestId: null,
       status:
-        selection.text.length > translationSettings.maxSelectedCharacters
+        source.text.length > translationSettings.maxSelectedCharacters
           ? {
               kind: 'error',
               error: {
@@ -1486,8 +1509,8 @@ export function PdfViewer({
                 retryable: false,
               },
             }
-          : !immediate && selection.text.length > translationSettings.longSelectionCharacters
-            ? { kind: 'confirm', length: selection.text.length }
+          : !immediate && source.text.length > translationSettings.longSelectionCharacters
+            ? { kind: 'confirm', length: source.text.length }
             : { kind: 'loading' },
     };
     setTranslationPopup(base);
@@ -1548,6 +1571,34 @@ export function PdfViewer({
       toast('success', t('viewer.addedToNote'));
     } catch (error) {
       toast('error', terr(error instanceof Error ? error.message : String(error)));
+    }
+  };
+
+  const addTranslationToAnnotation = async (): Promise<boolean> => {
+    const popup = translationPopup;
+    if (!popup || popup.status.kind !== 'success' || !popup.pages.length) return false;
+    try {
+      const created: AnnotationRecord[] = [];
+      for (const { page, quads } of popup.pages) {
+        if (!quads.length) continue;
+        created.push(await window.pkm.createAnnotation({
+          pdfId: pdf.id,
+          page,
+          content: popup.original,
+          note: popup.status.result.translatedText,
+          position: JSON.stringify(quads),
+          color: '#fde047',
+        }));
+      }
+      if (!created.length) return false;
+      setAnnotations(await window.pkm.listAnnotations(pdf.id));
+      setSelectedAnnotationId(created[0].id);
+      window.dispatchEvent(new CustomEvent('minepdf:annotations-changed', { detail: { pdfId: pdf.id } }));
+      toast('success', t('translation.annotationWriteSuccess'));
+      return true;
+    } catch (error) {
+      toast('error', terr(error instanceof Error ? error.message : String(error)));
+      return false;
     }
   };
 
@@ -1722,6 +1773,7 @@ export function PdfViewer({
       fallbackW={pdfiumInfo?.width ?? null}
       fallbackH={pdfiumInfo?.height ?? null}
       annotations={annotationsByPage.get(n) ?? []}
+      annotationAssetBase={annotationAssetBase}
       searchMatches={searchByPage.get(n) ?? []}
       selectedAnnotationId={selectedAnnotationId}
       linkService={linkService}
@@ -1735,7 +1787,12 @@ export function PdfViewer({
         setSelectedAnnotationId(a.id);
         setNotePopup({ target: { kind: 'existing', id: a.id }, initialNote: a.note, x, y });
       }}
-      onAnnotationContextMenu={(a, x, y) => setAnnMenu({ a, x, y })}
+      onAnnotationContextMenu={(a, x, y) => {
+        // 高亮层是已有内容的“锚点”，右键优先显示它自己的菜单；
+        // 菜单内提供翻译入口，避免选区状态残留时吞掉再次翻译操作。
+        setSelMenu(null);
+        setAnnMenu({ a, x, y });
+      }}
       onJumpToPage={gotoPage}
       registerPage={registerPage}
       registerViewport={registerViewport}
@@ -1987,6 +2044,26 @@ export function PdfViewer({
           onClose={() => setAnnMenu(null)}
           items={[
             {
+              label: t('viewer.translate'),
+              icon: <Languages size={12} />,
+              disabled: !translationSettings.enabled || !annMenu.a.content.trim(),
+              onClick: () => {
+                let quads: Quad[] = [];
+                try {
+                  const parsed = JSON.parse(annMenu.a.position) as unknown;
+                  if (Array.isArray(parsed)) quads = parsed as Quad[];
+                } catch {
+                  // Keep the menu safe for legacy/corrupt annotation geometry.
+                }
+                if (!quads.length) return;
+                const source = { text: annMenu.a.content, quads: { [annMenu.a.page]: quads } };
+                setSelection(source);
+                setSelectedAnnotationId(null);
+                openTranslation(annMenu.x, annMenu.y, false, source);
+                setAnnMenu(null);
+              },
+            },
+            {
               label: t('viewer.addToNote'),
               icon: <BookOpen size={12} />,
               onClick: () => {
@@ -2122,10 +2199,12 @@ export function PdfViewer({
         <AnnotationNotePopup
           target={notePopup.target}
           initialNote={notePopup.initialNote}
+          initialLayout={notePopup.target.kind === 'existing' ? annotations.find((a) => a.id === (notePopup.target as Extract<NoteTarget, { kind: 'existing' }>).id)?.noteLayout : undefined}
+          pdfId={pdf.id}
           x={notePopup.x}
           y={notePopup.y}
           onClose={() => setNotePopup(null)}
-          onSaved={(target, note) => void saveAnnotationNote(target, note)}
+          onSaved={(target, note, layout) => void saveAnnotationNote(target, note, layout)}
         />
       )}
       {translationPopup && (
@@ -2145,6 +2224,7 @@ export function PdfViewer({
             }
           }}
           onAddToNote={() => void addTranslationToNote()}
+          onAddToAnnotation={addTranslationToAnnotation}
         />
       )}
     </main>

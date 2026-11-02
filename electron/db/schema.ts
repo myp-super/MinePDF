@@ -66,6 +66,7 @@ CREATE TABLE IF NOT EXISTS annotations (
   note TEXT NOT NULL DEFAULT '',
   position TEXT NOT NULL DEFAULT '[]',
   color TEXT NOT NULL DEFAULT '#fde047',
+  note_layout TEXT NOT NULL DEFAULT '{}',
   created_time TEXT NOT NULL,
   updated_time TEXT NOT NULL
 );

@@ -1,5 +1,6 @@
-import { ArrowLeftRight, BookOpen, Copy, GripHorizontal, RefreshCw, X } from 'lucide-react';
+import { ArrowLeftRight, BookOpen, Check, Copy, GripHorizontal, Highlighter, Loader2, RefreshCw, X } from 'lucide-react';
 import React, { useEffect, useRef, useState } from 'react';
+import { useT } from '../../i18n';
 import type { TranslationErrorPayload, TranslationResult } from '../../shared/types';
 
 export type TranslationPopupStatus =
@@ -20,6 +21,7 @@ export function TranslationPopup({
   onToggleLanguage,
   onCopy,
   onAddToNote,
+  onAddToAnnotation,
 }: {
   x: number;
   y: number;
@@ -32,7 +34,9 @@ export function TranslationPopup({
   onToggleLanguage: () => void;
   onCopy: () => void;
   onAddToNote: () => void;
+  onAddToAnnotation: () => Promise<boolean>;
 }) {
+  const t = useT();
   const ref = useRef<HTMLDivElement>(null);
   const minWidth = Math.min(300, window.innerWidth - 16);
   const minHeight = Math.min(176, window.innerHeight - 16);
@@ -53,6 +57,10 @@ export function TranslationPopup({
     width: number;
     height: number;
   } | null>(null);
+  const [annotationState, setAnnotationState] = useState<'idle' | 'saving' | 'saved'>('idle');
+  const annotationResultId = status.kind === 'success' ? status.result.requestId : null;
+
+  useEffect(() => setAnnotationState('idle'), [annotationResultId]);
 
   useEffect(() => {
     setPosition(clampPosition(x, y));
@@ -161,6 +169,17 @@ export function TranslationPopup({
     }));
   };
 
+  const addToAnnotation = async (): Promise<void> => {
+    if (annotationState !== 'idle') return;
+    setAnnotationState('saving');
+    try {
+      const saved = await onAddToAnnotation();
+      setAnnotationState(saved ? 'saved' : 'idle');
+    } catch {
+      setAnnotationState('idle');
+    }
+  };
+
   const style: React.CSSProperties = {
     width: size.width,
     height: size.height,
@@ -221,6 +240,15 @@ export function TranslationPopup({
             <>
               <button className="flex h-7 items-center gap-1 rounded-md px-2 text-[10.5px] text-app-muted hover:bg-app-panel2 hover:text-app-text" onClick={onCopy}><Copy size={12} /> Copy</button>
               <button className="flex h-7 items-center gap-1 rounded-md px-2 text-[10.5px] text-app-muted hover:bg-app-panel2 hover:text-app-text" onClick={onAddToNote}><BookOpen size={12} /> Add to Note</button>
+              <button
+                className="flex h-7 items-center gap-1 rounded-md px-2 text-[10.5px] text-app-accent transition-colors hover:bg-app-accent/10 disabled:cursor-default disabled:opacity-70"
+                title={t('translation.addToAnnotation')}
+                disabled={annotationState !== 'idle'}
+                onClick={() => void addToAnnotation()}
+              >
+                {annotationState === 'saving' ? <Loader2 size={12} className="animate-spin" /> : annotationState === 'saved' ? <Check size={12} /> : <Highlighter size={12} />}
+                {annotationState === 'saved' ? t('translation.annotationWritten') : t('translation.addToAnnotation')}
+              </button>
               <button className="flex h-7 w-7 items-center justify-center rounded-md text-app-muted hover:bg-app-panel2 hover:text-app-text" title="Retry" onClick={onRetry}><RefreshCw size={12} /></button>
             </>
           )}

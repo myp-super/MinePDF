@@ -477,5 +477,132 @@ if (!s0 || !ctx0) throw new Error('起点解析失败');
   check('跳页后继续滚动：页码不冻结', afterUserScroll.page === 5);
 }
 
+// 20) 大公式不能扩大另一栏的行框，也不能把实际字符命中吸到相邻行。
+{
+  const glyphs = (text: string, x: number, y: number, h = 10): TextItemQuad[] =>
+    [...text].map((str, i) => ({ str, x: x + i * 7, y, w: 6, h, baseline: y + h, rot: 0 }));
+  const items = [
+    ...glyphs('LEFT UPPER', 50, 500), ...glyphs('RIGHT UPPER', 300, 500),
+    ...glyphs('LEFT LOWER', 50, 486), ...glyphs('RIGHT LOWER', 300, 486),
+    ...glyphs('∑', 130, 460, 50),
+  ].sort((a, b) => b.baseline - a.baseline || a.x - b.x);
+  const pg = buildPageIndex(items);
+  const upper = findLine(pg, 'RIGHT UPPER');
+  const hit = pointToRowChar(pg, 1, 317, 505)!;
+  check('大公式：右栏行框不受左栏影响', pg.lines[upper].minY === 500 && pg.lines[upper].maxY === 510);
+  check('大公式：鼠标命中右栏上一行', hit.line === upper && hit.idx === 2);
+  const leftHit = pointToRowChar(pg, 1, 67, 505)!;
+  check('大公式：左栏正文命中实际字符', lineText(pg, leftHit.line).startsWith('LEFT UPPER'));
+  const ctx = makeSelectionContext(pg, 1, hit.line)!;
+  const end = pointToRowChar(pg, 1, 331, 491, ctx)!;
+  const selected = selText(computeRowSelection({ ...hit, ctx }, end, () => pg));
+  check('大公式：右栏拖选不串栏', selected === 'RIGHT UPPER'.slice(2) + 'RIGHT LOWER'.slice(0, 5), selected);
+}
+
+// 大符号或上标改变行中心时，正文字符和独立上标都必须直接命中。
+{
+  const items: TextItemQuad[] = [
+    ...makeLine({ text: 'body', x0: 50, y0: 500 }),
+    { str: '∫', x: 80, y: 470, w: 8, h: 37, baseline: 507, rot: 0 },
+    { str: '2', x: 90, y: 509, w: 4, h: 5, baseline: 514, rot: 0 },
+    ...makeLine({ text: 'next', x0: 50, y0: 486 }),
+  ].sort((a, b) => b.baseline - a.baseline || a.x - b.x);
+  const pg = buildPageIndex(items);
+  const atBody = pointToRowChar(pg, 1, 60, 503)!;
+  const atScript = pointToRowChar(pg, 1, 92, 511)!;
+  check('混合字号：正文优先命中实际字形', pg.items[pg.lines[atBody.line].indices[atBody.idx]].str === 'o');
+  check('混合字号：上标可独立命中', pg.items[pg.lines[atScript.line].indices[atScript.idx]].str === '2');
+}
+
+// 21) 同栏公式留白不是栏间距：中间行的两段文字必须可连续选择。
+{
+  const glyphs = (text: string, x: number, y: number): TextItemQuad[] =>
+    [...text].map((str, i) => ({ str, x: x + i * 7, y, w: 6, h: 10, baseline: y + 10, rot: 0 }));
+  const items = [
+    ...glyphs('ABCDEFGHIJKLMNOPQRST', 50, 530),
+    ...glyphs('before', 50, 516), ...glyphs('after', 140, 516),
+    ...glyphs('ABCDEFGHIJKLMNOPQRST', 50, 502),
+    ...glyphs('OTHER COLUMN TOP', 300, 530),
+    ...glyphs('OTHER COLUMN MID', 300, 516),
+    ...glyphs('OTHER COLUMN END', 300, 502),
+  ].sort((a, b) => b.baseline - a.baseline || a.x - b.x);
+  const pg = buildPageIndex(items);
+  const start = pointToRowChar(pg, 1, 53, 535)!;
+  const ctx = makeSelectionContext(pg, 1, start.line)!;
+  const end = pointToRowChar(pg, 1, 149, 507, ctx)!;
+  const selected = selText(computeRowSelection({ ...start, ctx }, end, () => pg));
+  check('公式间距：跨行拖选包含后半句', selected.includes('beforeafter'), selected);
+  check('公式间距：不合并真实右栏', !selected.includes('OTHER'), selected);
+  const suffix = pointToRowChar(pg, 1, 150, 521, ctx)!;
+  check('公式间距：从前一行可拖到后半句', pg.items[pg.lines[suffix.line].indices[suffix.idx]].str === 'f');
+  const reverseCtx = makeSelectionContext(pg, 1, end.line)!;
+  check('公式间距：反向拖选完整', selText(computeRowSelection({ ...end, ctx: reverseCtx }, start, () => pg)) === selected);
+}
+
+// 22) 行内大公式：公式前后的正文保持同一视觉行，公式后的字符可命中。
+{
+  const glyphs = (text: string, x: number, y: number, h = 10): TextItemQuad[] =>
+    [...text].map((str, i) => ({ str, x: x + i * 7, y, w: 6, h, baseline: y + h, rot: 0 }));
+  const items = [
+    ...glyphs('before ', 50, 500),
+    { str: '∑', x: 105, y: 480, w: 12, h: 30, baseline: 510, rot: 0 },
+    ...glyphs(' after', 125, 500),
+    ...glyphs('next ordinary line', 50, 486),
+    ...glyphs('RIGHT COLUMN', 300, 500),
+    ...glyphs('RIGHT NEXT', 300, 486),
+  ].sort((a, b) => b.baseline - a.baseline || a.x - b.x);
+  const pg = buildPageIndex(items);
+  const formulaLine = pg.lines.findIndex((line) => line.indices.some((i) => pg.items[i].str === '∑'));
+  check('行内公式：公式前后属于同一行', lineText(pg, formulaLine).includes('before') && lineText(pg, formulaLine).includes('after'));
+  const after = pointToRowChar(pg, 1, 163, 505)!;
+  check('行内公式：公式后的文字可命中', pg.items[pg.lines[after.line].indices[after.idx]].str === 'r');
+  const start = pointToRowChar(pg, 1, 60, 505)!;
+  const ctx = makeSelectionContext(pg, 1, start.line)!;
+  const selected = selText(computeRowSelection({ ...start, ctx }, after, () => pg));
+  check('行内公式：拖选包含公式后的文字', selected.includes('after'), selected);
+  check('行内公式：不串入右栏', !selected.includes('RIGHT'), selected);
+}
+
+// 23) 段首/段尾只有一条相邻正文行时，公式留白仍应连通；上下标不能另起正文行。
+for (const neighborY of [514, 486]) {
+  const items = [
+    ...makeLine({ text: 'before', x0: 50, y0: 500 }),
+    ...makeLine({ text: 'after', x0: 140, y0: 500 }),
+    ...makeLine({ text: 'ordinary line spans formula', x0: 50, y0: neighborY }),
+    ...makeLine({ text: 'RIGHT COLUMN', x0: 300, y0: 500 }),
+    ...makeLine({ text: 'RIGHT NEIGHBOR', x0: 300, y0: neighborY }),
+    { str: '2', x: 98, y: 509, w: 4, h: 4, baseline: 513, rot: 0 },
+    { str: 'i', x: 106, y: 497, w: 3, h: 4, baseline: 501, rot: 0 },
+  ].sort((a, b) => b.baseline - a.baseline || a.x - b.x);
+  const pg = buildPageIndex(items);
+  const start = pointToRowChar(pg, 1, 60, 503)!;
+  const ctx = makeSelectionContext(pg, 1, start.line)!;
+  const end = pointToRowChar(pg, 1, 170, 503, ctx)!;
+  const selected = selText(computeRowSelection({ ...start, ctx }, end, () => pg));
+  check(`段落边缘 ${neighborY}：公式后的拖选可达`, selected.includes('after'), selected);
+  check(`段落边缘 ${neighborY}：包含上下标`, selected.includes('2') && selected.includes('i'), selected);
+  const reverseCtx = makeSelectionContext(pg, 1, end.line)!;
+  const reverseEnd = pointToRowChar(pg, 1, 60, 503, reverseCtx)!;
+  check(`段落边缘 ${neighborY}：反向拖选一致`, selText(computeRowSelection({ ...end, ctx: reverseCtx }, reverseEnd, () => pg)) === selected);
+}
+
+// 24) 窄栏间距 + 全宽标题：标题不能被当成行内公式的连接依据。
+{
+  const items = [
+    ...makeLine({ text: 'FULL WIDTH TITLE THAT SPANS TWO COLUMNS', x0: 50, y0: 514 }),
+    ...makeLine({ text: 'LEFT COLUMN', x0: 50, y0: 500 }),
+    ...makeLine({ text: 'RIGHT COLUMN', x0: 155, y0: 500 }),
+    ...makeLine({ text: 'LEFT NEXT', x0: 50, y0: 486 }),
+    ...makeLine({ text: 'RIGHT NEXT', x0: 155, y0: 486 }),
+  ].sort((a, b) => b.baseline - a.baseline || a.x - b.x);
+  const pg = buildPageIndex(items);
+  const start = pointToRowChar(pg, 1, 165, 503)!;
+  const ctx = makeSelectionContext(pg, 1, start.line)!;
+  const end = pointToRowChar(pg, 1, 194, 489, ctx)!;
+  const selected = selText(computeRowSelection({ ...start, ctx }, end, () => pg));
+  check('窄栏标题：左右栏仍分行', pg.lines[start.line].minX === 155);
+  check('窄栏标题：拖选不串入左栏', !selected.includes('LEFT'), selected);
+}
+
 console.log(failed ? `\n${failed} 个断言失败` : '\n全部通过');
 process.exit(failed ? 1 : 0);

@@ -105,6 +105,10 @@ function migrateSchema(db: Database.Database): void {
   if (!noteCols.some((c) => c.name === 'note_dir')) {
     db.exec(`ALTER TABLE notes ADD COLUMN note_dir TEXT`);
   }
+  const annotationCols = db.prepare('PRAGMA table_info(annotations)').all() as Array<{ name: string }>;
+  if (!annotationCols.some((c) => c.name === 'note_layout')) {
+    db.exec(`ALTER TABLE annotations ADD COLUMN note_layout TEXT NOT NULL DEFAULT '{}'`);
+  }
   migrateLibraries(db);
 
   // 手动拖拽排序支持：sort_order 列（仅首次添加时按同级名称回填，之后保留用户排序）

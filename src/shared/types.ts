@@ -205,6 +205,8 @@ export interface AnnotationRecord {
   /** JSON 序列化的 Quad[] */
   position: string;
   color: string;
+  /** JSON serialized popup layout: {left, top, width, height, pinned, previewScale} */
+  noteLayout: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -216,6 +218,7 @@ export interface NewAnnotation {
   note: string;
   position: string;
   color: string;
+  noteLayout?: string;
 }
 
 export interface AppSettings {
@@ -466,6 +469,8 @@ export interface PdfiumChar {
   y: number;
   w: number;
   h: number;
+  /** 文字排版基线；旧接口或提取失败时可缺省 */
+  baseline?: number;
   str: string;
   /** 字符旋转角（度，量化为 0/90/180/270；正文为 0） */
   rot: number;
@@ -617,7 +622,7 @@ export interface PkmApi {
   createAnnotation(data: NewAnnotation): Promise<AnnotationRecord>;
   updateAnnotation(
     id: number,
-    patch: Partial<Pick<AnnotationRecord, 'note' | 'color' | 'content' | 'page' | 'position'>>,
+    patch: Partial<Pick<AnnotationRecord, 'note' | 'color' | 'content' | 'page' | 'position' | 'noteLayout'>>,
   ): Promise<void>;
   deleteAnnotation(id: number): Promise<void>;
 

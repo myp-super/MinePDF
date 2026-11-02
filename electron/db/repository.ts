@@ -1285,7 +1285,7 @@ export const repository = {
    * folder and survives moves/renames.
    */
   saveNoteImage(pdfId: number, dataUrl: string): string {
-    const m = /^data:image\/png;base64,(.+)$/.exec(dataUrl);
+    const m = /^data:image\/(png|jpeg|jpg|gif|webp);base64,(.+)$/.exec(dataUrl);
     if (!m) throw new Error('无效的图片数据');
     const pdf = this.getPdf(pdfId);
     if (!pdf) throw new Error('PDF 记录不存在');
@@ -1308,8 +1308,9 @@ export const repository = {
     }
     const assetsDir = path.join(noteDir!, 'assets');
     fs.mkdirSync(assetsDir, { recursive: true });
-    const file = path.join(assetsDir, `${Date.now()}.png`);
-    fs.writeFileSync(file, Buffer.from(m[1], 'base64'));
+    const ext = m[1] === 'jpeg' ? 'jpg' : m[1];
+    const file = path.join(assetsDir, `${Date.now()}.${ext}`);
+    fs.writeFileSync(file, Buffer.from(m[2], 'base64'));
     return `assets/${path.basename(file)}`;
   },
 
@@ -1328,6 +1329,7 @@ export const repository = {
       note: String(r.note),
       position: String(r.position),
       color: String(r.color),
+      noteLayout: String(r.note_layout ?? '{}'),
       createdAt: String(r.created_time),
       updatedAt: String(r.updated_time),
     }));
@@ -1338,10 +1340,10 @@ export const repository = {
     const t = now();
     const res = db
       .prepare(
-        `INSERT INTO annotations (pdf_id, page, content, note, position, color, created_time, updated_time)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO annotations (pdf_id, page, content, note, position, color, note_layout, created_time, updated_time)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(data.pdfId, data.page, data.content, data.note, data.position, data.color, t, t);
+      .run(data.pdfId, data.page, data.content, data.note, data.position, data.color, data.noteLayout ?? '{}', t, t);
     const all = this.listAnnotations(data.pdfId);
     writeAnnotationMirror(data.pdfId, all);
     const created = db.prepare('SELECT * FROM annotations WHERE id = ?').get(res.lastInsertRowid) as Row;
@@ -1353,6 +1355,7 @@ export const repository = {
       note: String(created.note),
       position: String(created.position),
       color: String(created.color),
+      noteLayout: String(created.note_layout ?? '{}'),
       createdAt: String(created.created_time),
       updatedAt: String(created.updated_time),
     };
@@ -1360,16 +1363,16 @@ export const repository = {
 
   updateAnnotation(
     id: number,
-    patch: Partial<Pick<AnnotationRecord, 'note' | 'color' | 'content' | 'page' | 'position'>>,
+    patch: Partial<Pick<AnnotationRecord, 'note' | 'color' | 'content' | 'page' | 'position' | 'noteLayout'>>,
   ): void {
     const db = getDb();
     const current = db.prepare('SELECT pdf_id FROM annotations WHERE id = ?').get(id) as Row | undefined;
     if (!current) throw new Error('标注不存在');
     const fields: string[] = [];
     const values: unknown[] = [];
-    for (const key of ['note', 'color', 'content', 'page', 'position'] as const) {
+    for (const key of ['note', 'color', 'content', 'page', 'position', 'noteLayout'] as const) {
       if (patch[key] !== undefined) {
-        fields.push(`${key} = ?`);
+        fields.push(`${key === 'noteLayout' ? 'note_layout' : key} = ?`);
         values.push(patch[key]);
       }
     }

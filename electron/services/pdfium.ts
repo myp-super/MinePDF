@@ -74,6 +74,7 @@ interface PdfiumApi {
   textClose: (tp: unknown) => void;
   textCount: (tp: unknown) => number;
   textCharBox: (tp: unknown, index: number, rect: unknown) => number;
+  textCharOrigin: (tp: unknown, index: number, x: unknown, y: unknown) => number;
   textCharAngle: (tp: unknown, index: number, matrix: unknown) => number;
   textUnicode: (tp: unknown, index: number) => number;
 }
@@ -179,6 +180,7 @@ function ensureLib(): PdfiumApi | null {
       textClose: k.func('void FPDFText_ClosePage(void *text)'),
       textCount: k.func('int FPDFText_CountChars(void *text)'),
       textCharBox: k.func('int FPDFText_GetLooseCharBox(void *text, int index, FS_RECTF *rect)'),
+      textCharOrigin: k.func('int FPDFText_GetCharOrigin(void *text, int index, double *x, double *y)'),
       textCharAngle: k.func('int FPDFText_GetCharAngle(void *text, int index, float *matrix)'),
       textUnicode: k.func('unsigned int FPDFText_GetUnicode(void *text, int index)'),
     };
@@ -394,6 +396,8 @@ export function pdfiumTextChars(pdfId: number, pageNumber: number): PdfiumChar[]
       const count = api.textCount(tp);
       const boxPtr = koffi.alloc(FS_RECTF, 1);
       const matPtr = koffi.alloc('float', 6);
+      const originXPtr = koffi.alloc('double', 1);
+      const originYPtr = koffi.alloc('double', 1);
       try {
         for (let i = 0; i < count; i++) {
           if (api.textCharBox(tp, i, boxPtr)) {
@@ -419,11 +423,15 @@ export function pdfiumTextChars(pdfId: number, pageNumber: number): PdfiumChar[]
             } catch {
               rot = 0;
             }
+            // 字框顶边随字体、公式字号变化；文字原点才是真正的排版基线。
+            const hasOrigin = api.textCharOrigin(tp, i, originXPtr, originYPtr);
+            const originY = hasOrigin ? (koffi.decode(originYPtr, 'double') as number) : NaN;
             out.push({
               x: b.left,
               y: b.bottom,
               w,
               h,
+              baseline: rot === 0 && Number.isFinite(originY) ? originY : b.top,
               str: u ? String.fromCodePoint(u) : '',
               rot,
             });
@@ -432,6 +440,8 @@ export function pdfiumTextChars(pdfId: number, pageNumber: number): PdfiumChar[]
       } finally {
         koffi.free(boxPtr);
         koffi.free(matPtr);
+        koffi.free(originXPtr);
+        koffi.free(originYPtr);
       }
     } finally {
       api.textClose(tp);

@@ -74,7 +74,7 @@ export async function getPageTextQuads(
     // 跳过 pdfium 的占位符（\u0001/空串）：它们没有可见字形，会让行内索引与可见文字错位
     if (c.str === '\u0001' || c.str === '') continue;
     const h = c.h > 0 ? c.h : 1;
-    items.push({ x: c.x, y: c.y, w, h, baseline: c.y + h, str: c.str, rot: c.rot ?? 0 });
+    items.push({ x: c.x, y: c.y, w, h, baseline: c.baseline ?? c.y + h, str: c.str, rot: c.rot ?? 0 });
   }
   items.sort((a, b) => b.baseline - a.baseline || a.x - b.x);
   textCache.set(key, items);
@@ -104,14 +104,21 @@ export function buildPageLines(items: TextItemQuad[]): LineBand[] {
     indices: number[];
   };
   const bands: RawBand[] = [];
-  for (let i = 0; i < items.length; i++) {
+  // 先用正文字号建立稳定基线，再归入大符号/上下标，避免上标先建一行、
+  // 大公式的行框中心把后续字符吸到相邻正文行。
+  const unusualSize = (it: TextItemQuad): boolean => it.h > medianH * 1.6 || it.h < medianH * 0.7;
+  const order = items.map((_, i) => i).sort((a, b) => Number(unusualSize(items[a])) - Number(unusualSize(items[b])));
+  for (const i of order) {
     const it = items[i];
     let target = -1;
+    let distance = Infinity;
+    const limit = unusualSize(it) ? Math.max(tol, it.h < medianH ? medianH * 0.95 : it.h * 0.35) : tol;
     for (let bi = bands.length - 1; bi >= 0; bi--) {
       // 旋转不同的字符绝不并入同一行带（旋转文本 = 独立文本区域）
-      if (bands[bi].rot === it.rot && Math.abs(bands[bi].baseline - it.baseline) <= tol) {
+      const delta = Math.abs(bands[bi].baseline - it.baseline);
+      if (bands[bi].rot === it.rot && delta <= limit && delta < distance) {
         target = bi;
-        break;
+        distance = delta;
       }
     }
     if (target >= 0) {
@@ -142,21 +149,26 @@ export function buildPageLines(items: TextItemQuad[]): LineBand[] {
         cur = [];
       }
       cur.push(gi);
-      prevRight = it.x + it.w;
+      prevRight = Math.max(prevRight ?? -Infinity, it.x + it.w);
     }
     if (cur.length) segs.push(cur);
 
     for (const seg of segs) {
       let minX = Infinity;
       let maxX = -Infinity;
+      let minY = Infinity;
+      let maxY = -Infinity;
       for (const gi of seg) {
         minX = Math.min(minX, items[gi].x);
         maxX = Math.max(maxX, items[gi].x + items[gi].w);
+        minY = Math.min(minY, items[gi].y);
+        maxY = Math.max(maxY, items[gi].y + items[gi].h);
       }
       lines.push({
         baseline: band.baseline,
-        minY: band.minY,
-        maxY: band.maxY,
+        // 每栏独立取字形范围：另一栏的大公式不得改变本栏的行中心。
+        minY,
+        maxY,
         minX,
         maxX,
         row: r,
@@ -174,6 +186,59 @@ export function buildPageLines(items: TextItemQuad[]): LineBand[] {
   // 一条行同时对行宽有实质覆盖（≥ 行宽 1/4）的列不止一个（全宽跨栏标题/公式），
   // 则独立成列，避免把左右两栏桥接成同一栏。旋转文本天然独立成列。
   const blockGap = Math.max(medianH * 2.5, 20);
+  // 公式空白可能把同栏的一行切成几段，段首/段尾只需一侧正文行支持。
+  // 同时用相邻行持续出现的栏间留白排除真实双栏；依据原始行判断，
+  // 避免全宽标题或先前合并的结果桥接左右栏。
+  const originalLines = lines.slice();
+  const rowLineMap = new Map<number, LineBand[]>();
+  for (const line of originalLines) {
+    const rowLines = rowLineMap.get(line.row) ?? [];
+    rowLines.push(line);
+    rowLineMap.set(line.row, rowLines);
+  }
+  const coversPair = (candidate: LineBand, left: LineBand, right: LineBand): boolean => {
+    const pad = Math.max(2, medianW * 0.8);
+    return candidate.minX <= left.maxX + pad && candidate.maxX >= right.minX - pad;
+  };
+  const shouldJoinInline = (left: LineBand, right: LineBand): boolean => {
+    if (left.row !== right.row || left.rot !== right.rot) return false;
+    const gap = right.minX - left.maxX;
+    if (gap < 0 || gap > Math.max(48, medianW * 10)) return false;
+    const neighborRows = [rowLineMap.get(left.row - 1) ?? [], rowLineMap.get(left.row + 1) ?? []];
+    const gutterX = (left.maxX + right.minX) / 2;
+    // 相邻行在同一位置也分为左右两栏时，保留栏间界限，即使旁边有全宽标题。
+    if (neighborRows.some((row) =>
+      row.some((candidate) => candidate.rot === left.rot && candidate.maxX < gutterX && candidate.maxX >= left.minX) &&
+      row.some((candidate) => candidate.rot === left.rot && candidate.minX > gutterX && candidate.minX <= right.maxX))) return false;
+    const neighbors = neighborRows.flat();
+    // 相邻正文行有一条线同时覆盖公式前后两段，说明它们属于同一栏。
+    if (neighbors.some((candidate) => candidate.rot === left.rot && coversPair(candidate, left, right) &&
+      // 候选行还跨过本行另一栏时，它是全宽标题，不能支持这次合并。
+      !originalLines.some((other) => other.row === left.row && other.rot === left.rot &&
+        (other.maxX < left.minX || other.minX > right.maxX) &&
+        Math.min(candidate.maxX, other.maxX) - Math.max(candidate.minX, other.minX) > 0))) return true;
+    // 没有相邻行可参考时，只合并很短的公式留白；双栏间距通常明显更大。
+    return gap <= Math.max(18, medianW * 4.5) &&
+      (left.indices.some((index) => items[index].h > medianH * 1.35) ||
+        right.indices.some((index) => items[index].h > medianH * 1.35));
+  };
+  const joinedLines: LineBand[] = [];
+  for (const line of originalLines) {
+    const prev = joinedLines[joinedLines.length - 1];
+    const supported = prev && shouldJoinInline(prev, line);
+    if (supported) {
+      joinedLines[joinedLines.length - 1] = {
+        ...prev,
+        maxX: Math.max(prev.maxX, line.maxX),
+        minY: Math.min(prev.minY, line.minY),
+        maxY: Math.max(prev.maxY, line.maxY),
+        indices: [...prev.indices, ...line.indices],
+      };
+    } else {
+      joinedLines.push(line);
+    }
+  }
+  lines.splice(0, lines.length, ...joinedLines);
   const columns: { id: number; rot: number; minX: number; maxX: number; minY: number; maxY: number }[] = [];
   for (const line of lines) {
     const lineW = line.maxX - line.minX;
@@ -322,7 +387,7 @@ export function nearestTextIndex(
  */
 function detectQuad(it: TextItemQuad): { x: number; y: number; w: number; h: number } {
   const h = it.h * 0.6;
-  return { x: it.x, y: it.baseline - h, w: it.w, h };
+  return { x: it.x, y: it.y + it.h - h, w: it.w, h };
 }
 
 function isGlyphOnVisualLine(

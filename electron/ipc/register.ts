@@ -620,7 +620,7 @@ export function registerIpc(): void {
   handle('annotation:create', (data: NewAnnotation) => repository.createAnnotation(data));
   handle(
     'annotation:update',
-    (id: number, patch: Partial<Pick<AnnotationRecord, 'note' | 'color' | 'content' | 'page' | 'position'>>) =>
+    (id: number, patch: Partial<Pick<AnnotationRecord, 'note' | 'color' | 'content' | 'page' | 'position' | 'noteLayout'>>) =>
       repository.updateAnnotation(id, patch),
   );
   handle('annotation:delete', (id: number) => repository.deleteAnnotation(id));

@@ -39,7 +39,12 @@ function uniqueDirName(dir: string, name: string): string {
   return candidate;
 }
 
-async function walkDir(dir: string, files: string[], errors: string[]): Promise<void> {
+async function walkDir(
+  dir: string,
+  files: string[],
+  directories: string[],
+  errors: string[],
+): Promise<void> {
   let entries;
   try {
     entries = await fs.promises.readdir(dir, { withFileTypes: true });
@@ -47,10 +52,11 @@ async function walkDir(dir: string, files: string[], errors: string[]): Promise<
     errors.push(`${dir}: ${err instanceof Error ? err.message : String(err)}`);
     return;
   }
+  directories.push(dir);
   for (const entry of entries) {
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) {
-      await walkDir(full, files, errors);
+      await walkDir(full, files, directories, errors);
     } else if (entry.isFile() && entry.name.toLowerCase().endsWith('.pdf')) {
       files.push(full);
     }
@@ -133,7 +139,12 @@ export async function importPdfs(
       // 源目录已在库内：不复制，直接按库内路径注册
       if (isInside(sourceDir, libraryDir)) {
         const files: string[] = [];
-        await walkDir(sourceDir, files, errors);
+        const directories: string[] = [];
+        await walkDir(sourceDir, files, directories, errors);
+        for (const dir of directories) {
+          const relDir = path.relative(libraryDir, dir).split(path.sep).filter(Boolean).join('/');
+          if (relDir) repository.ensureFolderByRelPath(relDir);
+        }
         for (const f of files) {
           const rel = path.relative(libraryDir, f);
           const relDir = path.dirname(rel).split(path.sep).filter(Boolean).join('/');
@@ -149,7 +160,13 @@ export async function importPdfs(
       await fs.promises.cp(sourceDir, dest, { recursive: true });
 
       const files: string[] = [];
-      await walkDir(dest, files, errors);
+      const directories: string[] = [];
+      await walkDir(dest, files, directories, errors);
+      // 先同步完整目录结构，保证空目录和只含非 PDF 的目录也立即出现在目录树中。
+      for (const dir of directories) {
+        const relDir = path.relative(libraryDir, dir).split(path.sep).filter(Boolean).join('/');
+        if (relDir) repository.ensureFolderByRelPath(relDir);
+      }
       for (const f of files) {
         const rel = path.relative(libraryDir, f);
         const relDir = path.dirname(rel).split(path.sep).filter(Boolean).join('/');

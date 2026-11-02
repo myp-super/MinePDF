@@ -166,7 +166,7 @@ export function itemsToText(items: TextItemQuad[]): string {
 
 /**
  * 指针（PDF 用户空间坐标）→ (行, line 下标, 行内字符索引)。
- * 候选行先按“选区上下文”过滤，再按纵向距离取最近行（行距内判定），
+ * 候选行先按“选区上下文”过滤，优先命中实际字形；空白处按局部字形的纵向距离取最近行，
  * 横向距离只作同距离行之间的平局裁决——保证鼠标向下/向上拖过不同宽度的
  * 行时行号能正常前进。字符索引用原始指针 X 计算，终点行可以选到鼠标实际位置。
  */
@@ -182,10 +182,32 @@ export function pointToRowChar(
   let best = -1;
   let bestDy = Infinity;
   let bestDx = Infinity;
+  let hitLine = -1;
+  let hitIdx = -1;
+  let hitDistance = Infinity;
   for (let i = 0; i < lines.length; i++) {
     const l = lines[i];
     if (ctx && !lineInSelectionContext(l, ctx, page)) continue;
-    const dy = Math.abs(py - (l.minY + l.maxY) / 2);
+    let nearestX = Infinity;
+    let localDy = Infinity;
+    for (let ci = 0; ci < l.indices.length; ci++) {
+      const glyph = index.items[l.indices[ci]];
+      const gx = px < glyph.x ? glyph.x - px : px > glyph.x + glyph.w ? px - glyph.x - glyph.w : 0;
+      const gy = Math.abs(py - (glyph.y + glyph.h / 2));
+      if (gx < nearestX || (gx === nearestX && gy < localDy)) {
+        nearestX = gx;
+        localDy = gy;
+      }
+      if (gx === 0 && py >= glyph.y && py <= glyph.y + glyph.h) {
+        const distance = (px - glyph.x - glyph.w / 2) ** 2 + gy ** 2;
+        if (distance < hitDistance) {
+          hitLine = i;
+          hitIdx = ci;
+          hitDistance = distance;
+        }
+      }
+    }
+    const dy = localDy;
     const dx = px < l.minX ? l.minX - px : px > l.maxX ? px - l.maxX : 0;
     // 纵向优先：距离更近的行走前面；纵向几乎相同（±0.5）时用横向命中裁决。
     const better = dy < bestDy - 0.5 || (Math.abs(dy - bestDy) <= 0.5 && dx < bestDx - 0.5);
@@ -195,6 +217,7 @@ export function pointToRowChar(
       bestDx = dx;
     }
   }
+  if (hitLine >= 0) return { page, row: lines[hitLine].row, line: hitLine, idx: hitIdx };
   if (best < 0) return null;
   const line = lines[best];
   return { page, row: line.row, line: best, idx: charIndexAt(index.items, line.indices, px) };

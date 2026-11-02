@@ -1535,6 +1535,15 @@ function AnnotationsPanel({ pdf }: { pdf: PdfRecord }) {
     void reload();
   }, [reload]);
 
+  useEffect(() => {
+    const onAnnotationsChanged = (event: Event) => {
+      const changedPdfId = (event as CustomEvent<{ pdfId?: number }>).detail?.pdfId;
+      if (changedPdfId === pdf.id) void reload();
+    };
+    window.addEventListener('minepdf:annotations-changed', onAnnotationsChanged);
+    return () => window.removeEventListener('minepdf:annotations-changed', onAnnotationsChanged);
+  }, [pdf.id, reload]);
+
   if (loading) {
     return (
       <div className="flex h-40 items-center justify-center text-app-muted">

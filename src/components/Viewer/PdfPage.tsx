@@ -1,5 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { Pin, PinOff, X } from 'lucide-react';
 import type { PageViewport, PDFDocumentProxy } from 'pdfjs-dist';
+import { createPortal } from 'react-dom';
+import { AnnotationPreview, clampPreviewScale } from './AnnotationPreview';
 import type { AnnotationRecord, PdfiumLink, Quad } from '../../shared/types';
 import {
   effectiveRenderBucket,
@@ -34,6 +37,7 @@ interface PdfPageProps {
   /** 2.0.0：pdfium = PDFium 出像素 + PDF.js 文本层；pdfjs = 纯 PDF.js 回退 */
   renderer: 'pdfium' | 'pdfjs';
   annotations: AnnotationRecord[];
+  annotationAssetBase: string | null;
   searchMatches: SearchMatch[];
   selectedAnnotationId: number | null;
   /** 拖拽高亮实时预览（PDF 坐标，未提交） */
@@ -85,6 +89,7 @@ export function PdfPage({
   scale,
   renderer,
   annotations,
+  annotationAssetBase,
   searchMatches,
   selectedAnnotationId,
   liveHighlights,
@@ -109,7 +114,9 @@ export function PdfPage({
   const [renderError, setRenderError] = useState(false);
   const [pending, setPending] = useState(false);
   /** 标注圆点悬停气泡（即时出现，替代原生 title 的慢延迟） */
-  const [noteTip, setNoteTip] = useState<{ x: number; y: number; text: string } | null>(null);
+  const [noteTip, setNoteTip] = useState<NoteTip | null>(null);
+  const noteTipHideRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const noteTipDragRef = useRef<{ kind: 'move' | 'resize'; x: number; y: number; left: number; top: number; width: number; height: number } | null>(null);
   /** PDFium 原生提取的链接矩形：首帧位图渲染时即可点击，不依赖 pdf.js 解析 */
   const [links, setLinks] = useState<PdfiumLink[]>([]);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -122,6 +129,60 @@ export function PdfPage({
   const textTaskRef = useRef<{ cancel: () => void } | null>(null);
   const rendererRef = useRef(renderer);
   rendererRef.current = renderer;
+
+  const cancelNoteTipHide = () => {
+    if (noteTipHideRef.current) clearTimeout(noteTipHideRef.current);
+    noteTipHideRef.current = null;
+  };
+  const scheduleNoteTipHide = () => {
+    cancelNoteTipHide();
+    noteTipHideRef.current = setTimeout(() => {
+      setNoteTip((current) => (current?.pinned ? current : null));
+    }, 180);
+  };
+  const showNoteTip = (a: AnnotationRecord, x: number, y: number) => {
+    cancelNoteTipHide();
+    setNoteTip((current) => {
+      const pinned = current?.annotation.id === a.id ? current.pinned : false;
+      if (current?.annotation.id === a.id) return current.pinned ? current : { ...current, annotation: a };
+      let previewScale = 1;
+      try { previewScale = clampPreviewScale(JSON.parse(a.noteLayout || '{}').previewScale ?? 1); } catch { /* Legacy layout. */ }
+      return { x, y, left: clampTipLeft(x), top: clampTipTop(y), annotation: a, pinned, width: Math.min(340, window.innerWidth - 16), height: Math.min(360, window.innerHeight - 16), previewScale };
+    });
+  };
+
+  useEffect(() => {
+    const move = (event: PointerEvent) => {
+      const drag = noteTipDragRef.current;
+      if (!drag) return;
+      setNoteTip((current) => {
+        if (!current) return current;
+        const dx = event.clientX - drag.x;
+        const dy = event.clientY - drag.y;
+        return drag.kind === 'move' ? {
+          ...current,
+          left: clampTipLeft(drag.left + dx, 0, current.width),
+          top: clampTipTop(drag.top + dy, 0, current.height),
+          pinned: true,
+        } : {
+          ...current,
+          width: Math.min(Math.max(264, drag.width + dx), window.innerWidth - current.left - 8),
+          height: Math.min(Math.max(180, drag.height + dy), window.innerHeight - current.top - 8),
+          pinned: true,
+        };
+      });
+    };
+    const up = () => { noteTipDragRef.current = null; };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', up);
+    return () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      window.removeEventListener('pointercancel', up);
+      if (noteTipHideRef.current) clearTimeout(noteTipHideRef.current);
+    };
+  }, []);
 
   // 原生链接层：PDFium 打开即提取（结果在主进程缓存，滚动回来零成本）
   useEffect(() => {
@@ -557,6 +618,7 @@ export function PdfPage({
           parseQuads(a.position).map((q, i) => {
             const [left, top] = viewport.convertToViewportPoint(q.x, q.y + q.h);
             const [right, bottom] = viewport.convertToViewportPoint(q.x + q.w, q.y);
+            const dotSize = Math.max(4, Math.min(10, 8 * scale));
             return (
               <div
                 key={`${a.id}-${i}`}
@@ -573,6 +635,7 @@ export function PdfPage({
                 onClick={() => onAnnotationClick(a)}
                 onContextMenu={(e) => {
                   e.preventDefault();
+                  e.stopPropagation();
                   onAnnotationContextMenu(a, e.clientX, e.clientY);
                 }}
               >
@@ -580,11 +643,10 @@ export function PdfPage({
                 {i === 0 && a.note ? (
                   <span
                     className="annotation-dot"
-                    style={{ background: a.color }}
-                    onMouseEnter={(e) =>
-                      setNoteTip({ x: e.clientX, y: e.clientY, text: a.note ?? '' })
-                    }
-                    onMouseLeave={() => setNoteTip(null)}
+                    style={{ background: a.color, width: dotSize, height: dotSize, top: -dotSize / 2 }}
+                    onMouseEnter={(e) => showNoteTip(a, e.clientX, e.clientY)}
+                    onMouseMove={(e) => setNoteTip((current) => current && !current.pinned ? { ...current, x: e.clientX, y: e.clientY, left: clampTipLeft(e.clientX, 12, current.width), top: clampTipTop(e.clientY, 12, current.height) } : current)}
+                    onMouseLeave={scheduleNoteTipHide}
                     onClick={(e) => {
                       e.stopPropagation();
                       setNoteTip(null);
@@ -664,14 +726,80 @@ export function PdfPage({
       )}
 
       {/* 标注圆点悬停气泡 */}
-      {noteTip && (
+      {noteTip && createPortal(
         <div
-          className="fixed z-[90] max-w-[260px] rounded-lg border border-app-border bg-app-panel px-2.5 py-1.5 text-[11px] leading-relaxed text-app-text shadow-2xl"
-          style={{ left: noteTip.x + 12, top: noteTip.y + 12 }}
+          className="annotation-note-preview fixed z-[110] flex flex-col rounded-lg border border-app-border bg-app-panel px-3 py-2.5 text-[11px] leading-relaxed text-app-text shadow-2xl"
+          style={{
+            left: noteTip.left,
+            top: noteTip.top,
+            width: noteTip.width,
+            height: noteTip.height,
+          }}
+          onMouseDown={(event) => event.stopPropagation()}
+          onMouseEnter={cancelNoteTipHide}
+          onMouseLeave={scheduleNoteTipHide}
         >
-          {noteTip.text}
-        </div>
+          <div
+            className="annotation-note-preview__bar"
+            onPointerDown={(event) => {
+              if ((event.target as HTMLElement).closest('button')) return;
+              event.preventDefault();
+              cancelNoteTipHide();
+              setNoteTip((current) => current ? { ...current, pinned: true } : current);
+              noteTipDragRef.current = { kind: 'move', x: event.clientX, y: event.clientY, left: noteTip.left, top: noteTip.top, width: noteTip.width, height: noteTip.height };
+            }}
+          >
+            <span>{t('viewer.noteTitle')}</span>
+            <div className="flex items-center gap-1">
+              <button
+                className="annotation-note-preview__button"
+                title={noteTip.pinned ? t('viewer.unpin') : t('viewer.pin')}
+                aria-label={noteTip.pinned ? t('viewer.unpin') : t('viewer.pin')}
+                onClick={() => setNoteTip((current) => current ? { ...current, pinned: !current.pinned } : current)}
+              >
+                {noteTip.pinned ? <Pin size={12} /> : <PinOff size={12} />}
+              </button>
+              <button
+                className="annotation-note-preview__button"
+                title={t('common.close')}
+                aria-label={t('common.close')}
+                onClick={() => setNoteTip(null)}
+              >
+                <X size={12} />
+              </button>
+            </div>
+          </div>
+          <AnnotationPreview note={noteTip.annotation.note} assetBase={annotationAssetBase} scale={noteTip.previewScale}
+            onScaleChange={(previewScale) => setNoteTip((current) => current ? { ...current, previewScale, pinned: true } : current)} />
+          <div className="annotation-preview__resize" title={t('viewer.previewResize')} onPointerDown={(event) => {
+            event.preventDefault();
+            cancelNoteTipHide();
+            setNoteTip((current) => current ? { ...current, pinned: true } : current);
+            noteTipDragRef.current = { kind: 'resize', x: event.clientX, y: event.clientY, left: noteTip.left, top: noteTip.top, width: noteTip.width, height: noteTip.height };
+          }} />
+        </div>,
+        document.body,
       )}
     </div>
   );
+}
+
+type NoteTip = {
+  x: number;
+  y: number;
+  left: number;
+  top: number;
+  annotation: AnnotationRecord;
+  pinned: boolean;
+  width: number;
+  height: number;
+  previewScale: number;
+};
+
+function clampTipLeft(value: number, delta = 12, width = 340): number {
+  return Math.max(8, Math.min(value + delta, window.innerWidth - width - 8));
+}
+
+function clampTipTop(value: number, delta = 12, height = 360): number {
+  return Math.max(8, Math.min(value + delta, window.innerHeight - height - 8));
 }
