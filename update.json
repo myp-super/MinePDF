@@ -1,8 +1,11 @@
 {
-  "version": "3.6.11",
-  "publishDate": "2026-08-16",
-  "url": "https://github.com/myp-super/MinePDF/releases/download/v3.6.11/MinePDF.Setup.3.6.11.exe",
+  "version": "3.13.5",
+  "publishDate": "2026-11-02",
+  "url": "https://github.com/myp-super/MinePDF/releases/download/v3.13.5/MinePDF.Setup.3.13.5.exe",
   "notes": [
-    "3.6.11 - PDF 渲染清晰度修复（LCD 亚像素抗锯齿、精确 DPI 渲染、高缩放/高 DPI 不再发虚）+ PDF 渲染诊断面板（可拖动、跟随主题）"
+    "文件夹导入 - 支持直接拖入左侧目录树，并在目标位置保留完整目录结构",
+    "阅读体验 - 打开 PDF 时自动执行适应页面",
+    "翻译结果新增一键写入标注：自动高亮原文选区并将译文保存为标注备注",
+    "标注备注框支持拖动、缩放、置顶显示，并可插入 LaTeX 公式和图片"
   ]
 }
